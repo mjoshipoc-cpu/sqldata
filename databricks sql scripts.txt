@@ -1,0 +1,373 @@
+INSERT INTO MemberInfo (
+  Member_id, Name, FileID, Name_page_No, Age, Age_page_No, Gender, Gender_page_No, DOB, DOB_page_No, 
+  DOS_Gen, DOS_Gen_page_No, Height_cm, Height_cm_page_No, Weight_kg, Weight_kg_page_No, BMI, BMI_page_No, 
+  Obese, Obese_page_No, Smoker, Smoker_page_No, Drinker, Drinker_page_No, Posg_presence, Posg_presence_page_No, 
+  Depression_history, Depression_history_page_No, Hospice_Pallitative, Hospice_Pallitative_page_No, 
+  Updated_date, is_active, Insert_Date, Process, Confidence_Score
+) VALUES
+(2420, 'Linda Stark', 'Linda_Test_Record_2420.pdf', 1, 52, 1, 'Female', 1, NULL, 1, '10/29/2024', 1, 158.75, 3, 64, 3, 25.4, 3, 'No', 3, 'Yes', 3, 'Yes', 3, 'Yes', 7, 'Yes', 1, 'No', NULL, 1, NULL, '38:52.6', 1, '38:52.6', 'Single Processing', '0.44%'),
+(8964, 'Bracelet, Charm', 'Bracelet_Charm_8964.pdf', 1, 35, 1, 'Female', 1, '01/21/1988', 1, NULL, 1, 160.02, 1, 53.34, 1, 20.3, 1, 'No', 1, 'No', 1, 'No', 1, 'No', 1, 'No', 1, 'No', 1, '32:09.7', 1, '32:09.7', 'Single Processing', '0.39%'),
+(5560, 'Helga Lewis', 'HelgaLewis_5560.pdf', NULL, 62, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(8960, 'Hortense Williams', 'HortenseWilliams5_8960.pdf', NULL, 53, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(4976, 'Grace Healy', 'gracehealy10_4976.pdf', NULL, 47, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(1956, 'Ethel Johnson', 'EthelJohnson_1956.pdf', NULL, 66, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(7190, 'Myrtle Davis', NULL, NULL, 67, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(9970, 'Emily Williams', 'EmilyWilliamsJune_9970.pdf', NULL, 53, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(1980, 'Emily Davis', 'EmilyDavis09_1980.pdf', NULL, 42, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(1777, 'Elizabeth Baker', 'ElizabethBaker_1777.pdf', NULL, 54, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(1958, 'Brunhilda Carter', 'BrunhildaCarter18_01958.pdf', NULL, 64, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(1965, 'Aupamsa', 'aupamsa10_1965.pdf', NULL, 66, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(7752, 'Agatha Johnson', 'AgathaJohnson_7752.pdf', NULL, 70, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(1952, 'Bertha Turner', 'BerthaTurner20_11952.pdf', NULL, 69, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL),
+(2196, 'Carol Reynolds', 'CarolReynolds05_2196.pdf', NULL, 57, NULL, 'Female', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, 'Yes', NULL, 'No', NULL, 'No', NULL, 'No', NULL, '02:27.8', 1, '02:27.8', NULL, NULL);
+
+
+
+
+
+INSERT INTO FileInfo (
+  FileID,
+  Pdf_location,
+  Pdf_filename,
+  Updated_Date,
+  is_active,
+  Insert_Date,
+  Measurement_Year,
+  Process
+) VALUES
+(2420, 'E:\\Hedis openai\\uploaded_files\\Linda_Test_Record_2420.pdf', 'Linda_Test_Record_2420.pdf', '19:55.8', 1, '19:55.8', 2024, 'Single Processing'),
+(1936, 'C:\\Users\\Ayush\\OneDrive\\Desktop\\EXL\\PDF\\batch testing\\Noah_Alvarez_1936.pdf', 'Noah_Alvarez_1936.pdf', '23:13.0', 1, '23:13.0', 2024, 'Batch Processing'),
+(8964, 'C:\\Users\\Ayush\\OneDrive\\Desktop\\EXL\\PDF\\batch testing\\Bracelet_Charm_8964.pdf', 'Bracelet_Charm_8964.pdf', '22:32.3', 1, '22:32.3', 2024, 'Batch Processing'),
+(8967, 'E:\\Hedis openai\\uploaded_files\\Bracelet_Charm_8967.pdf', 'Bracelet_Charm_8967.pdf', '20:31.5', 1, '20:31.5', 2024, NULL),
+(4321, 'E:\\Hedis openai\\uploaded_files\\Linda_Test_Record_4321.pdf', 'Linda_Test_Record_4321.pdf', '54:02.8', 1, '54:02.8', 2024, NULL),
+(1673, 'E:\\Hedis openai\\uploaded_files\\Micheal Anderson_15.06.1985_15.09.2022.pdf', 'Micheal Anderson_15.06.1985_15.09.2022.pdf', '00:00.0', 1, '00:00.0', 2022, NULL),
+(4673, 'E:\\Hedis openai\\uploaded_files\\Robert Johnson_20.06.1972_05.09.2022.pdf', 'Robert Johnson_20.06.1972_05.09.2022.pdf', '00:00.0', 1, '00:00.0', 2022, NULL),
+(2323, 'E:\\Hedis openai\\uploaded_files\\Sarah Jones_12.12.1980_01.01.2020.pdf', 'Sarah Jones_12.12.1980_01.01.2020.pdf', '00:00.0', 1, '00:00.0', 2020, NULL),
+(9876, 'E:\\Hedis openai\\uploaded_files\\Lily Grace_2_04_1993_9_07_2022.pdf', 'Lily Grace_2_04_1993_9_07_2022.pdf', '00:00.0', 1, '00:00.0', 2022, NULL),
+(8763, 'E:\\Hedis openai\\uploaded_files\\John Smith_15.01.1965_20.11.2022.pdf', 'John Smith_15.01.1965_20.11.2022.pdf', '00:00.0', 1, '00:00.0', 2022, NULL),
+(3333, 'E:\\Hedis openai\\uploaded_files\\Sarah Thompson_15.12.1985_11.11.2021.pdf', 'Sarah Thompson_15.12.1985_11.11.2021.pdf', '00:00.0', 1, '00:00.0', 2021, NULL),
+(4453, 'E:\\Hedis openai\\uploaded_files\\Emma Thompson_05.06.1990_06.05.2022.pdf', 'Emma Thompson_05.06.1990_06.05.2022.pdf', '00:00.0', 1, '00:00.0', 2022, NULL),
+(6321, 'E:\\Hedis openai\\uploaded_files\\Sarah Johnson_15_02_1985_15_06_2023.pdf', 'Sarah Johnson_15_02_1985_15_06_2023.pdf', '00:00.0', 1, '00:00.0', 2022, NULL),
+(7653, 'E:\\Hedis openai\\uploaded_files\\Micheal Johnson_15.06.1967_25.03.2022.pdf', 'Micheal Johnson_15.06.1967_25.03.2022.pdf', '00:00.0', 1, '00:00.0', 2022, NULL),
+(9876, 'E:\\Hedis openai\\uploaded_files\\Jacob Smith_18_10_1968_15_11_2021.pdf', 'Jacob Smith_18_10_1968_15_11_2021.pdf', '00:00.0', 1, '00:00.0', 2021, NULL);
+
+
+
+
+INSERT INTO BCS (
+  Member_id,
+  FileID,
+  Name,
+  Mammogram,
+  Mammogram_page_No,
+  Mammogram_DOS,
+  Mammogram_DOS_page_No,
+  Bilateral_Mastectomy,
+  Bilateral_Mastectomy_page_No,
+  Bilateral_Mastectomy_DOS,
+  Bilateral_Mastectomy_DOS_page_No,
+  Unilateral_Mastectomy_R,
+  Unilateral_Mastectomy_R_page_No,
+  Unilateral_Mastectomy_R_DOS,
+  Unilateral_Mastectomy_R_DOS_page_No,
+  Unilateral_Mastectomy_L,
+  Unilateral_Mastectomy_L_page_No,
+  Unilateral_Mastectomy_L_DOS,
+  Unilateral_Mastectomy_L_DOS_page_No,
+  Remark_BCS,
+  Updated_date,
+  is_active,
+  Insert_Date,
+  Review_Completed,
+  Process,
+  Confidence_Score
+) VALUES
+(2420, 'Linda_Test_Record_2420.pdf', 'Linda Stark', 'Yes', 2, '05/28/2024', 2, 'Yes', 2, '08/25/2024', 2, 'Yes', 2, '04/19/2023', 2, 'No', NULL, NULL, NULL, 'Exclusion:BCS - Bilateral Mastectomy', '19:55.9', 1, '19:55.9', 'No', 'Single Processing', '91.62%'),
+(1936, 'Noah_Alvarez_1936.pdf', 'Noah Alvarez', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'Exclusion:BCS - Gender Male', '23:13.0', 1, '23:13.0', 'No', 'Batch Processing', '93.02%'),
+(8964, 'Bracelet_Charm_8964.pdf', 'Bracelet, Charm', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'Exclusion:BCS - Age or Gender criteria not met', '22:32.4', 1, '22:32.4', 'No', 'Batch Processing', '93.02%'),
+(4321, 'Linda_Test_Record_4321.pdf', 'Linda Staurk', 'Yes', 2, '05/26/2020', 2, 'Yes', 2, '08/25/2021', 2, 'Yes', 2, '04/19/2019', 2, 'No', 'NA', 'NA', NULL, 'Exclusion:BCS - Mastectomy', '42:16.2', 1, '42:16.2', 'No', NULL, NULL),
+(9933, 'Abigail_Smith_9933.pdf', 'Abigail Smith', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:38.3', 1, '31:38.3', 'No', NULL, NULL),
+(6667, 'LindaJohnson_6667.pdf', 'Linda Johnson', 'No', 1, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:38.3', 1, '31:38.3', 'No', NULL, NULL),
+(8968, 'LisaAnderson04_151968.pdf', 'Lisa Anderson', 'No', 1, NULL, NULL, 'Yes', 1, '00:00.0', 1, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:38.3', 1, '31:38.3', 'No', NULL, NULL),
+(6980, 'JaneSmith05_6980.pdf', 'Jane Smith', 'No', 3, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'Yes', 2, '00:00.0', NULL, NULL, '31:38.2', 1, '31:38.2', 'No', NULL, NULL),
+(8969, 'KarenWalker09_8969.pdf', 'Karen Walker', 'No', 1, NULL, NULL, 'No', NULL, NULL, NULL, 'Yes', 1, '02/18/2020', 1, 'No', NULL, NULL, NULL, NULL, '31:38.2', 1, '31:38.2', 'No', NULL, NULL),
+(8968, 'KarenAdams06_8968.pdf', 'Karen Adams', 'Yes', 1, '00:00.0', 1, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:38.2', 1, '31:38.2', 'No', NULL, NULL),
+(8833, 'LisaThompson02_8833.pdf', 'Lisa Thompson', 'No', 2, NULL, NULL, 'Yes', 3, '00:00.0', 3, 'Yes', 2, '00:00.0', 2, 'Yes', 2, '09/15/2022', NULL, NULL, '31:38.1', 1, '31:38.1', 'No', NULL, NULL),
+(2960, 'LindaMitchell11_2960.pdf', 'Linda Mitchell', 'No', 1, NULL, NULL, 'No', NULL, NULL, NULL, 'Yes', 1, '00:00.0', 1, 'Yes', 1, '04/19/2021', NULL, NULL, '31:38.0', 1, '31:38.0', 'No', NULL, NULL),
+(1972, 'LisaJohnson02_151972.pdf', 'Lisa Johnson', 'No', 1, NULL, NULL, 'Yes', 1, '05/15/2022', 1, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:38.0', 1, '31:38.0', 'No', NULL, NULL),
+(4964, 'PrudenceBennett02_4964.pdf', 'Prudence Bennett', 'No', 3, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'Yes', 3, '00:00.0', NULL, NULL, '31:38.0', 1, '31:38.0', 'No', NULL, NULL),
+(4961, 'SarahAdams12_4961.pdf', 'Sarah Adams', 'No', 1, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'Yes', 1, '11/22/2021', NULL, NULL, '31:38.0', 1, '31:38.0', 'No', NULL, NULL);
+
+
+
+INSERT INTO BPD (
+  Member_id,
+  FileID,
+  Name,
+  HbA1c_Result,
+  HbA1c_Result_page_No,
+  BP,
+  BP_page_No,
+  BP_DOS,
+  BP_DOS_page_No,
+  Diabetes,
+  Diabetes_page_No,
+  Posg_diabetes,
+  Posg_diabetes_page_No,
+  Remark_BPD,
+  Updated_Date,
+  is_active,
+  Insert_Date,
+  Review_Completed,
+  Process,
+  Confidence_Score
+) VALUES
+(3566, 'Roma Scarlett', NULL, 7.2, 2, '09/17/2022', 2, 'Yes', 1, '120/80', 2, 'No', 2, 'Compliant:HBD test date valid', '00:00.0', 1, '00:00.0', 'No', NULL, NULL),
+(2420, 'Linda_Test_Record_2420.pdf', 'Linda Stark', 6.5, 3, '138/84', 3, NULL, 3, 'Yes', 4, 'No', NULL, 'Representative BP 138/84 value in the valid range (HEDIS valid range)', '19:56.4', 1, '19:56.4', 'No', 'Single Processing', '85.87%'),
+(1936, 'Noah_Alvarez_1936.pdf', 'Noah Alvarez', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'Non-compliant:BPD - No recent BP', '18:06.2', 1, '18:06.2', 'No', 'Batch Processing', '85.87%'),
+(8964, 'Bracelet_Charm_8964.pdf', 'Bracelet, Charm', NULL, NULL, '114/78', 1, NULL, 1, 'No', NULL, NULL, NULL, 'Non-compliant:BPD - No recent BP', '25:54.8', 1, '25:54.8', 'No', 'Single Processing', '85.87%'),
+(4321, 'Linda_Test_Record_4321.pdf', 'Linda Staurk', 6.5, 3, '144/83', 3, NULL, 3, 'Type 2 diabetes mellitus without complications', 4, 'Polycystic Ovarian Syndrome', NULL, 'Non-compliant:BPD - BP >= 140/90', '42:16.8', 1, '42:16.8', 'No', NULL, NULL),
+(1975, 'SarahJohnson03_121975.pdf', 'Sarah Johnson', 6.8, 1, '118/76', 2, '00:00.0', 2, 'Yes', 1, 'No', NULL, NULL, '31:42.7', 1, '31:42.7', 'No', NULL, NULL),
+(7978, 'SarahAndersonMarch_7978.pdf', 'Sarah Anderson', 5.9, 2, '120/75', 1, '08/15/2023', 1, 'No', NULL, 'No', NULL, NULL, '31:42.7', 1, '31:42.7', 'No', NULL, NULL),
+(4961, 'SarahAdams12_4961.pdf', 'Sarah Adams', 6.4, 2, '124/82', 1, NULL, 1, 'Yes', 2, 'No', NULL, NULL, '31:42.7', 1, '31:42.7', 'No', NULL, NULL),
+(4967, 'RobertTurnerSeptember_4967', 'Robert Turner 2', 7.2, 2, '126/78', 2, '00:00.0', 2, 'No', NULL, 'No', NULL, NULL, '31:42.6', 1, '31:42.6', 'No', NULL, NULL),
+(4960, 'RobertTurnerJune_4960', 'Robert Turner 1', 7.4, 2, '118/72', 2, '00:00.0', 2, 'No', NULL, 'No', NULL, NULL, '31:42.6', 1, '31:42.6', 'No', NULL, NULL),
+(4699, 'RobertDavisJune_4699.pdf', 'Robert Davis', 6.1, 2, '124/78', 2, '00:00.0', 2, 'No', NULL, 'No', NULL, NULL, '31:42.5', 1, '31:42.5', 'No', NULL, NULL),
+(4964, 'PrudenceBennett02_4964.pdf', 'Prudence Bennett', 7.5, 2, '120/75', 2, '11/17/2022', 2, 'No', NULL, 'No', NULL, NULL, '31:42.5', 1, '31:42.5', 'No', NULL, NULL),
+(4968, 'PatriciaHarris05_4968.pdf', 'Patricia Harris', 6, 1, '118/78', 2, NULL, 2, 'No', NULL, 'No', NULL, NULL, '31:42.5', 1, '31:42.5', 'No', NULL, NULL),
+(4922, 'PatriciaDavisAugust_4922.pdf', 'Patricia Davis', 7.2, 2, '118/74', 2, '00:00.0', 2, 'Yes', 2, 'No', NULL, NULL, '31:42.5', 1, '31:42.5', 'No', NULL, NULL),
+(4917, 'OliviaDavis09_4917.pdf', 'Olivia Davis', 7.1, 3, '125/80', 1, '02/25/2022', 1, 'Yes', 1, 'No', NULL, NULL, '31:42.5', 1, '31:42.5', 'No', NULL, NULL);
+
+
+
+INSERT INTO CBP (
+  Member_id,
+  FileID,
+  Name,
+  BP,
+  BP_page_No,
+  BP_DOS,
+  BP_DOS_page_No,
+  Hypertension,
+  Hypertension_page_No,
+  Remark_CBP,
+  Updated_date,
+  is_active,
+  Insert_Date,
+  Review_Completed,
+  Process,
+  Confidence_Score
+) VALUES
+(3656, 'Jane Smith', NULL, '130/80', 2, NULL, 2, 'Yes', 1, 'Compliant:BP reading in the range', '00:00.0', 1, '00:00.0', 'No', NULL, NULL),
+(3566, 'Roma Scarlett', NULL, '120/80', 2, '09/17/2022', 2, 'Yes', 1, 'Compliant:BP reading in the range', '00:00.0', 1, '00:00.0', 'No', NULL, NULL),
+(2420, 'Linda_Test_Record_2420.pdf', 'Linda Stark', '138/84', 3, NULL, NULL, 'Yes', 1, 'Representative BP 138/84 value in the valid range (HEDIS valid range)', '19:56.1', 1, '19:56.1', 'No', 'Single Processing', '93.07%'),
+(8964, 'Bracelet_Charm_8964.pdf', 'Bracelet, Charm', '114/78', 1, NULL, NULL, 'No', NULL, 'Non-compliant:CBP - No recent BP', '35:31.4', 1, '35:31.4', 'No', 'Single Processing', '91.64%'),
+(1936, 'Noah_Alvarez_1936.pdf', 'Noah Alvarez', NULL, NULL, NULL, NULL, 'No', NULL, 'Non-compliant:CBP - No recent BP', '34:29.7', 1, '34:29.7', 'No', 'Batch Processing', '91.64%'),
+(4321, 'Linda_Test_Record_4321.pdf', 'Linda Staurk', '144/83', 3, NULL, NULL, 'Yes', 1, 'Non-compliant:CBP - BP >= 140/90', '42:16.4', 1, '42:16.4', 'No', NULL, NULL),
+(1975, 'SarahJohnson03_121975.pdf', 'Sarah Johnson', '118/76', 2, '00:00.0', 2, 'Yes', 1, NULL, '31:40.4', 1, '31:40.4', 'No', NULL, NULL),
+(7978, 'SarahAndersonMarch_7978.pdf', 'Sarah Anderson', '120/75', 1, '08/15/2023', 1, 'No', NULL, NULL, '31:40.4', 1, '31:40.4', 'No', NULL, NULL),
+(4961, 'SarahAdams12_4961.pdf', 'Sarah Adams', '124/82', 1, NULL, 1, 'No', NULL, NULL, '31:40.4', 1, '31:40.4', 'No', NULL, NULL),
+(4967, 'RobertTurnerSeptember_4967', 'Robert Turner 2', '126/78', 2, '00:00.0', 2, 'Yes', 1, NULL, '31:40.4', 1, '31:40.4', 'No', NULL, NULL),
+(4960, 'RobertTurnerJune_4960', 'Robert Turner 1', '118/72', 2, '00:00.0', 2, 'Yes', 1, NULL, '31:40.4', 1, '31:40.4', 'No', NULL, NULL),
+(4699, 'RobertDavisJune_4699.pdf', 'Robert Davis', '124/78', 2, '00:00.0', 2, 'No', NULL, NULL, '31:40.3', 1, '31:40.3', 'No', NULL, NULL),
+(4964, 'PrudenceBennett02_4964.pdf', 'Prudence Bennett', '120/75', 2, '11/17/2022', 2, 'No', NULL, NULL, '31:40.3', 1, '31:40.3', 'No', NULL, NULL),
+(4968, 'PatriciaHarris05_4968.pdf', 'Patricia Harris', '118/78', 2, NULL, 2, 'No', NULL, NULL, '31:40.3', 1, '31:40.3', 'No', NULL, NULL),
+(4922, 'PatriciaDavisAugust_4922.pdf', 'Patricia Davis', '118/74', 2, '00:00.0', 2, 'Yes', 1, NULL, '31:40.3', 1, '31:40.3', 'No', NULL, NULL);
+
+
+
+
+INSERT INTO CCS (
+  Member_id,
+  FileID,
+  Name,
+  HPV_Test,
+  HPV_Test_page_No,
+  HPV_test_result,
+  HPV_test_result_page_No,
+  HPV_test_DOS,
+  HPV_test_DOS_page_No,
+  PAP_test,
+  PAP_test_page_No,
+  PAP_test_result,
+  PAP_test_result_page_No,
+  PAP_test_DOS,
+  PAP_test_DOS_page_No,
+  Hysterectomy,
+  Hysterectomy_page_No,
+  Hysterectomy_DOS,
+  Hysterectomy_DOS_page_No,
+  Remark_CCS,
+  updated_date,
+  is_active,
+  Insert_Date,
+  Review_Completed,
+  Process,
+  Confidence_Score
+) VALUES
+(2420, 'Linda_Test_Record_2420.pdf', 'Linda Stark', 'No', NULL, NULL, NULL, NULL, NULL, 'Yes', 7, 'Not specified', 7, NULL, 7, 'Yes', 7, '1/15/2024', 7, 'Exclusion:CCS - Hysterectomy', '19:56.7', 1, '19:56.7', 'No', 'Single Processing', '84.68%'),
+(8964, 'Bracelet_Charm_8964.pdf', 'Bracelet, Charm', 'Yes', 1, 'Normal', 1, '03/13/2023', 1, 'Yes', 1, 'Normal', 1, '03/13/2023', 1, 'No', NULL, NULL, NULL, 'Compliant:CCS - Pap test', '35:32.2', 1, '35:32.2', 'No', 'Single Processing', '84.46%'),
+(1936, 'Noah_Alvarez_1936.pdf', 'Noah Alvarez', 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'Exclusion:CCS - Age/Gender criteria not met', '34:30.3', 1, '34:30.3', 'No', 'Batch Processing', '84.46%'),
+(4321, 'Linda_Test_Record_4321.pdf', 'Linda Staurk', 'No', NULL, NULL, NULL, NULL, NULL, 'Yes', 7, NULL, NULL, NULL, 7, 'Yes', 7, '11/15/2022', 7, 'Exclusion:CCS - Hysterectomy', '42:17.0', 1, '42:17.0', 'No', NULL, NULL),
+(1975, 'SarahJohnson03_121975.pdf', 'Sarah Johnson', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.8', 1, '31:43.8', 'No', NULL, NULL),
+(7978, 'SarahAndersonMarch_7978.pdf', 'Sarah Anderson', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.8', 1, '31:43.8', 'No', NULL, NULL),
+(4961, 'SarahAdams12_4961.pdf', 'Sarah Adams', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.7', 1, '31:43.7', 'No', NULL, NULL),
+(4967, 'RobertTurnerSeptember_4967', 'Robert Turner 2', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.7', 1, '31:43.7', 'No', NULL, NULL),
+(4960, 'RobertTurnerJune_4960', 'Robert Turner 1', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.7', 1, '31:43.7', 'No', NULL, NULL),
+(4699, 'RobertDavisJune_4699.pdf', 'Robert Davis', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.7', 1, '31:43.7', 'No', NULL, NULL),
+(4964, 'PrudenceBennett02_4964.pdf', 'Prudence Bennett', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.6', 1, '31:43.6', 'No', NULL, NULL),
+(4968, 'PatriciaHarris05_4968.pdf', 'Patricia Harris', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.6', 1, '31:43.6', 'No', NULL, NULL),
+(4922, 'PatriciaDavisAugust_4922.pdf', 'Patricia Davis', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.5', 1, '31:43.5', 'No', NULL, NULL),
+(4958, 'OliviaAnderson12_4958.pdf', 'Olivia Anderson', NULL, NULL, NULL, NULL, NULL, NULL, 'Yes', 2, 'Normal', 2, '04/30/2022', 2, 'No', NULL, NULL, NULL, NULL, '31:43.5', 1, '31:43.5', 'No', NULL, NULL),
+(9962, 'NancyTurner03_9962.pdf', 'Nancy Turner', NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:43.5', 1, '31:43.5', 'No', NULL, NULL);
+
+
+
+
+
+
+
+INSERT INTO COL (
+  Member_id,
+  FileID,
+  Name,
+  Total_colectomy,
+  Total_colectomy_page_No,
+  colectomy_DOS,
+  colectomy_DOS_page_No,
+  colonoscopy,
+  colonoscopy_page_No,
+  colonoscopy_DOS,
+  colonoscopy_DOS_page_No,
+  CT_colonoscopy,
+  CT_colonoscopy_page_No,
+  CT_colonoscopy_DOS,
+  CT_colonoscopy_DOS_page_No,
+  FIT_FOBT,
+  FIT_FOBT_page_No,
+  FIT_FOBT_DOS,
+  FIT_FOBT_DOS_page_No,
+  Stool_DNA,
+  Stool_DNA_page_No,
+  Stool_DNA_DOS,
+  Stool_DNA_DOS_page_No,
+  Flexible_Sigmoidoscopy,
+  Flexible_Sigmoidoscopy_page_No,
+  Flexible_Sigmoidoscopy_Actual_date,
+  Flexible_Sigmoidoscopy_Actual_date_page_No,
+  Remark_COL,
+  Updated_date,
+  is_active,
+  Insert_Date,
+  Review_Completed,
+  Process,
+  Confidence_Score
+) VALUES
+(8964, 'Bracelet_Charm_8964.pdf', 'Bracelet, Charm', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'Exclusion:COL - Age criteria not met', '23:07.7', 1, '23:07.7', 'No', 'Single Processing', '91.28%'),
+(2420, 'Linda_Test_Record_2420.pdf', 'Linda Stark', 'Yes', 2, NULL, 2, 'Yes', 2, '12/23/2023', 2, 'No', NULL, NULL, NULL, 'Yes', 2, NULL, 2, 'Yes', 2, NULL, 2, 'No', NULL, NULL, NULL, 'Exclusion:COL - Total Colectomy', '21:48.6', 1, '21:48.6', 'No', 'Single Processing', '91.28%'),
+(1936, 'Noah_Alvarez_1936.pdf', 'Noah Alvarez', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, 'NR', '34:30.0', 1, '34:30.0', 'No', 'Batch Processing', '91.28%'),
+(4321, 'Linda_Test_Record_4321.pdf', 'Linda Staurk', 'Yes', 2, NULL, 2, 'Yes', 2, '12/23/2020', 2, 'No', NULL, 'No', NULL, 'Yes', 2, NULL, 2, 'Yes', 2, 'NA', 2, 'No', 'NA', 'NA', 'NA', 'Compliant:COL', '41:47.7', 1, '41:47.7', 'No', NULL, NULL),
+(1975, 'SarahJohnson03_121975.pdf', 'Sarah Johnson', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.1', 1, '31:45.1', 'No', NULL, NULL),
+(7978, 'SarahAndersonMarch_7978.pdf', 'Sarah Anderson', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.1', 1, '31:45.1', 'No', NULL, NULL),
+(4961, 'SarahAdams12_4961.pdf', 'Sarah Adams', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.1', 1, '31:45.1', 'No', NULL, NULL),
+(4967, 'RobertTurnerSeptember_4967', 'Robert Turner 2', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.0', 1, '31:45.0', 'No', NULL, NULL),
+(4960, 'RobertTurnerJune_4960', 'Robert Turner 1', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.0', 1, '31:45.0', 'No', NULL, NULL),
+(4699, 'RobertDavisJune_4699.pdf', 'Robert Davis', 'No', NULL, NULL, NULL, 'Yes', 2, '09/20/2023', 2, 'No', NULL, NULL, NULL, NULL, NULL, '09/20/2023', 2, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.0', 1, '31:45.0', 'No', NULL, NULL),
+(4964, 'PrudenceBennett02_4964.pdf', 'Prudence Bennett', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.0', 1, '31:45.0', 'No', NULL, NULL),
+(4968, 'PatriciaHarris05_4968.pdf', 'Patricia Harris', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:45.0', 1, '31:45.0', 'No', NULL, NULL),
+(4922, 'PatriciaDavisAugust_4922.pdf', 'Patricia Davis', 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:44.9', 1, '31:44.9', 'No', NULL, NULL),
+(4917, 'OliviaDavis09_4917.pdf', 'Olivia Davis', 'No', NULL, NULL, NULL, 'Yes', 2, '00:00.0', 2, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:44.9', 1, '31:44.9', 'No', NULL, NULL),
+(4958, 'OliviaAnderson12_4958.pdf', 'Olivia Anderson', 'No', NULL, NULL, NULL, 'Yes', 2, '03/15/2022', 2, 'No', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:44.8', 1, '31:44.8', 'No', NULL, NULL);
+
+
+
+
+INSERT INTO EED (
+  Member_id,
+  FileID,
+  Name,
+  HAS_SEEN_OPTHOMETERIS,
+  HAS_SEEN_OPTHOMETERIS_page_No,
+  EYE_EXAM_CONDUCTED_ON_BOTH_EYES,
+  EYE_EXAM_CONDUCTED_ON_BOTH_EYES_page_No,
+  EYE_EXAM_CONDUCTED_ON_RIGHT_EYE,
+  EYE_EXAM_CONDUCTED_ON_RIGHT_EYE_page_No,
+  EYE_EXAM_CONDUCTED_ON_LEFT_EYE,
+  EYE_EXAM_CONDUCTED_ON_LEFT_EYE_page_No,
+  Retinal_or_dilated_eye_exam_result,
+  Retinal_or_dilated_eye_exam_result_page_No,
+  EYE_EXAM_Date,
+  EYE_EXAM_Date_page_No,
+  Bilateral_eye_enucleation,
+  Bilateral_eye_enucleation_page_No,
+  Bilateral_eye_enucleation_Dos,
+  Bilateral_eye_enucleation_Dos_page_No,
+  Remark_EED,
+  updated_date,
+  is_active,
+  Insert_Date,
+  Review_Completed,
+  Process,
+  Confidence_Score
+) VALUES
+(2420, 'Linda_Test_Record_2420.pdf', 'Linda Stark', 'Yes', 4, 'Yes', 4, 'Yes', 4, 'Yes', 4, 'Abnormal', 4, '05/28/2023', 4, 'No', NULL, NULL, NULL, 'NR', '19:56.6', 1, '19:56.6', 'No', 'Single Processing', '91.06%'),
+(8964, 'Bracelet_Charm_8964.pdf', 'Bracelet, Charm', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'NR', '35:32.0', 1, '35:32.0', 'No', 'Single Processing', '90.11%'),
+(1936, 'Noah_Alvarez_1936.pdf', 'Noah Alvarez', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, 'NR', '34:30.2', 1, '34:30.2', 'No', 'Batch Processing', '90.11%'),
+(4321, 'Linda_Test_Record_4321.pdf', 'Linda Staurk', 'Yes', 4, 'Yes', 4, 'Yes', 5, 'Yes', 4, 'Abnormal', 4, '05/28/2022', 4, 'No', 5, 'NA', 5, 'Compliant:EED', '42:16.9', 1, '42:16.9', 'No', NULL, NULL),
+(1975, 'SarahJohnson03_121975.pdf', 'Sarah Johnson', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.6', 1, '31:41.6', 'No', NULL, NULL),
+(7978, 'SarahAndersonMarch_7978.pdf', 'Sarah Anderson', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.6', 1, '31:41.6', 'No', NULL, NULL),
+(4961, 'SarahAdams12_4961.pdf', 'Sarah Adams', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.5', 1, '31:41.5', 'No', NULL, NULL),
+(4967, 'RobertTurnerSeptember_4967', 'Robert Turner 2', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.5', 1, '31:41.5', 'No', NULL, NULL),
+(4960, 'RobertTurnerJune_4960', 'Robert Turner 1', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.4', 1, '31:41.4', 'No', NULL, NULL),
+(4699, 'RobertDavisJune_4699.pdf', 'Robert Davis', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.4', 1, '31:41.4', 'No', NULL, NULL),
+(4964, 'PrudenceBennett02_4964.pdf', 'Prudence Bennett', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.4', 1, '31:41.4', 'No', NULL, NULL),
+(4968, 'PatriciaHarris05_4968.pdf', 'Patricia Harris', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.4', 1, '31:41.4', 'No', NULL, NULL),
+(4922, 'PatriciaDavisAugust_4922.pdf', 'Patricia Davis', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.4', 1, '31:41.4', 'No', NULL, NULL),
+(4917, 'OliviaDavis09_4917.pdf', 'Olivia Davis', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.4', 1, '31:41.4', 'No', NULL, NULL),
+(4958, 'OliviaAnderson12_4958.pdf', 'Olivia Anderson', 'No', NULL, 'No', NULL, 'No', NULL, 'No', NULL, NULL, NULL, NULL, NULL, 'No', NULL, NULL, NULL, NULL, '31:41.4', 1, '31:41.4', 'No', NULL, NULL);
+
+
+
+
+
+
+INSERT INTO HBD (
+  Member_id,
+  FileID,
+  Name,
+  HbA1c_Result,
+  HbA1c_Result_page_No,
+  HbA1c_DOS,
+  HbA1c_DOS_page_No,
+  Posg_diabetes,
+  Posg_diabetes_page_No,
+  Remark_HBD,
+  Updated_date,
+  is_active,
+  Insert_Date,
+  Review_Completed,
+  Process,
+  Confidence_Score
+) VALUES
+(2420, 'Linda_Test_Record_2420.pdf', 'Linda Stark', 6.5, 3, NULL, 3, 'Yes', 4, 'Compliant:HBD', '19:56.2', 1, '19:56.2', 'No', 'Single Processing', '89.86%'),
+(8964, 'Bracelet_Charm_8964.pdf', 'Bracelet, Charm', NULL, NULL, NULL, NULL, 'No', NULL, 'Non-applicable:HBD - No diabetes', '35:31.5', 1, '35:31.5', 'No', 'Single Processing', '90.49%'),
+(1936, 'Noah_Alvarez_1936.pdf', 'Noah Alvarez', NULL, NULL, NULL, NULL, NULL, NULL, 'Non-applicable:HBD - No diabetes', '34:29.9', 1, '34:29.9', 'No', 'Batch Processing', '90.49%'),
+(4321, 'Linda_Test_Record_4321.pdf', 'Linda Staurk', 6.5, 3, NULL, 3, 'Yes', 7, 'Compliant:HBD', '42:16.6', 1, '42:16.6', 'No', NULL, NULL),
+(1975, 'SarahJohnson03_121975.pdf', 'Sarah Johnson', 6.8, 1, '00:00.0', 1, 'No', NULL, NULL, '31:39.3', 1, '31:39.3', 'No', NULL, NULL),
+(7978, 'SarahAndersonMarch_7978.pdf', 'Sarah Anderson', 5.9, 2, '02/20/2024', 2, 'No', NULL, NULL, '31:39.3', 1, '31:39.3', 'No', NULL, NULL),
+(4961, 'SarahAdams12_4961.pdf', 'Sarah Adams', 6.4, 2, '08/14/2022', 2, 'No', NULL, NULL, '31:39.3', 1, '31:39.3', 'No', NULL, NULL),
+(4967, 'RobertTurnerSeptember_4967', 'Robert Turner ', 7.2, 2, '00:00.0', 2, 'No', NULL, NULL, '31:39.3', 1, '31:39.3', 'No', NULL, NULL),
+(4960, 'RobertTurnerJune_4960', 'Robert Turner ', 7.4, 2, '03/15/2022', 2, 'No', NULL, NULL, '31:39.3', 1, '31:39.3', 'No', NULL, NULL),
+(4699, 'RobertDavisJune_4699.pdf', 'Robert Davis', 6.1, 2, '00:00.0', 2, 'No', NULL, NULL, '31:39.3', 1, '31:39.3', 'No', NULL, NULL),
+(4964, 'PrudenceBennett02_4964.pdf', 'Prudence Bennett', 7.5, 2, '12/15/2022', 2, 'No', NULL, NULL, '31:39.3', 1, '31:39.3', 'No', NULL, NULL),
+(4968, 'PatriciaHarris05_4968.pdf', 'Patricia Harris', 6, 1, '00:00.0', 1, 'No', NULL, NULL, '31:39.2', 1, '31:39.2', 'No', NULL, NULL),
+(4922, 'PatriciaDavisAugust_4922.pdf', 'Patricia Davis', 7.2, 2, '00:00.0', 2, 'No', NULL, NULL, '31:39.2', 1, '31:39.2', 'No', NULL, NULL),
+(4917, 'OliviaDavis09_4917.pdf', 'Olivia Davis', 7.1, 3, '02/15/2022', 3, 'No', NULL, NULL, '31:39.1', 1, '31:39.1', 'No', NULL, NULL),
+(4958, 'OliviaAnderson12_4958.pdf', 'Olivia Anderson', 7.2, 3, '02/15/2022', 3, 'No', NULL, NULL, '31:39.1', 1, '31:39.1', 'No', NULL, NULL);
+
+
+
+
+
+
+
