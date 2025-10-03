@@ -1,0 +1,135 @@
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+
+
+edit_button_renderer = JsCode('''
+    class EditBtnCellRenderer {
+        init(params) {
+            this.params = params;
+            this.eGui = document.createElement('div');
+            
+            // --- Center the button in the cell
+            this.eGui.style.display = "flex";
+            this.eGui.style.justifyContent = "center";
+            this.eGui.style.alignItems = "center";
+            
+            this.eGui.innerHTML = `
+             <span>
+                <style>
+                .btn_edit {
+                  background-color: #007bff;
+                  border: none;
+                  color: white;
+                  display: flex;
+                  align-items: center;   /* vertical centering inside button */
+                  justify-content: center; /* horizontal centering inside button */
+                  font-size: 12px;
+                  font-weight: bold;
+                  height: 2.5em;
+                  width: 6em;
+                  cursor: pointer;
+                  border-radius: 6px;
+                  margin: 2px;
+                  line-height: normal;
+                  padding: 0;
+                  transition: background-color 0.2s ease-in-out;
+                }
+                .btn_edit:hover {
+                  background-color: #0056b3;
+                }
+                </style>
+                <button class="btn_edit">Edit</button>
+             </span>
+          `;
+          const btn = this.eGui.querySelector('button');
+          btn.addEventListener('click', () => {
+              try {
+                  this.params.node.setDataValue('__action__', 'edit');
+              } catch (e) { console.error(e); }
+          });
+        }
+        getGui() {
+            return this.eGui;
+        }
+    };
+''')
+
+
+  if not data.empty:
+          st.write("🔎 Search Results")
+  
+          # Add hidden action column
+          data['__action__'] = ''
+  
+          # Build Grid Options dynamically
+          gb = GridOptionsBuilder.from_dataframe(data)
+          for col in data.columns:
+              if col != '__action__':
+                  gb.configure_column(
+                      col,
+                      resizable=True,
+                      sortable=True,
+                      filter=True,
+                      autoHeight=True,
+                      wrapText=True,
+                      cellStyle={'textAlign': 'center', 'fontSize': '14px'}
+                  )
+  
+          # Add Edit button column
+          gb.configure_column(
+              'Edit',
+              headerTooltip='Click to edit member record',
+              editable=False,
+              filter=False,
+              sortable=False,
+              cellRenderer=edit_button_renderer,
+              autoHeight=True,
+              width=120,
+              suppressMovable=True,
+              lockPosition='right'
+          )
+  
+          # Hide helper action column
+          gb.configure_column('__action__', hide=True, editable=False)
+  
+          gb.configure_grid_options(
+              domLayout='normal',
+              enableRangeSelection=False,
+              rowSelection='single',
+              suppressRowClickSelection=True,
+              animateRows=True,
+              rowHeight=50,
+              headerHeight=50
+          )
+  
+          gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
+          grid_options = gb.build()
+  
+          # Render Grid
+          grid_response = AgGrid(
+              data,
+              gridOptions=grid_options,
+              fit_columns_on_grid_load=True,
+              theme='alpine',
+              update_mode='MODEL_CHANGED',
+              allow_unsafe_jscode=True,
+              height=300
+          )
+  
+          # --- Handle Edit button action (same as your old loop) ---
+          if grid_response['data'].__action__.eq('edit').any():
+              selected_row = grid_response['data'][grid_response['data']['__action__'] == 'edit'].iloc[0]
+  
+              st.session_state['edit_index'] = selected_row['File Name']
+              st.session_state['Member_id'] = selected_row['Member_id']
+  
+              # Reset states exactly as before
+              st.session_state['updated_data'] = {}
+              st.session_state['original_data'] = {}
+              st.session_state['compliance_status'] = {}
+              st.session_state['page_number'] = 1
+              st.session_state['field_compliance'] = {}
+              st.session_state['show_confirmation'] = {}
+              st.session_state['pending_updates'] = {}
+              st.session_state['pending_measure'] = None
+              st.session_state['has_changes'] = False
+                  
