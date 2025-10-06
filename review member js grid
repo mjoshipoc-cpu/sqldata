@@ -132,4 +132,53 @@ edit_button_renderer = JsCode('''
               st.session_state['pending_updates'] = {}
               st.session_state['pending_measure'] = None
               st.session_state['has_changes'] = False
+
+
+
+
+
+#--------------------------------------------
+col1, col2, col3 = st.columns([1, 2, 1])
+with col1:
+    search_value = st.text_input(
+        f'**Search {search_option}**',
+        placeholder=f"Enter {search_option}",
+        value=field_value
+    )
+#------------------------------------------
+
+
+st.markdown("""
+                                <style>
+                                /* --- Custom Page Button Styling --- */
+                                div[data-testid="stButton"] > button[kind="secondary"] {
+                                    border: 1px solid #FA6800;        /* blue border */
+                                    background-color: #FA6800;        /* base color */
+                                    color: white;
+                                    border-radius: 6px;
+                                    padding: 3px 8px;      /* smaller height and width */
+                                    font-size: 13px;    
+                                    font-weight: 500;
+                                    cursor: pointer;
+                                    box-shadow: 0px 3px 6px rgba(0, 0, 0, 0.2);  /* slight 3D effect */
+                                    transition: all 0.2s ease-in-out;
+                                    margin-top: 10px;                 /* ✅ moves button slightly downward */
+                                }
+
+                                /* Hover effect: make grey and 3D pop */
+                                div[data-testid="stButton"] > button[kind="secondary"]:hover {
+                                    background-color: #FFA05C !important;
+                                    color: #333 !important;
+                                    border-color: #999 !important;
+                                    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.3);
+                                    transform: translateY(-1px);
+                                }
+
+                                /* Active (pressed) state */
+                                div[data-testid="stButton"] > button[kind="secondary"]:active {
+                                    transform: translateY(1px);
+                                    box-shadow: inset 0px 2px 4px rgba(0, 0, 0, 0.3);
+                                }
+                                </style>
+                            """, unsafe_allow_html=True)
                   
