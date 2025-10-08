@@ -181,4 +181,163 @@ st.markdown("""
                                 }
                                 </style>
                             """, unsafe_allow_html=True)
+
+
+----------ADD this updated function in spec_model_utils file----------
+
+def render_spec_modal(sheet_name: str, html_content: str):
+    """
+    Clean professional modal (no buttons inside).
+    - Opens when ℹ️ is clicked
+    - Closes when clicking outside or re-clicking ℹ️
+    - Draggable, resizable, blurred background
+    - Smooth open/close animation
+    - Fully synced with Streamlit session_state
+    """
+
+    import streamlit as st
+    import streamlit.components.v1 as components
+    import html
+    from textwrap import dedent
+
+    modal_id = f"modal_{''.join(ch if ch.isalnum() else '_' for ch in str(sheet_name))}"
+    safe_title = html.escape(str(sheet_name))
+
+    injected_html = dedent(f"""
+    <style>
+    /* Background Overlay */
+    .{modal_id}_overlay {{
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.35);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+    }}
+    .{modal_id}_overlay.show {{
+        opacity: 1;
+        pointer-events: auto;
+    }}
+
+    /* Modal Window */
+    .{modal_id}_window {{
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+        width: 820px;
+        max-width: 90%;
+        height: 600px;
+        max-height: 90%;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        transform: translateY(20px) scale(0.97);
+        opacity: 0;
+        transition: all 0.3s ease;
+        position: relative;
+        resize: both;
+    }}
+    .{modal_id}_overlay.show .{modal_id}_window {{
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }}
+
+    /* Header */
+    .{modal_id}_header {{
+        background: linear-gradient(180deg,#fafbfc,#f2f4f6);
+        padding: 10px 16px;
+        font-weight: 600;
+        color: #1f2937;
+        cursor: grab;
+        user-select: none;
+        border-bottom: 1px solid #e5e7eb;
+    }}
+
+    /* Body */
+    .{modal_id}_body {{
+        padding: 14px;
+        overflow-y: auto;
+        flex: 1;
+    }}
+
+    @media (max-width: 640px) {{
+        .{modal_id}_window {{
+            width: 95%;
+            height: 80%;
+        }}
+    }}
+    </style>
+
+    <div id="{modal_id}_overlay" class="{modal_id}_overlay">
+        <div id="{modal_id}_window" class="{modal_id}_window">
+            <div id="{modal_id}_header" class="{modal_id}_header">{safe_title} Details</div>
+            <div class="{modal_id}_body">{html_content}</div>
+        </div>
+    </div>
+
+    <script>
+    (function() {{
+        const overlay = document.getElementById('{modal_id}_overlay');
+        const modal = document.getElementById('{modal_id}_window');
+        const header = document.getElementById('{modal_id}_header');
+
+        // Fade in
+        setTimeout(() => overlay.classList.add('show'), 20);
+
+        // Dragging
+        let dragging = false, offsetX = 0, offsetY = 0;
+        header.addEventListener('mousedown', e => {{
+            dragging = true;
+            const rect = modal.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+            header.style.cursor = 'grabbing';
+        }});
+        window.addEventListener('mousemove', e => {{
+            if (!dragging) return;
+            modal.style.position = 'fixed';
+            modal.style.left = (e.clientX - offsetX) + 'px';
+            modal.style.top = (e.clientY - offsetY) + 'px';
+        }});
+        window.addEventListener('mouseup', () => {{
+            dragging = false;
+            header.style.cursor = 'grab';
+        }});
+
+        // Close when clicking outside
+        overlay.addEventListener('click', e => {{
+            if (e.target === overlay) {{
+                // Hide visually
+                overlay.classList.remove('show');
+                setTimeout(() => {{
+                    overlay.style.display = 'none';
+                    // Update Streamlit session state & rerun app
+                    window.parent.postMessage({{
+                        isStreamlitMessage: true,
+                        type: 'streamlit:setComponentValue',
+                        key: 'show_modal',
+                        value: false
+                    }}, '*');
+                    window.parent.postMessage({{
+                        isStreamlitMessage: true,
+                        type: 'streamlit:setComponentValue',
+                        key: 'current_measure',
+                        value: null
+                    }}, '*');
+                    window.parent.postMessage({{type: 'streamlit:rerun'}}, '*');
+                }}, 250);
+            }}
+        }});
+    }})();
+    </script>
+    """)
+
+    # Height ensures modal loads correctly; disappears on rerun
+    components.html(injected_html, height=650, scrolling=True)
+
                   
