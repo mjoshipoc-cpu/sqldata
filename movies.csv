@@ -4,3 +4,21 @@ movieId,title,genres
 3,Grumpier Old Men (1995),Comedy|Romance
 4,Waiting to Exhale (1995),Comedy|Drama|Romance
 5,Father of the Bride Part II (1995),Comedy
+
+
+•	Setup: Create an S3 bucket with two folders — /raw and /curated. Upload sample CSV data into /raw.
+•	Redshift Setup: Use Redshift Serverless with a workgroup and namespace. Configure an IAM role to allow access to S3 and Glue.
+•	Glue Crawler for Raw Data: Run a Glue crawler to catalog the raw S3 data into the Glue Data Catalog database.
+•	Glue Visual ETL Job:
+o	Source: Raw dataset from Glue Catalog.
+o	Transformations:
+	Select only required columns (e.g., movieId, title, genres).
+	Split genres column into multiple rows or normalize it.
+	Apply filters (e.g., exclude null or empty titles).
+o	Target: Write the transformed dataset back to the /curated/ folder in S3 in Parquet format.
+•	Glue Crawler for Curated Data: Catalog the curated dataset into the same Glue database.
+•	External Schema in Redshift: Create an external schema linked to the Glue Data Catalog.
+•	Query in Redshift:
+o	Query curated table to confirm transformed structure.
+o	Perform analytics queries, e.g., count movies per genre, list top genres, etc.
+
