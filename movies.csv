@@ -6,19 +6,84 @@ movieId,title,genres
 5,Father of the Bride Part II (1995),Comedy
 
 
-•	Setup: Create an S3 bucket with two folders — /raw and /curated. Upload sample CSV data into /raw.
-•	Redshift Setup: Use Redshift Serverless with a workgroup and namespace. Configure an IAM role to allow access to S3 and Glue.
-•	Glue Crawler for Raw Data: Run a Glue crawler to catalog the raw S3 data into the Glue Data Catalog database.
-•	Glue Visual ETL Job:
-o	Source: Raw dataset from Glue Catalog.
-o	Transformations:
-	Select only required columns (e.g., movieId, title, genres).
-	Split genres column into multiple rows or normalize it.
-	Apply filters (e.g., exclude null or empty titles).
-o	Target: Write the transformed dataset back to the /curated/ folder in S3 in Parquet format.
-•	Glue Crawler for Curated Data: Catalog the curated dataset into the same Glue database.
-•	External Schema in Redshift: Create an external schema linked to the Glue Data Catalog.
-•	Query in Redshift:
-o	Query curated table to confirm transformed structure.
-o	Perform analytics queries, e.g., count movies per genre, list top genres, etc.
+# End-to-End Data Pipeline Lab (AWS)
+
+## Scenario
+You are working as a **Data Engineer** for an e-commerce company. The company wants to build a modern data pipeline on AWS to analyze customer purchases and generate sales insights. Currently, customer and order data is uploaded as CSV files into an S3 bucket. Your task is to design and implement a pipeline that ingests this data, transforms it, stores it in a queryable format, and makes it available for BI dashboards.  
+
+---
+
+## Tasks
+
+### 1. Data Ingestion
+- Upload raw CSV files (`customers.csv` and `orders.csv`) to **S3** under the path:
+  ```
+  s3://ecommerce-data-lake/raw/
+  ```
+
+### 2. Data Cataloging
+- Create an AWS **Glue Crawler** to scan the `raw/` folder and populate the Glue Data Catalog.  
+- Verify that two tables (`customers_raw`, `orders_raw`) appear in the Data Catalog.
+
+### 3. ETL with AWS Glue
+- Create an AWS **Glue PySpark Job** to:
+  - Join customers and orders on `customer_id`
+  - Add a calculated column `total_amount = quantity * price`
+  - Save the result as **Parquet** into:
+    ```
+    s3://ecommerce-data-lake/curated/orders_customers/
+    ```
+
+### 4. Querying with Athena
+- Create a second Glue Crawler for the `curated/` folder.  
+- Run Athena queries such as:
+  ```sql
+  SELECT name, city, product, total_amount
+  FROM orders_customers
+  WHERE total_amount > 1000;
+  ```
+
+### 5. Data Warehousing (Optional)
+- Load the curated dataset into **Amazon Redshift** using the `COPY` command.  
+- Create a query to calculate **total sales per city**.
+
+### 6. Visualization
+- Connect **Amazon QuickSight** to Athena or Redshift.  
+- Build a dashboard showing:
+  - Top 5 customers by total sales
+  - Total sales by city
+  - Most sold products
+
+### 7. Orchestration
+- Use **AWS Step Functions** to orchestrate:
+  - Trigger Glue ETL job
+  - Run Athena query
+  - Send SNS notification on completion
+
+### 8. Monitoring
+- Enable **CloudWatch Logs** for Glue jobs.  
+- Create a **CloudWatch Alarm** to alert if the Glue job fails.
+
+---
+
+## Sample Data
+
+### customers.csv
+```csv
+customer_id,name,city,email
+C001,Alice,New York,alice@email.com
+C002,Bob,Boston,bob@email.com
+C003,Charlie,Chicago,charlie@email.com
+C004,David,Denver,david@email.com
+```
+
+### orders.csv
+```csv
+order_id,customer_id,product,quantity,price,order_date
+1001,C001,Laptop,2,1200,2025-09-01
+1002,C002,Mouse,5,25,2025-09-01
+1003,C001,Keyboard,3,45,2025-09-02
+1004,C003,Monitor,1,300,2025-09-02
+1005,C004,Laptop,1,1200,2025-09-03
+```
 
