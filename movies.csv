@@ -1,37 +1,248 @@
-Create Table Provider_scorecard(
-Request_instance_id numeric(11,0) NULL,
-Book_NM varchar(10) NULL,
-Member_ID varchar(50) NULL,
-Member_Gender varchar(50) NULL,
-Group_id varchar(50) NULL,
-Provider_Name varchar(50) NULL,
-Provider_ID varchar(50) NULL,
-Tin_name varchar(50) NULL,
-Provider_TIN varchar(50) NULL,
-Provider_Address varchar(50) NULL,
-Provider_city varchar(50) NULL,
-Provider_state varchar(50) NULL,
-Provider_zip varchar(50) NULL,
-Provider_county varchar(50) NULL,
-Provider_Phone varchar(50) NULL,
-Provider_Specialty varchar(50) NULL,
-BCS_GAP varchar(5) NULL,
-COL_GAP varchar(5) NULL,
-TRCMR_GAP varchar(5) NULL,
-TRCPE_GAP varchar(5) NULL,
-KED_GAP varchar(5) NULL,
-CBP_GAP varchar(5) NULL,
-GSD_GAP varchar(5) NULL,
-FUH_GAP varchar(5) NULL,
-PPC_GAP varchar(5) NULL,
-SPC_GAP varchar(5) NULL,
-SMC_GAP varchar(5) NULL,
-Year int,
-Quater int,
+op-Level KPIs for GIC / HEDIS (Payer View)
+🔵 1. Gap Closure Rate (Overall) — MOST IMPORTANT
+
+Measures how many gaps were closed/compliant (N) out of all members in denominator.
+
+Gap Closure Rate
+=
+Count(GAP = ’N’)
+Count(GAP IN (’Y’,’N’))
+Gap Closure Rate=
+Count(GAP IN (’Y’,’N’))
+Count(GAP = ’N’)
+	​
+
+
+Do this for:
+
+Each provider
+
+Each measure
+
+Each state/county
+
+Each year (YoY)
+
+Dashboard Use: Provider performance, compliance %
+
+🔵 2. Open Gap Rate
+
+Opposite of closure. Shows risk / opportunity.
+
+Open Gap Rate
+=
+Count(GAP = ’Y’)
+Count(GAP IN (’Y’,’N’))
+Open Gap Rate=
+Count(GAP IN (’Y’,’N’))
+Count(GAP = ’Y’)
+	​
+
+
+Dashboard Use: Provider outreach prioritization.
+
+🔵 3. Gaps Closed YoY (Improvement)
+
+Change in performance from prior year to current year.
+
+YoY Improvement
+=
+ClosureRate
+2024
+−
+ClosureRate
+2023
+YoY Improvement=ClosureRate
+2024
+	​
+
+−ClosureRate
+2023
+	​
+
+
+Useful for provider incentive programs.
+
+🔵 4. Total Gaps (Open + Closed)
+Total Eligible
+=
+Count(GAP IN (’Y’,’N’))
+Total Eligible=Count(GAP IN (’Y’,’N’))
+
+This is the denominator count per measure.
+
+🔵 5. Total Open Gaps
+Total Open Gaps
+=
+Count(GAP = ’Y’)
+Total Open Gaps=Count(GAP = ’Y’)
+
+Dashboard Use: Identify high-risk provider locations, counties.
+
+🔵 6. Total Closed Gaps (Compliant)
+Total Closed Gaps
+=
+Count(GAP = ’N’)
+Total Closed Gaps=Count(GAP = ’N’)
+⭐ Measure-Specific KPIs (Repeat for BCS, COL, CBP, KED, etc.)
+
+For each GAP column (e.g., BCS_GAP, COL_GAP):
+
+✔ BCS Gap Closure %
+✔ COL Gap Closure %
+✔ CBP Gap Closure %
+✔ KED Gap Closure %
+✔ FUH Gap Closure %
+✔ SPC/SMC Statin Gap Closure %
+✔ PPC Prenatal/Postpartum Gap Closure %
+
+Formula is always:
+
+𝑁
+𝑌
++
+𝑁
+Y+N
+N
+	​
+
+
+Where:
+
+N = closed
+
+Y = open
+
+NA excluded
+
+⭐ Provider Performance KPIs
+🔵 7. Provider Quality Score (Composite)
+
+Weighted across all measures.
+
+Example weights:
+
+Chronic Care (CBP, KED, SPC, SMC) = 40%
+
+Preventive (BCS, COL, GSD) = 40%
+
+Care Coordination (TRCPE, TRCMR) = 20%
+
+Composite Score
+=
+∑
+(
+Measure Closure Rate
+×
+Weight
 )
+Composite Score=∑(Measure Closure Rate×Weight)
+🔵 8. Provider Ranking Percentile (0–100)
+
+Rank providers by Gap Closure %.
+
+🔵 9. High-Risk Provider Indicator
+
+Flag if provider has:
+
+Open Gap Rate > 40%, OR
+
+Gap Closure YoY < 0
+
+⭐ Geography KPIs (State / County)
+🔵 10. County Gap Burden Index
+Gap Burden
+=
+Total Open Gaps
+Population/Member Count
+Gap Burden=
+Population/Member Count
+Total Open Gaps
+	​
 
 
-This is an urgent ask. I wqnt you to create a schema of the table used for GIC reporting in Hedis in the EXL domain. We discussed it has provider id and address as well. We are looking to create KPIs around gap reporting from payer perspective. Also, please generate synthetic data for this and the provider as well so that we can pass this to Genie and create the needed dashboard at state county level. We expect to have prior years data as well so that we can compare provider performance for different measures across years.
+Shows which counties need intervention/outreach.
+
+🔵 11. State-Level Compliance Score
+
+Average of measure-level closure rates.
+
+⭐ Member / Product KPIs (Book_NM)
+🔵 12. Medicare Gap Closure Rate
+🔵 13. Commercial Gap Closure Rate
+🔵 14. Medicaid Gap Closure Rate
+
+All follow:
+
+ClosureRate
+𝐿
+𝑂
+𝐵
+=
+𝑁
+𝑌
++
+𝑁
+ClosureRate
+LOB
+	​
+
+=
+Y+N
+N
+	​
 
 
+Grouped by Book_NM.
 
+⭐ Operational KPIs
+🔵 15. Gaps Closed per Provider per Quarter
+
+Trend dashboard.
+
+🔵 16. Members with Multiple Open Gaps
+High-Risk Member Count
+=
+members with ≥ 3 gaps open
+High-Risk Member Count=members with ≥ 3 gaps open
+
+Helps stratify outreach.
+
+⭐ BEHAVIORAL KPIs (High-Value for Medicare STARS)
+🔵 17. FUH 7-day closure rate (Follow-up after hospitalization – mental)
+🔵 18. TRCPE completion rate
+🔵 19. TRCMR completion rate
+
+CMS STARS critical measures.
+
+⭐ FINALLY: Payer-Level KPIs (Executive dashboard)
+🔵 20. Overall Quality Score (All Providers)
+
+Weighted across measures, YoY.
+
+🔵 21. “Top 10” High-Performing Providers
+
+Based on composite.
+
+🔵 22. “Bottom 10” Providers (Target List)
+
+Based on open gap %.
+
+🔵 23. YoY Change in Network Quality (%)
+
+Shows entire provider network improvement.
+
+🎁 If you want, I can also give you:
+✓ All KPIs in Power BI DAX
+✓ All KPIs in SQL CASE WHEN
+✓ A ready-made Genie Dashboard Blueprint
+
+State → County → Provider Drill
+
+Measure-level charts
+
+YoY provider matrix
+
+Map visual (county burden)
+
+Provider ranking table
