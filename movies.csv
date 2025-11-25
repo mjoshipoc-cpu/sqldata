@@ -1,96 +1,37 @@
-movieId,title,genres
-1,Toy Story (1995),Adventure|Animation|Children|Comedy|Fantasy
-2,Jumanji (1995),Adventure|Children|Fantasy
-3,Grumpier Old Men (1995),Comedy|Romance
-4,Waiting to Exhale (1995),Comedy|Drama|Romance
-5,Father of the Bride Part II (1995),Comedy
+Create Table Provider_scorecard(
+Request_instance_id numeric(11,0) NULL,
+Book_NM varchar(10) NULL,
+Member_ID varchar(50) NULL,
+Member_Gender varchar(50) NULL,
+Group_id varchar(50) NULL,
+Provider_Name varchar(50) NULL,
+Provider_ID varchar(50) NULL,
+Tin_name varchar(50) NULL,
+Provider_TIN varchar(50) NULL,
+Provider_Address varchar(50) NULL,
+Provider_city varchar(50) NULL,
+Provider_state varchar(50) NULL,
+Provider_zip varchar(50) NULL,
+Provider_county varchar(50) NULL,
+Provider_Phone varchar(50) NULL,
+Provider_Specialty varchar(50) NULL,
+BCS_GAP varchar(5) NULL,
+COL_GAP varchar(5) NULL,
+TRCMR_GAP varchar(5) NULL,
+TRCPE_GAP varchar(5) NULL,
+KED_GAP varchar(5) NULL,
+CBP_GAP varchar(5) NULL,
+GSD_GAP varchar(5) NULL,
+FUH_GAP varchar(5) NULL,
+PPC_GAP varchar(5) NULL,
+SPC_GAP varchar(5) NULL,
+SMC_GAP varchar(5) NULL,
+Year int,
+Quater int,
+)
 
 
-# End-to-End Data Pipeline Lab (AWS)
+This is an urgent ask. I wqnt you to create a schema of the table used for GIC reporting in Hedis in the EXL domain. We discussed it has provider id and address as well. We are looking to create KPIs around gap reporting from payer perspective. Also, please generate synthetic data for this and the provider as well so that we can pass this to Genie and create the needed dashboard at state county level. We expect to have prior years data as well so that we can compare provider performance for different measures across years.
 
-## Scenario
-You are working as a **Data Engineer** for an e-commerce company. The company wants to build a modern data pipeline on AWS to analyze customer purchases and generate sales insights. Currently, customer and order data is uploaded as CSV files into an S3 bucket. Your task is to design and implement a pipeline that ingests this data, transforms it, stores it in a queryable format, and makes it available for BI dashboards.  
-
----
-
-## Tasks
-
-### 1. Data Ingestion
-- Upload raw CSV files (`customers.csv` and `orders.csv`) to **S3** under the path:
-  ```
-  s3://ecommerce-data-lake/raw/
-  ```
-
-### 2. Data Cataloging
-- Create an AWS **Glue Crawler** to scan the `raw/` folder and populate the Glue Data Catalog.  
-- Verify that two tables (`customers_raw`, `orders_raw`) appear in the Data Catalog.
-
-### 3. ETL with AWS Glue
-- Create an AWS **Glue PySpark Job** to:
-  - Join customers and orders on `customer_id`
-  - Add a calculated column `total_amount = quantity * price`
-  - Save the result as **Parquet** into:
-    ```
-    s3://ecommerce-data-lake/curated/orders_customers/
-    ```
-
-### 4. Querying with Athena
-- Create a second Glue Crawler for the `curated/` folder.  
-- Run Athena queries such as:
-  ```sql
-  SELECT name, city, product, total_amount
-  FROM orders_customers
-  WHERE total_amount > 1000;
-  ```
-
-### 5. Data Warehousing (Optional)
-- Load the curated dataset into **Amazon Redshift** using the `COPY` command.  
-- Create a query to calculate **total sales per city**.
-
-### 6. Visualization
-- Connect **Amazon QuickSight** to Athena or Redshift.  
-- Build a dashboard showing:
-  - Top 5 customers by total sales
-  - Total sales by city
-  - Most sold products
-
-### 7. Orchestration
-- Use **AWS Step Functions** to orchestrate:
-  - Trigger Glue ETL job
-  - Run Athena query
-  - Send SNS notification on completion
-
-### 8. Monitoring
-- Enable **CloudWatch Logs** for Glue jobs.  
-- Create a **CloudWatch Alarm** to alert if the Glue job fails.
-
----
-
-## Sample Data
-
-### customers.csv
-```csv
-customer_id,name,city,email
-C001,Alice,New York,alice@email.com
-C002,Bob,Boston,bob@email.com
-C003,Charlie,Chicago,charlie@email.com
-C004,David,Denver,david@email.com
-```
-
-### orders.csv
-```csv
-order_id,customer_id,product,quantity,price,order_date
-1001,C001,Laptop,2,1200,2025-09-01
-1002,C002,Mouse,5,25,2025-09-01
-1003,C001,Keyboard,3,45,2025-09-02
-1004,C003,Monitor,1,300,2025-09-02
-1005,C004,Laptop,1,1200,2025-09-03
-```
-
-
-https://www.udemy.com/course/100-days-of-code/?couponCode=25BBPMXNVD35V2
-https://apc01.safelinks.protection.outlook.com/?url=https%3A%2F%2Fwww.udemy.com%2Fcourse%2Fcomplete-python-with-ai-skills-to-get-your-dream-it-job%2F%3FcouponCode%3D25BBPMXNVD35V2&data=05%7C02%7CMohit.Joshi%40exlservice.com%7Ced8b64efb83c4f901a9e08de13136bba%7Cdafe49bc5ac3431097b43e44a28cbf18%7C0%7C0%7C638969171342857776%7CUnknown%7CTWFpbGZsb3d8eyJFbXB0eU1hcGkiOnRydWUsIlYiOiIwLjAuMDAwMCIsIlAiOiJXaW4zMiIsIkFOIjoiTWFpbCIsIldUIjoyfQ%3D%3D%7C0%7C%7C%7C&sdata=xBy0HuSIJI8Fk0DwHDqHKUToV3qw5Ofsge431j6pBtA%3D&reserved=0
-
- 
 
 
