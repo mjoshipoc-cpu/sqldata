@@ -1,11 +1,17 @@
-CREATE OR REPLACE TABLE gold_vbc_domain AS
+CREATE OR REPLACE TABLE gold_vbc_composite AS
 SELECT *,
-(BP_Control_Rate + A1c_Control_Rate + LDL_Control_Rate) / 3 AS Chronic_Score,
+0.32*Chronic_Score +
+0.28*Preventive_Score +
+0.20*Care_Coordination_Score +
+0.20*Behavioral_Score AS Composite_VBC_Score
+FROM gold_vbc_domain;
 
-(BPD_Closure + COA_Closure + LSC_Closure + WCC_Closure) / 4 AS Preventive_Score,
 
-(PPC_Closure + TRC_Closure) / 2 AS Care_Coordination_Score,
-
-GSD_Closure AS Behavioral_Score
-
-FROM gold_gap_closure;
+CREATE OR REPLACE TABLE gold_vbc_final AS
+SELECT *,
+CASE
+  WHEN NTILE(5) OVER (ORDER BY Composite_VBC_Score DESC) = 1 THEN 'Gold'
+  WHEN NTILE(5) OVER (ORDER BY Composite_VBC_Score DESC) IN (2,3) THEN 'Silver'
+  ELSE 'Bronze'
+END AS Provider_Tier
+FROM gold_vbc_composite;
