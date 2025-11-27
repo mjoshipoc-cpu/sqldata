@@ -1,17 +1,36 @@
-from pyspark.sql.functions import rand, when, floor, lit, expr
+WITH closure AS (
+SELECT
+    (SUM(CASE WHEN BPD_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN BPD_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS BPD_Closure,
 
-df = spark.table("silver_provider_clean")
+    (SUM(CASE WHEN CBP_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN CBP_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS CBP_Closure,
 
-df_random = df.withColumn(
-    "Random_Year",
-    when(rand() < 0.5, lit(2024)).otherwise(lit(2025))
-).withColumn(
-    "Random_Month",
-    (floor(rand()*12) + 1).cast("int")
-).withColumn(
-    "Random_Day",
-    (floor(rand()*28) + 1).cast("int")
-).withColumn(
-    "Random_Date",
-    expr("to_date(concat(Random_Year,'-',Random_Month,'-',Random_Day))")
+    (SUM(CASE WHEN COA_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN COA_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS COA_Closure,
+
+    (SUM(CASE WHEN GSD_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN GSD_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS GSD_Closure,
+
+    (SUM(CASE WHEN LSC_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN LSC_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS LSC_Closure,
+
+    (SUM(CASE WHEN PPC_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN PPC_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS PPC_Closure,
+
+    (SUM(CASE WHEN TRC_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN TRC_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS TRC_Closure,
+
+    (SUM(CASE WHEN WCC_Gap = 'N' THEN 1 ELSE 0 END) * 1.0) /
+    (SUM(CASE WHEN WCC_Gap IN ('Y','N') THEN 1 ELSE 0 END)) AS WCC_Closure
+FROM silver_provider_clean
 )
+
+SELECT 'BPD' AS Measure, BPD_Closure AS Gap_Closure FROM closure UNION ALL
+SELECT 'CBP', CBP_Closure FROM closure UNION ALL
+SELECT 'COA', COA_Closure FROM closure UNION ALL
+SELECT 'GSD', GSD_Closure FROM closure UNION ALL
+SELECT 'LSC', LSC_Closure FROM closure UNION ALL
+SELECT 'PPC', PPC_Closure FROM closure UNION ALL
+SELECT 'TRC', TRC_Closure FROM closure UNION ALL
+SELECT 'WCC', WCC_Closure FROM closure;
