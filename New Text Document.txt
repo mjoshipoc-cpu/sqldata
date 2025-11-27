@@ -1,11 +1,6 @@
-from pyspark.sql.types import IntegerType, DoubleType
-
-df_clean = df_clean \
-    .withColumn("BP_Systolic", col("BP_Systolic").cast(DoubleType())) \
-    .withColumn("BP_Diastolic", col("BP_Diastolic").cast(DoubleType())) \
-    .withColumn("HbA1c", col("HbA1c").cast(DoubleType())) \
-    .withColumn("LDL", col("LDL").cast(DoubleType())) \
-    .withColumn("ER_Visits", col("ER_Visits").cast(IntegerType())) \
-    .withColumn("Hospital_Admits", col("Hospital_Admits").cast(IntegerType())) \
-    .withColumn("Readmission_30_Day", col("Readmission_30_Day").cast(IntegerType())) \
-    .withColumn("PMPM_Cost", col("PMPM_Cost").cast(DoubleType()))
+CREATE OR REPLACE TABLE gold_clinical AS
+SELECT *,
+CASE WHEN BP_Systolic < 140 AND BP_Diastolic < 90 THEN 1 ELSE 0 END AS BP_Controlled,
+CASE WHEN HbA1c < 8 THEN 1 ELSE 0 END AS A1c_Controlled,
+CASE WHEN LDL < 100 THEN 1 ELSE 0 END AS LDL_Controlled
+FROM silver_provider_clean;
