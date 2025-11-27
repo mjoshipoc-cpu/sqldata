@@ -1,17 +1,21 @@
-CREATE OR REPLACE TABLE gold_vbc_composite AS
-SELECT *,
-0.32*Chronic_Score +
-0.28*Preventive_Score +
-0.20*Care_Coordination_Score +
-0.20*Behavioral_Score AS Composite_VBC_Score
-FROM gold_vbc_domain;
+KPI Tiles (Recommended):
 
+Total Providers
 
-CREATE OR REPLACE TABLE gold_vbc_final AS
-SELECT *,
-CASE
-  WHEN NTILE(5) OVER (ORDER BY Composite_VBC_Score DESC) = 1 THEN 'Gold'
-  WHEN NTILE(5) OVER (ORDER BY Composite_VBC_Score DESC) IN (2,3) THEN 'Silver'
-  ELSE 'Bronze'
-END AS Provider_Tier
-FROM gold_vbc_composite;
+Gold Providers
+
+Silver Providers
+
+Bronze Providers
+
+Total Members
+
+Avg Composite VBC Score
+
+Avg PMPM Cost
+
+ER Visits per 1000
+
+Admit Rate per 1000
+
+Overall Gap Closure %
