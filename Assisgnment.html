@@ -1,15 +1,33 @@
-CREATE OR REPLACE TABLE gold_vbc_insights AS 
-SELECT *,
-CASE 
-    WHEN Composite_VBC_Score < 0.55 AND Preventive_Score < 0.5 THEN 
-        'Low composite score driven by poor preventive gap closure'
-    WHEN Composite_VBC_Score < 0.55 AND Chronic_Score < 0.5 THEN 
-        'Low composite score due to weak chronic care control'
-    WHEN Composite_VBC_Score < 0.55 AND Care_Coordination_Score < 0.5 THEN
-        'Low VBC score due to poor TRC and PPC follow-up'
-    WHEN Composite_VBC_Score < 0.55 AND GSD_Closure < 0.5 THEN
-        'Low score due to low GSD behavioral health gap closure'
-    ELSE 
-        'Provider performing within expected range'
-END AS Provider_Insight
-FROM gold_vbc_final;
+CASE
+    WHEN BPD_Closure < 0.5 THEN 'BPD screening gap is low'
+    WHEN CBP_Closure < 0.5 THEN 'CBP BP control gap is low'
+    WHEN COA_Closure < 0.5 THEN 'COA assessment gap is low'
+    WHEN GSD_Closure < 0.5 THEN 'Behavioral GSD gap is low'
+    WHEN LSC_Closure < 0.5 THEN 'LSC cervical cancer screening gap is low'
+    WHEN PPC_Closure < 0.5 THEN 'PPC postpartum care is low'
+    WHEN TRC_Closure < 0.5 THEN 'TRC follow-up after discharge is low'
+    WHEN WCC_Closure < 0.5 THEN 'WCC adolescent wellness check gap is low'
+    ELSE 'All major gaps performing adequately'
+END AS Primary_Gap_Driver,
+        CASE
+    WHEN BPD_Closure < 0.5 THEN 'Improve breast cancer screening outreach for eligible women'
+    WHEN CBP_Closure < 0.5 THEN 'Improve hypertension control outreach and medication follow-up'
+    WHEN COA_Closure < 0.5 THEN 'Improve care of older adults assessments and follow-ups'
+    WHEN GSD_Closure < 0.5 THEN 'Improve behavioral follow-ups and depression management'
+    WHEN LSC_Closure < 0.5 THEN 'Increase cervical screening reminder campaigns'
+    WHEN PPC_Closure < 0.5 THEN 'Improve postpartum follow-ups within 7–84 days'
+    WHEN TRC_Closure < 0.5 THEN 'Strengthen transitions of care follow-up calls'
+    WHEN WCC_Closure < 0.5 THEN 'Improve adolescent annual wellness check completions'
+    ELSE 'Maintain current quality; no immediate gap concern'
+END AS Gap_Improvement_Action,(
+ (1 - BPD_Closure) +
+ (1 - CBP_Closure) +
+ (1 - COA_Closure) +
+ (1 - GSD_Closure) +
+ (1 - LSC_Closure) +
+ (1 - PPC_Closure) +
+ (1 - TRC_Closure) +
+ (1 - WCC_Closure)
+) / 8 AS Gap_Severity_Index
+
+
