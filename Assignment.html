@@ -1,41 +1,65 @@
-CREATE OR REPLACE VIEW v_network_health_summary AS
-SELECT
-    Year,
+For Network_Composite_Score
 
-    -- Overall quality
-    AVG(Composite_VBC_Score)           AS Network_Composite_Score,
-    AVG(Chronic_Score)                 AS Network_Chronic_Score,
-    AVG(Preventive_Score)              AS Network_Preventive_Score,
-    AVG(Care_Coordination_Score)       AS Network_Coordination_Score,
-    AVG(Behavioral_Score)              AS Network_Behavioral_Score,
+Description:
+“Overall composite VBC score for the network for this year.”
 
-    -- Provider tier distribution
-    COUNT(DISTINCT Provider_ID)                                        AS Total_Providers,
-    SUM(CASE WHEN Final_Provider_Tier = 'Gold'   THEN 1 ELSE 0 END)    AS Gold_Providers,
-    SUM(CASE WHEN Final_Provider_Tier = 'Silver' THEN 1 ELSE 0 END)    AS Silver_Providers,
-    SUM(CASE WHEN Final_Provider_Tier = 'Bronze' THEN 1 ELSE 0 END)    AS Bronze_Providers,
+Synonyms:
+network health, network vbc score, overall quality, quality score
 
-    -- Gaps (network averages)
-    AVG(BPD_Closure) AS BPD_Closure_Avg,
-    AVG(CBP_Closure) AS CBP_Closure_Avg,
-    AVG(COA_Closure) AS COA_Closure_Avg,
-    AVG(GSD_Closure) AS GSD_Closure_Avg,
-    AVG(LSC_Closure) AS LSC_Closure_Avg,
-    AVG(PPC_Closure) AS PPC_Closure_Avg,
-    AVG(TRC_Closure) AS TRC_Closure_Avg,
-    AVG(WCC_Closure) AS WCC_Closure_Avg,
+For other fields:
 
-    -- Utilization & cost
-    AVG(ER_Visits_per_1000) AS Network_ER_1000,
-    AVG(Readmission_Rate)   AS Network_Readmission_Rate,
-    AVG(Avg_PMPM)           AS Network_PMPM,
+Network_Chronic_Score → “network chronic care score”
+Synonyms: chronic performance, chronic score
 
-    -- Simple health label
-    CASE
-        WHEN AVG(Composite_VBC_Score) >= 0.75 THEN 'High-performing network'
-        WHEN AVG(Composite_VBC_Score) >= 0.60 THEN 'Moderate network – needs improvement'
-        ELSE 'Low-performing network – high priority for intervention'
-    END AS Network_Health_Label
+Network_Preventive_Score → “network preventive care score”
+Synonyms: preventive performance, screening performance
 
-FROM provider_yearly_tier
-GROUP BY Year;
+Network_ER_1000 →
+Synonyms: network er rate, er per 1000, emergency rate
+
+Network_PMPM →
+Synonyms: network pmpm, average pmpm, cost per member per month
+
+Network_Health_Label →
+Description: “Text label that summarizes overall network health.”
+Synonyms: network health status, overall health label
+
+5️⃣ Now ask Genie the same question again
+
+Try these prompts exactly after the above steps:
+
+“Show current network health from v_network_health_summary.”
+
+“What is the current network health for 2024?”
+
+“Summarize network health including tiers, scores, gaps, ER and PMPM.”
+
+If everything is wired:
+
+Genie will now read from v_network_health_summary
+
+It has multiple fields to talk about
+
+And it knows “network health” ≈ this view + these columns
+
+So instead of just:
+
+“Composite score = 0.63”
+
+You’ll get something like:
+
+“Composite score = 0.63, chronic = 0.61, preventive = 0.58,
+ER/1000 = 243, PMPM = 10,400, 90 Gold, 70 Silver, 90 Bronze —
+overall: Moderate network, improvement required.”
+
+6️⃣ Quick hack if you don’t want to build a view right now
+
+If you want a quick win without creating a new view:
+
+Ask Genie more specific:
+
+“Show average composite, chronic, preventive, coordination and behavioral score for the network.”
+
+or
+
+“Show overall composite score, tier distri
