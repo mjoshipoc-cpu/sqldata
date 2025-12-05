@@ -1,65 +1,347 @@
-For Network_Composite_Score
+<div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; line-height: 1.5;">
 
-Description:
-“Overall composite VBC score for the network for this year.”
+  <!-- HEADER -->
+  <header style="border-bottom: 2px solid #e0e0e0; padding-bottom: 8px; margin-bottom: 16px;">
+    <h1 style="margin: 0 0 4px 0; font-size: 26px;">📘 VBC Glossary – Provider Performance Dashboard</h1>
+    <p style="margin: 0; color: #555;">
+      Reference page for all KPIs & terms used in the Value-Based Care (VBC) Databricks dashboard.
+    </p>
+  </header>
 
-Synonyms:
-network health, network vbc score, overall quality, quality score
+  <!-- QUICK NAVIGATION -->
+  <section style="background: #f8f9fa; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; border: 1px solid #e0e0e0;">
+    <h2 style="margin-top: 0; font-size: 18px;">📚 Quick Navigation</h2>
+    <ul style="margin: 0; padding-left: 18px; column-count: 2;">
+      <li><a href="#chronic" style="text-decoration: none; color: #0366d6;">🔵 Chronic Care Measures</a></li>
+      <li><a href="#preventive" style="text-decoration: none; color: #0366d6;">🟢 Preventive Care Measures</a></li>
+      <li><a href="#carecoord" style="text-decoration: none; color: #0366d6;">🟣 Care Coordination & Access</a></li>
+      <li><a href="#behavioral" style="text-decoration: none; color: #0366d6;">🟤 Behavioral Health</a></li>
+      <li><a href="#utilization" style="text-decoration: none; color: #0366d6;">🟠 Utilization & Cost KPIs</a></li>
+      <li><a href="#gaps" style="text-decoration: none; color: #0366d6;">📏 Gaps & Gap Closure</a></li>
+      <li><a href="#composites" style="text-decoration: none; color: #0366d6;">⭐ Composite Scores & VBC</a></li>
+      <li><a href="#tiers" style="text-decoration: none; color: #0366d6;">🏅 Provider Tiering</a></li>
+    </ul>
+  </section>
 
-For other fields:
+  <!-- MAIN CONTENT WRAPPER (for 2-column feel on wide screens) -->
+  <div style="display: flex; flex-wrap: wrap; gap: 20px;">
 
-Network_Chronic_Score → “network chronic care score”
-Synonyms: chronic performance, chronic score
+    <!-- LEFT MAIN COLUMN -->
+    <div style="flex: 1 1 620px; min-width: 0;">
 
-Network_Preventive_Score → “network preventive care score”
-Synonyms: preventive performance, screening performance
+      <!-- CHRONIC CARE -->
+      <section id="chronic" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">🔵 Chronic Care Measures</h2>
+        <p style="margin-top: 0; color: #555;">
+          These measures track long-term management of conditions like hypertension, diabetes, cholesterol and older adults’ chronic needs.
+        </p>
 
-Network_ER_1000 →
-Synonyms: network er rate, er per 1000, emergency rate
+        <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px;">
+          <thead>
+            <tr style="background: #f1f3f5;">
+              <th style="border: 1px solid #ddd; padding: 6px 8px; text-align: left;">Code</th>
+              <th style="border: 1px solid #ddd; padding: 6px 8px; text-align: left;">Measure Name</th>
+              <th style="border: 1px solid #ddd; padding: 6px 8px; text-align: left;">Meaning (Short)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">CBP</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Controlling High Blood Pressure</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                Percentage of hypertensive members whose blood pressure is under control.
+              </td>
+            </tr>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">BPD</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Diastolic BP Control</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                Diastolic component of blood pressure under control in chronic population.
+              </td>
+            </tr>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">A1C</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Hemoglobin A1c Control</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                Diabetes control measure based on A1c results over the last 3 months.
+              </td>
+            </tr>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">LDL</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Cholesterol Control</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                LDL/cholesterol management, often linked to statin therapy adherence.
+              </td>
+            </tr>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">COA</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Care for Older Adults</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                Includes medication review, functional status assessment and pain assessment for older adults.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
-Network_PMPM →
-Synonyms: network pmpm, average pmpm, cost per member per month
+      <!-- PREVENTIVE CARE -->
+      <section id="preventive" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">🟢 Preventive Care Measures</h2>
+        <p style="margin-top: 0; color: #555;">
+          Measures focused on screenings, counseling, and early detection to prevent complications.
+        </p>
 
-Network_Health_Label →
-Description: “Text label that summarizes overall network health.”
-Synonyms: network health status, overall health label
+        <table style="width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px;">
+          <thead>
+            <tr style="background: #f1f3f5;">
+              <th style="border: 1px solid #ddd; padding: 6px 8px; text-align: left;">Code</th>
+              <th style="border: 1px solid #ddd; padding: 6px 8px; text-align: left;">Measure Name</th>
+              <th style="border: 1px solid #ddd; padding: 6px 8px; text-align: left;">Meaning (Short)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">WCC</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Weight Assessment & Counseling</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                BMI/weight assessment with nutrition and physical activity counseling.
+              </td>
+            </tr>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">LSC</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Lipid Screening</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                Preventive screening for cholesterol and lipid disorders.
+              </td>
+            </tr>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">PPC</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Prenatal & Postpartum Care</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                Measures timeliness and completeness of prenatal and postpartum visits.
+              </td>
+            </tr>
+            <tr>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">TRC</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">Transitions of Care</td>
+              <td style="border: 1px solid #ddd; padding: 6px 8px;">
+                Follow-up and coordination after hospital discharge; often treated as preventive follow-up.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
-5️⃣ Now ask Genie the same question again
+      <!-- CARE COORDINATION -->
+      <section id="carecoord" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">🟣 Care Coordination & Access</h2>
+        <p style="margin-top: 0; color: #555;">
+          Measures that capture how well care is coordinated across settings and over time.
+        </p>
 
-Try these prompts exactly after the above steps:
+        <p style="margin: 4px 0;">
+          <strong>TRC – Transitions of Care</strong><br>
+          Ensures timely follow-up and medication reconciliation after discharge. High TRC performance is associated with lower readmission risk.
+        </p>
 
-“Show current network health from v_network_health_summary.”
+        <p style="margin: 4px 0;">
+          <strong>Care Coordination Score (example):</strong><br>
+          <code>CareCoord_Score = TRC_Score</code>
+        </p>
+      </section>
 
-“What is the current network health for 2024?”
+      <!-- BEHAVIORAL HEALTH -->
+      <section id="behavioral" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">🟤 Behavioral Health</h2>
+        <p style="margin-top: 0; color: #555;">
+          Measures related to mental health screening and management.
+        </p>
 
-“Summarize network health including tiers, scores, gaps, ER and PMPM.”
+        <p style="margin: 4px 0;">
+          <strong>GSD – Depression Screening</strong><br>
+          Identifies members who may have depression or emotional distress. Early detection improves adherence and overall outcomes.
+        </p>
 
-If everything is wired:
+        <p style="margin: 4px 0;">
+          <strong>Behavioral Score (example):</strong><br>
+          <code>Behavioral_Score = GSD_Score</code>
+        </p>
+      </section>
 
-Genie will now read from v_network_health_summary
+      <!-- GAPS -->
+      <section id="gaps" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">📏 Gap Status & Gap Closure</h2>
+        <p style="margin-top: 0; color: #555;">
+          A “gap” indicates whether a quality measure is met or unmet for a member.
+        </p>
 
-It has multiple fields to talk about
+        <ul style="margin-top: 4px; padding-left: 18px;">
+          <li><strong>Gap Value:</strong> Usually stored as <code>Y</code>, <code>N</code>, <code>NA</code></li>
+          <li><strong>Y</strong> = gap closed (measure met)</li>
+          <li><strong>N</strong> = gap open (measure not met)</li>
+          <li><strong>NA</strong> = member not eligible for the measure</li>
+        </ul>
 
-And it knows “network health” ≈ this view + these columns
+        <p style="margin: 4px 0 0 0;"><strong>Eligible Gaps:</strong> All records where Gap ∈ {Y, N}</p>
 
-So instead of just:
+        <p style="margin: 8px 0 4px 0;"><strong>Gap Closure % (member/provider level):</strong></p>
+        <pre style="background: #f6f8fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e0e0e0; font-size: 13px; white-space: pre;">
+Gap Closure % = (# of Y) / (# of Y + # of N) × 100
+        </pre>
+      </section>
 
-“Composite score = 0.63”
+      <!-- UTILIZATION & COST -->
+      <section id="utilization" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">🟠 Utilization & Cost KPIs</h2>
+        <p style="margin-top: 0; color: #555;">
+          These metrics capture healthcare resource usage and cost efficiency at provider or population level.
+        </p>
 
-You’ll get something like:
+        <p style="margin: 4px 0;"><strong>Admit Rate per 1000</strong><br>
+          <code>AdmitRate_1k = (Total Hospital Admits / Total Members) × 1000</code><br>
+          Lower is better – fewer inpatient admissions.
+        </p>
 
-“Composite score = 0.63, chronic = 0.61, preventive = 0.58,
-ER/1000 = 243, PMPM = 10,400, 90 Gold, 70 Silver, 90 Bronze —
-overall: Moderate network, improvement required.”
+        <p style="margin: 4px 0;"><strong>ER Visit Rate per 1000</strong><br>
+          <code>ER_1k = (Total ER Visits / Total Members) × 1000</code><br>
+          Lower is better – fewer emergency room visits.
+        </p>
 
-6️⃣ Quick hack if you don’t want to build a view right now
+        <p style="margin: 4px 0;"><strong>Readmission Rate</strong><br>
+          <code>ReadmissionRate = Total Readmissions (30-day) / Total Hospital Admits</code><br>
+          Lower is better – indicates good discharge planning and follow-up.
+        </p>
 
-If you want a quick win without creating a new view:
+        <p style="margin: 4px 0;"><strong>PMPM – Per Member Per Month</strong><br>
+          <code>PMPM = Total Cost / Member Months</code><br>
+          Core cost KPI. Lower PMPM = more efficient care for comparable quality.
+        </p>
+      </section>
 
-Ask Genie more specific:
+      <!-- COMPOSITES & VBC SCORE -->
+      <section id="composites" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">⭐ Composite Scores & VBC</h2>
+        <p style="margin-top: 0; color: #555;">
+          Composite scores combine multiple measures into a single index for each domain, then into an overall VBC score.
+        </p>
 
-“Show average composite, chronic, preventive, coordination and behavioral score for the network.”
+        <h3 style="font-size: 16px; margin: 8px 0 4px 0;">Chronic Score</h3>
+        <p style="margin: 0 0 6px 0;">
+          Uses CBP, BPD, A1C, LDL, COA. Each measure is converted to a score (for example, 1 − Gap or % gap closed), then averaged:
+        </p>
+        <pre style="background: #f6f8fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e0e0e0; font-size: 13px; white-space: pre;">
+Chronic_Score = Average(CBP_Score, BPD_Score, A1C_Score, LDL_Score, COA_Score)
+        </pre>
 
-or
+        <h3 style="font-size: 16px; margin: 8px 0 4px 0;">Preventive Score</h3>
+        <p style="margin: 0 0 6px 0;">
+          Uses WCC, LSC, PPC, TRC:
+        </p>
+        <pre style="background: #f6f8fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e0e0e0; font-size: 13px; white-space: pre;">
+Preventive_Score = Average(WCC_Score, LSC_Score, PPC_Score, TRC_Score)
+        </pre>
 
-“Show overall composite score, tier distri
+        <h3 style="font-size: 16px; margin: 8px 0 4px 0;">Care Coordination Score</h3>
+        <pre style="background: #f6f8fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e0e0e0; font-size: 13px; white-space: pre;">
+CareCoord_Score = TRC_Score
+        </pre>
+
+        <h3 style="font-size: 16px; margin: 8px 0 4px 0;">Behavioral Score</h3>
+        <pre style="background: #f6f8fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e0e0e0; font-size: 13px; white-space: pre;">
+Behavioral_Score = GSD_Score
+        </pre>
+
+        <h3 style="font-size: 16px; margin: 8px 0 4px 0;">Utilization Score</h3>
+        <p style="margin: 0 0 6px 0;">
+          Built from domain-specific scores like AdmitScore, ERScore, ReadmissionScore, CostScore:
+        </p>
+        <pre style="background: #f6f8fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e0e0e0; font-size: 13px; white-space: pre;">
+Utilization_Score = Average(AdmitScore, ERScore, ReadmissionScore, CostScore)
+        </pre>
+
+        <h3 style="font-size: 16px; margin: 8px 0 4px 0;">VBC Composite Score (Example Weighting)</h3>
+        <p style="margin: 0 0 6px 0;">
+          Example domain weights (can be tuned to contract requirements):
+        </p>
+        <ul style="margin: 0 0 6px 0; padding-left: 18px;">
+          <li>Chronic: 40%</li>
+          <li>Preventive: 25%</li>
+          <li>Care Coordination: 10%</li>
+          <li>Behavioral: 5%</li>
+          <li>Utilization &amp; Cost: 20%</li>
+        </ul>
+        <pre style="background: #f6f8fa; padding: 8px 10px; border-radius: 6px; border: 1px solid #e0e0e0; font-size: 13px; white-space: pre;">
+VBC_Score =
+  0.40 * Chronic_Score +
+  0.25 * Preventive_Score +
+  0.10 * CareCoord_Score +
+  0.05 * Behavioral_Score +
+  0.20 * Utilization_Score
+
+Final_VBC_Score (0–100) = VBC_Score * 100
+        </pre>
+      </section>
+
+      <!-- PROVIDER TIERS -->
+      <section id="tiers" style="margin-bottom: 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 6px;">🏅 Provider Tiering (Example)</h2>
+        <p style="margin-top: 0; color: #555;">
+          Providers can be classified into tiers based on Final VBC Score:
+        </p>
+        <ul style="margin-top: 4px; padding-left: 18px;">
+          <li><strong>Gold</strong>: Final VBC Score ≥ 80</li>
+          <li><strong>Silver</strong>: 65–79</li>
+          <li><strong>Bronze</strong>: &lt; 65</li>
+        </ul>
+        <p style="margin: 4px 0;">
+          These tiers can be used for incentives, recognition, network management, and targeted improvement programs.
+        </p>
+      </section>
+    </div>
+
+    <!-- RIGHT SIDE HIGHLIGHT COLUMN -->
+    <aside style="flex: 0 0 280px; max-width: 320px; min-width: 240px;">
+      <!-- HIGHLIGHT CARD: MOST IMPORTANT CONCEPTS -->
+      <div style="background: #fefefe; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px 12px; margin-bottom: 16px;">
+        <h3 style="margin-top: 0; font-size: 15px;">🔥 Most Important Concepts</h3>
+        <ul style="margin: 4px 0; padding-left: 18px; font-size: 13px;">
+          <li>Chronic Score has the highest weight.</li>
+          <li>PMPM is the key cost KPI.</li>
+          <li>ER / 1000 and Admit / 1000 show avoidable utilization.</li>
+          <li>Gap Closure % drives quality performance.</li>
+        </ul>
+      </div>
+
+      <!-- HIGHLIGHT CARD: HOW TO READ SCORES -->
+      <div style="background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px 12px; margin-bottom: 16px;">
+        <h3 style="margin-top: 0; font-size: 15px;">🧠 How to Read Scores</h3>
+        <ul style="margin: 4px 0; padding-left: 18px; font-size: 13px;">
+          <li>All domain scores (Chronic, Preventive, etc.) are on 0–1 scale.</li>
+          <li>Final VBC Score is on 0–100 scale.</li>
+          <li>Higher = better quality and value.</li>
+          <li>Use tiering (Gold/Silver/Bronze) for quick comparisons.</li>
+        </ul>
+      </div>
+
+      <!-- HIGHLIGHT CARD: INTERPRETATION HINTS -->
+      <div style="background: #fffaf5; border: 1px solid #f3e0b5; border-radius: 8px; padding: 10px 12px;">
+        <h3 style="margin-top: 0; font-size: 15px;">💡 Interpretation Hints</h3>
+        <ul style="margin: 4px 0; padding-left: 18px; font-size: 13px;">
+          <li>Low Chronic + high ER/admit → poor chronic management.</li>
+          <li>High Preventive but low Chronic → early work done, but control still weak.</li>
+          <li>Low TRC & high readmission → poor care coordination.</li>
+          <li>High Behavioral gaps (GSD) → consider mental health outreach.</li>
+        </ul>
+      </div>
+    </aside>
+
+  </div> <!-- end main flex -->
+
+  <!-- FOOTER -->
+  <footer style="border-top: 1px solid #e0e0e0; margin-top: 20px; padding-top: 8px; font-size: 12px; color: #777;">
+    <p style="margin: 0;">
+      Note: This glossary is for analytics and VBC program interpretation. Exact clinical specifications are based on HEDIS/plan policies.
+    </p>
+  </footer>
+
+</div>
