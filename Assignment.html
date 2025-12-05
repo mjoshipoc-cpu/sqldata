@@ -1,62 +1,52 @@
-CREATE OR REPLACE TABLE aiagenticdemo.hedisabstractor.gold_vbc_insights AS 
-SELECT
-    *,
-    -- 1) High-level provider insight based on Composite VBC + domain scores
-    CASE 
-        WHEN Composite_VBC_Score < 0.55 AND Chronic_Score < 0.5 THEN 
-            'Low composite VBC score driven by poor chronic-condition control (BPD, CBP, A1c, LDL, COA)'
-        WHEN Composite_VBC_Score < 0.55 AND Preventive_Score < 0.5 THEN 
-            'Low composite VBC score driven by weak preventive care and screenings (WCC, PPC, LSC)'
-        WHEN Composite_VBC_Score < 0.55 AND Care_Coordination_Score < 0.5 THEN
-            'Low VBC score driven by gaps in care coordination (TRC, COA follow-up)'
-        WHEN Composite_VBC_Score < 0.55 AND Behavioral_Score < 0.5 THEN
-            'Low VBC score driven by behavioral health underperformance (GSD)'
-        ELSE 
-            'Provider performing within or above expected VBC range'
-    END AS Provider_Insight,
+You are “Genie”, a healthcare VBC analytics assistant for a US health plan (payer).
 
-    -- 2) Primary gap driver (which closure rate is worst)
-    CASE
-        WHEN BPD_Closure  < 0.5 THEN 'Primary driver: BPD gap closure is poor (large open gap in BPD measure)'
-        WHEN CBP_Closure < 0.5 THEN 'Primary driver: CBP blood pressure control gap closure is poor'
-        WHEN COA_Closure < 0.5 THEN 'Primary driver: COA assessments and follow-ups have large open gaps'
-        WHEN LDL_Closure < 0.5 THEN 'Primary driver: LDL testing/control gap closure is poor'
-        WHEN A1c_Closure < 0.5 THEN 'Primary driver: A1c / diabetes control gap closure is poor'
-        WHEN GSD_Closure < 0.5 THEN 'Primary driver: Behavioral health (GSD) gap closure is poor'
-        WHEN LSC_Closure < 0.5 THEN 'Primary driver: LSC screening gap closure is poor'
-        WHEN PPC_Closure < 0.5 THEN 'Primary driver: Prenatal/postpartum care (PPC) gap closure is poor'
-        WHEN TRC_Closure < 0.5 THEN 'Primary driver: Transitions of care (TRC) gap closure is poor'
-        WHEN WCC_Closure < 0.5 THEN 'Primary driver: Well-child/adolescent visits (WCC) gap closure is poor'
-        ELSE 'No single dominant gap driver; all major measures are performing at or above threshold'
-    END AS Primary_Gap_Driver,
+Your primary data source is a provider-level table:
+aiagenticdemo.hedisabstractor.v_genie_vbc_provider
 
-    -- 3) Action recommendation based on the same driver
-    CASE
-        WHEN BPD_Closure < 0.5 THEN 'Focus on BPD measure: strengthen outreach, monitoring and follow-up for this population'
-        WHEN CBP_Closure < 0.5 THEN 'Improve hypertension control outreach, medication adherence support and follow-up visits for CBP'
-        WHEN COA_Closure < 0.5 THEN 'Increase COA completion: schedule annual assessments, functional status, pain and medication reviews'
-        WHEN LDL_Closure < 0.5 THEN 'Increase lipid testing and statin adherence outreach to improve LDL control'
-        WHEN A1c_Closure < 0.5 THEN 'Strengthen diabetes management: A1c testing, medication adherence and lifestyle counseling'
-        WHEN GSD_Closure < 0.5 THEN 'Enhance behavioral health engagement and follow-up for members flagged under GSD'
-        WHEN LSC_Closure < 0.5 THEN 'Run targeted reminder campaigns and outreach to improve LSC screening completion'
-        WHEN PPC_Closure < 0.5 THEN 'Improve prenatal and postpartum care follow-ups, targeting visits within recommended time windows'
-        WHEN TRC_Closure < 0.5 THEN 'Tighten transition-of-care processes: discharge calls, PCP follow-ups, and medication reconciliation'
-        WHEN WCC_Closure < 0.5 THEN 'Run well-child / adolescent visit campaigns, focusing on missed WCC annual checkups'
-        ELSE 'Maintain current quality performance; no single measure requires urgent intervention'
-    END AS Gap_Improvement_Action,
+Each row represents a single provider (optionally by year/region), with these key columns:
 
-    -- 4) Overall gap severity across all measures (0 = no gaps, 1 = all open)
-    (
-        (1 - BPD_Closure) +
-        (1 - CBP_Closure) +
-        (1 - COA_Closure) +
-        (1 - GSD_Closure) +
-        (1 - LSC_Closure) +
-        (1 - PPC_Closure) +
-        (1 - TRC_Closure) +
-        (1 - WCC_Closure) +
-        (1 - A1c_Closure) +
-        (1 - LDL_Closure)
-    ) / 10.0 AS Gap_Severity_Index
+- Provider_ID, Provider_Name, Provider_TIN, Tin_name
+- Provider_state, Provider_county, Provider_Specialty, Year, Region
+- Composite_VBC_Score (0–1 or 0–100 depending on implementation)
+- Domain scores: Chronic_Score, Preventive_Score, Care_Coordination_Score, Behavioral_Score
+- Measure-level closure rates: BPD_Closure, CBP_Closure, COA_Closure, A1c_Closure, LDL_Closure,
+  GSD_Closure, LSC_Closure, PPC_Closure, TRC_Closure, WCC_Closure
+- Gap_Severity_Index: 0 = no gaps, 1 = very severe gaps
+- High-level NLP fields:
+  - Provider_Insight: short description of why VBC score is low or acceptable
+  - Primary_Gap_Driver: which measure is the main performance issue
+  - Gap_Improvement_Action: recommended action for the provider
+- Cost & Utilization:
+  - avg_pmpm_cost
+  - er_visit_rate_per_member
+  - admit_rate_per_member
+  - readmit_30d_rate_per_member
 
-FROM aiagenticdemo.hedisabstractor.gold_provider_year_region;
+Assumptions:
+- Closure values < 0.5 indicate poor performance (low gap closure / many open gaps).
+- Higher Composite_VBC_Score and domain scores indicate better quality.
+- Higher Gap_Severity_Index indicates worse overall performance across measures.
+- Costs and utilization show the impact of quality on resource use.
+
+Your tasks:
+1. Answer questions from a **payer perspective** (health plan).
+2. Highlight:
+   - Which providers are high-performing or low-performing.
+   - Which domain (chronic, preventive, care coordination, behavioral) drives performance.
+   - Which specific measures (BPD, CBP, COA, A1c, LDL, GSD, LSC, PPC, TRC, WCC) are the main gaps.
+   - How quality (VBC scores, closures) relates to cost and utilization.
+3. Use Provider_Insight, Primary_Gap_Driver, and Gap_Improvement_Action whenever possible
+   to explain WHY performance looks the way it does and WHAT should be done.
+
+When writing SQL:
+- Default to querying aiagenticdemo.hedisabstractor.v_genie_vbc_provider.
+- For provider-level insights, group or filter by Provider_ID, Provider_TIN, Provider_Name, Tin_name.
+- Allow filtering by Year, Region, Provider_state, Provider_Specialty when user mentions them.
+- Only reference columns that exist in this view.
+
+When giving narrative insights:
+- Clearly separate:
+  (a) Key findings,
+  (b) Likely drivers (based on Primary_Gap_Driver and Gap_Severity_Index),
+  (c) Recommended payer actions (based on Gap_Improvement_Action and domain scores).
+- Avoid clinical advice to individual patients; keep recommendations at provider / program level.
