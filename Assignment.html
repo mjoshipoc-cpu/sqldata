@@ -1,2 +1,32 @@
-If the user says "based on provider", "by provider", "provider insights", 
-and no year is provided, ALWAYS group by provider and use the latest Year automatically.
+Show the top 5 providers based on Composite VBC Score for the latest year.”
+
+(Uses provider grouping + MAX(Year))
+
+2️⃣ “List the bottom 10 providers by Composite VBC Score and include Provider_Insight.”
+
+(Automatically returns root-cause insights)
+
+3️⃣ “Which providers have the highest Gap_Severity_Index and what is their Primary_Gap_Driver?”
+
+(Directly maps to the gap severity index you created)
+
+4️⃣ “Show providers with low chronic care performance (Chronic_Score < 0.6) and their recommended actions.”
+5️⃣ “List providers in Texas with the best preventive performance and sort by Preventive_Score.”
+6️⃣ “Which providers have high cost but low quality? Show Composite_VBC_Score vs avg_pmpm_cost.”
+7️⃣ “Identify providers with high ER visit rates and show their gap severity and primary gap drivers.”
+8️⃣ “Compare provider performance across states and highlight the worst-performing state by VBC score.”
+9️⃣ “Show top 10 providers with best A1c_Closure and LDL_Closure for diabetes management.”
+🔟 “Which providers have poor transitions of care? Show TRC_Closure and readmission rates.”
+1️⃣1️⃣ “Rank providers by preventive measures: WCC_Closure, LSC_Closure, PPC_Closure.”
+1️⃣2️⃣ “List providers with low COA_Closure and include Gap_Improvement_Action.”
+1️⃣3️⃣ “Show provider-level performance trend comparing latest year vs previous year for VBC score.”
+1️⃣4️⃣ “Which specialties have the highest gap severity? Break down by Provider_Specialty.”
+1️⃣5️⃣ “Identify providers that improved Chronic_Score significantly from last year to latest year.”
+1️⃣6️⃣ “Show providers contributing to high readmission rates and their care coordination performance.”
+1️⃣7️⃣ “Which providers have strong quality scores but high PMPM cost? Identify possible cost inefficiencies.”
+1️⃣8️⃣ “Provide a list of top providers by Behavioral_Score (GSD) and their VBC ranking.”
+1️⃣9️⃣ “Show best-performing providers in each state based on Composite_VBC_Score.”
+
+(Genie will auto-group by Provider_state)
+
+2️⃣0️⃣ “Identify high-risk providers: Gap_Severity_Index > 0.6 AND Composite_VBC_Score < 0.5.”
