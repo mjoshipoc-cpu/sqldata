@@ -1,2 +1,95 @@
-Member_ID	Age	Gender	Provider_ID	Provider_Name	Tin_name	Provider_TIN	Provider_Address	Provider_city	Provider_state	Provider_zip	Provider_county	Provider_Phone	Provider_Specialty	BP_Systolic	BP_Diastolic	HbA1c	LDL	ER_Visits	Hospital_Admits	Readmission_30_Day	PMPM_Cost	BPD_Gap	BPD_Score	CBP_Gap	CBP_Score	COA_Gap	COA_Score	GSD_Gap	GSD_Score	LSC_Gap	LSC_Score	PPC_Gap	PPC_Score	TRC_Gap	TRC_Score	WCC_Gap	WCC_Score	Year	Month	A1c_gap	LDL_gap
-M0000460	62	M	P0024	Dr. Anita Desai	Unity Medical Group	70-4099808	3399 Main St	Miami	FL	33101	Miami-Dade County	(826) 311-7799	Endocrinology	152.0986798444506	70.72887394908317	6.26301777673414	122.92694247807792	1	0	0	508.72	N	0	N	0	N	1	NA	0	NA	0	N	0	Y	0	Y	0	2024	1	N	Y
+Member & Provider dimensions
+
+Member_ID – Unique identifier for each member/patient.
+
+Age – Member age (in years) at the time of measurement.
+
+Gender – Member gender (e.g., M/F/Other).
+
+Provider_ID – Unique identifier for each servicing provider.
+
+Provider_Name – Name of the provider (doctor/clinic).
+
+Tin_name – Name associated with the Tax Identification Number (TIN) group.
+
+Provider_TIN – Tax Identification Number for the billing provider/group.
+
+Provider_Address – Street address of the provider.
+
+Provider_city – City where provider is located.
+
+Provider_state – State where provider is located.
+
+Provider_zip – ZIP code of provider location.
+
+Provider_county – County where provider is located.
+
+Provider_Phone – Contact phone number of the provider.
+
+Provider_Specialty – Specialty (e.g., PCP, Cardiology, Endocrinology).
+
+Clinical measurements
+
+BP_Systolic – Systolic blood pressure reading.
+
+BP_Diastolic – Diastolic blood pressure reading.
+
+HbA1c – Latest HbA1c value for diabetic control (%).
+
+LDL – Latest LDL cholesterol value (mg/dL).
+
+Utilization & cost
+
+ER_Visits – Count of emergency room visits for the period.
+
+Hospital_Admits – Number of hospital admissions for the period.
+
+Readmission_30_Day – Indicator/count of readmissions within 30 days.
+
+PMPM_Cost – Per Member Per Month total cost (medical spend).
+
+HEDIS-like gap & score columns
+
+(Gap typically: 1 = open gap / non-compliant, 0 = closed; Score = performance value)
+
+BPD_Gap – Gap flag for Blood Pressure control measure.
+
+BPD_Score – Performance score for BPD (e.g., 0–1 or 0–100).
+
+CBP_Gap – Gap flag for Controlling High Blood Pressure measure.
+
+CBP_Score – Performance score for CBP.
+
+COA_Gap – Gap flag for Care for Older Adults measure.
+
+COA_Score – Performance score for COA.
+
+GSD_Gap – Gap flag for some behavioral/other measure (GSD).
+
+GSD_Score – Performance score for GSD.
+
+LSC_Gap – Gap flag for lung/smoking cessation or similar measure.
+
+LSC_Score – Performance score for LSC.
+
+PPC_Gap – Gap flag for Prenatal/Postpartum Care measure.
+
+PPC_Score – Performance score for PPC.
+
+TRC_Gap – Gap flag for Transition of Care measure.
+
+TRC_Score – Performance score for TRC.
+
+WCC_Gap – Gap flag for Weight Assessment & Counseling / Well-child visits.
+
+WCC_Score – Performance score for WCC.
+
+Time dimensions & additional gaps
+
+Year – Measurement year (e.g., 2024, 2025).
+
+Month – Measurement month (1–12 or month name).
+
+A1c_gap – Gap flag specifically for HbA1c control (diabetes measure).
+
+LDL_gap – Gap flag for LDL control (cholesterol measure.
