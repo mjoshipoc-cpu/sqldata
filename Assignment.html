@@ -1,53 +1,62 @@
 CREATE OR REPLACE TABLE aiagenticdemo.hedisabstractor.gold_vbc_insights AS 
-SELECT *,
-CASE 
-   WHEN Composite_VBC_Score < 0.55 AND Chronic_Score < 0.5 THEN 
-        'Low composite score due to weak chronic care control'
-    WHEN Composite_VBC_Score < 0.55 AND Preventive_Score < 0.5 THEN 
-        'Low composite score driven by poor preventive gap closure'
-    WHEN Composite_VBC_Score < 0.55 AND Care_Coordination_Score < 0.5 THEN
-        'Low VBC score due to poor TRC and PPC follow-up'
-    WHEN Composite_VBC_Score < 0.55 AND Behavioral_Score < 0.5 THEN
-        'Low score due to low GSD behavioral health gap closure'
-    ELSE 
-        'Provider performing within expected range'
-END AS Provider_Insight,
-CASE
-    WHEN BPD_Closure  < 0.5 THEN 'BPD screening gap is low'
-    WHEN CBP_Closure < 0.5 THEN 'CBP BP control gap is low'
-    WHEN COA_Closure < 0.5 THEN 'COA assessment gap is low'
-    WHEN LDL_Closure < 0.5 THEN 'LDL assessment gap is low'
-    WHEN A1c_Closure < 0.5 THEN 'A1c assessment gap is low'
-    WHEN GSD_Closure < 0.5 THEN 'Behavioral GSD gap is low'
-    WHEN LSC_Closure < 0.5 THEN 'LSC cervical cancer screening gap is low'
-    WHEN PPC_Closure < 0.5 THEN 'PPC postpartum care is low'
-    WHEN TRC_Closure < 0.5 THEN 'TRC follow-up after discharge is low'
-    WHEN WCC_Closure < 0.5 THEN 'WCC adolescent wellness check gap is low'
- 
-    ELSE 'All major gaps performing adequately'
-END AS Primary_Gap_Driver,
-        CASE
-    WHEN BPD_Closure < 0.5 THEN 'Improve breast cancer screening outreach for eligible women'
-    WHEN CBP_Closure < 0.5 THEN 'Improve hypertension control outreach and medication follow-up'
-    WHEN LDL_Closure < 0.5 THEN 'LDL assessment gap is low'
-    WHEN A1c_Closure < 0.5 THEN 'A1c assessment gap is low'
-    WHEN COA_Closure < 0.5 THEN 'Improve care of older adults assessments and follow-ups'
-    WHEN GSD_Closure < 0.5 THEN 'Improve behavioral follow-ups and depression management'
-    WHEN LSC_Closure < 0.5 THEN 'Increase cervical screening reminder campaigns'
-    WHEN PPC_Closure < 0.5 THEN 'Improve postpartum follow-ups within 7–84 days'
-    WHEN TRC_Closure < 0.5 THEN 'Strengthen transitions of care follow-up calls'
-    WHEN WCC_Closure < 0.5 THEN 'Improve adolescent annual wellness check completions'
-    ELSE 'Maintain current quality; no immediate gap concern'
-END AS Gap_Improvement_Action,(
- (1 - BPD_Closure) +
- (1 - CBP_Closure) +
- (1 - COA_Closure) +
- (1 - GSD_Closure) +
- (1 - LSC_Closure) +
- (1 - PPC_Closure) +
- (1 - TRC_Closure) +
- (1 - WCC_Closure)+ (1 - A1c_Closure)+ (1 - LDL_Closure)
-) / 8 AS Gap_Severity_Index
+SELECT
+    *,
+    -- 1) High-level provider insight based on Composite VBC + domain scores
+    CASE 
+        WHEN Composite_VBC_Score < 0.55 AND Chronic_Score < 0.5 THEN 
+            'Low composite VBC score driven by poor chronic-condition control (BPD, CBP, A1c, LDL, COA)'
+        WHEN Composite_VBC_Score < 0.55 AND Preventive_Score < 0.5 THEN 
+            'Low composite VBC score driven by weak preventive care and screenings (WCC, PPC, LSC)'
+        WHEN Composite_VBC_Score < 0.55 AND Care_Coordination_Score < 0.5 THEN
+            'Low VBC score driven by gaps in care coordination (TRC, COA follow-up)'
+        WHEN Composite_VBC_Score < 0.55 AND Behavioral_Score < 0.5 THEN
+            'Low VBC score driven by behavioral health underperformance (GSD)'
+        ELSE 
+            'Provider performing within or above expected VBC range'
+    END AS Provider_Insight,
 
+    -- 2) Primary gap driver (which closure rate is worst)
+    CASE
+        WHEN BPD_Closure  < 0.5 THEN 'Primary driver: BPD gap closure is poor (large open gap in BPD measure)'
+        WHEN CBP_Closure < 0.5 THEN 'Primary driver: CBP blood pressure control gap closure is poor'
+        WHEN COA_Closure < 0.5 THEN 'Primary driver: COA assessments and follow-ups have large open gaps'
+        WHEN LDL_Closure < 0.5 THEN 'Primary driver: LDL testing/control gap closure is poor'
+        WHEN A1c_Closure < 0.5 THEN 'Primary driver: A1c / diabetes control gap closure is poor'
+        WHEN GSD_Closure < 0.5 THEN 'Primary driver: Behavioral health (GSD) gap closure is poor'
+        WHEN LSC_Closure < 0.5 THEN 'Primary driver: LSC screening gap closure is poor'
+        WHEN PPC_Closure < 0.5 THEN 'Primary driver: Prenatal/postpartum care (PPC) gap closure is poor'
+        WHEN TRC_Closure < 0.5 THEN 'Primary driver: Transitions of care (TRC) gap closure is poor'
+        WHEN WCC_Closure < 0.5 THEN 'Primary driver: Well-child/adolescent visits (WCC) gap closure is poor'
+        ELSE 'No single dominant gap driver; all major measures are performing at or above threshold'
+    END AS Primary_Gap_Driver,
+
+    -- 3) Action recommendation based on the same driver
+    CASE
+        WHEN BPD_Closure < 0.5 THEN 'Focus on BPD measure: strengthen outreach, monitoring and follow-up for this population'
+        WHEN CBP_Closure < 0.5 THEN 'Improve hypertension control outreach, medication adherence support and follow-up visits for CBP'
+        WHEN COA_Closure < 0.5 THEN 'Increase COA completion: schedule annual assessments, functional status, pain and medication reviews'
+        WHEN LDL_Closure < 0.5 THEN 'Increase lipid testing and statin adherence outreach to improve LDL control'
+        WHEN A1c_Closure < 0.5 THEN 'Strengthen diabetes management: A1c testing, medication adherence and lifestyle counseling'
+        WHEN GSD_Closure < 0.5 THEN 'Enhance behavioral health engagement and follow-up for members flagged under GSD'
+        WHEN LSC_Closure < 0.5 THEN 'Run targeted reminder campaigns and outreach to improve LSC screening completion'
+        WHEN PPC_Closure < 0.5 THEN 'Improve prenatal and postpartum care follow-ups, targeting visits within recommended time windows'
+        WHEN TRC_Closure < 0.5 THEN 'Tighten transition-of-care processes: discharge calls, PCP follow-ups, and medication reconciliation'
+        WHEN WCC_Closure < 0.5 THEN 'Run well-child / adolescent visit campaigns, focusing on missed WCC annual checkups'
+        ELSE 'Maintain current quality performance; no single measure requires urgent intervention'
+    END AS Gap_Improvement_Action,
+
+    -- 4) Overall gap severity across all measures (0 = no gaps, 1 = all open)
+    (
+        (1 - BPD_Closure) +
+        (1 - CBP_Closure) +
+        (1 - COA_Closure) +
+        (1 - GSD_Closure) +
+        (1 - LSC_Closure) +
+        (1 - PPC_Closure) +
+        (1 - TRC_Closure) +
+        (1 - WCC_Closure) +
+        (1 - A1c_Closure) +
+        (1 - LDL_Closure)
+    ) / 10.0 AS Gap_Severity_Index
 
 FROM aiagenticdemo.hedisabstractor.gold_provider_year_region;
