@@ -1,95 +1,53 @@
-Member & Provider dimensions
+CREATE OR REPLACE TABLE aiagenticdemo.hedisabstractor.gold_vbc_insights AS 
+SELECT *,
+CASE 
+   WHEN Composite_VBC_Score < 0.55 AND Chronic_Score < 0.5 THEN 
+        'Low composite score due to weak chronic care control'
+    WHEN Composite_VBC_Score < 0.55 AND Preventive_Score < 0.5 THEN 
+        'Low composite score driven by poor preventive gap closure'
+    WHEN Composite_VBC_Score < 0.55 AND Care_Coordination_Score < 0.5 THEN
+        'Low VBC score due to poor TRC and PPC follow-up'
+    WHEN Composite_VBC_Score < 0.55 AND Behavioral_Score < 0.5 THEN
+        'Low score due to low GSD behavioral health gap closure'
+    ELSE 
+        'Provider performing within expected range'
+END AS Provider_Insight,
+CASE
+    WHEN BPD_Closure  < 0.5 THEN 'BPD screening gap is low'
+    WHEN CBP_Closure < 0.5 THEN 'CBP BP control gap is low'
+    WHEN COA_Closure < 0.5 THEN 'COA assessment gap is low'
+    WHEN LDL_Closure < 0.5 THEN 'LDL assessment gap is low'
+    WHEN A1c_Closure < 0.5 THEN 'A1c assessment gap is low'
+    WHEN GSD_Closure < 0.5 THEN 'Behavioral GSD gap is low'
+    WHEN LSC_Closure < 0.5 THEN 'LSC cervical cancer screening gap is low'
+    WHEN PPC_Closure < 0.5 THEN 'PPC postpartum care is low'
+    WHEN TRC_Closure < 0.5 THEN 'TRC follow-up after discharge is low'
+    WHEN WCC_Closure < 0.5 THEN 'WCC adolescent wellness check gap is low'
+ 
+    ELSE 'All major gaps performing adequately'
+END AS Primary_Gap_Driver,
+        CASE
+    WHEN BPD_Closure < 0.5 THEN 'Improve breast cancer screening outreach for eligible women'
+    WHEN CBP_Closure < 0.5 THEN 'Improve hypertension control outreach and medication follow-up'
+    WHEN LDL_Closure < 0.5 THEN 'LDL assessment gap is low'
+    WHEN A1c_Closure < 0.5 THEN 'A1c assessment gap is low'
+    WHEN COA_Closure < 0.5 THEN 'Improve care of older adults assessments and follow-ups'
+    WHEN GSD_Closure < 0.5 THEN 'Improve behavioral follow-ups and depression management'
+    WHEN LSC_Closure < 0.5 THEN 'Increase cervical screening reminder campaigns'
+    WHEN PPC_Closure < 0.5 THEN 'Improve postpartum follow-ups within 7–84 days'
+    WHEN TRC_Closure < 0.5 THEN 'Strengthen transitions of care follow-up calls'
+    WHEN WCC_Closure < 0.5 THEN 'Improve adolescent annual wellness check completions'
+    ELSE 'Maintain current quality; no immediate gap concern'
+END AS Gap_Improvement_Action,(
+ (1 - BPD_Closure) +
+ (1 - CBP_Closure) +
+ (1 - COA_Closure) +
+ (1 - GSD_Closure) +
+ (1 - LSC_Closure) +
+ (1 - PPC_Closure) +
+ (1 - TRC_Closure) +
+ (1 - WCC_Closure)+ (1 - A1c_Closure)+ (1 - LDL_Closure)
+) / 8 AS Gap_Severity_Index
 
-Member_ID – Unique identifier for each member/patient.
 
-Age – Member age (in years) at the time of measurement.
-
-Gender – Member gender (e.g., M/F/Other).
-
-Provider_ID – Unique identifier for each servicing provider.
-
-Provider_Name – Name of the provider (doctor/clinic).
-
-Tin_name – Name associated with the Tax Identification Number (TIN) group.
-
-Provider_TIN – Tax Identification Number for the billing provider/group.
-
-Provider_Address – Street address of the provider.
-
-Provider_city – City where provider is located.
-
-Provider_state – State where provider is located.
-
-Provider_zip – ZIP code of provider location.
-
-Provider_county – County where provider is located.
-
-Provider_Phone – Contact phone number of the provider.
-
-Provider_Specialty – Specialty (e.g., PCP, Cardiology, Endocrinology).
-
-Clinical measurements
-
-BP_Systolic – Systolic blood pressure reading.
-
-BP_Diastolic – Diastolic blood pressure reading.
-
-HbA1c – Latest HbA1c value for diabetic control (%).
-
-LDL – Latest LDL cholesterol value (mg/dL).
-
-Utilization & cost
-
-ER_Visits – Count of emergency room visits for the period.
-
-Hospital_Admits – Number of hospital admissions for the period.
-
-Readmission_30_Day – Indicator/count of readmissions within 30 days.
-
-PMPM_Cost – Per Member Per Month total cost (medical spend).
-
-HEDIS-like gap & score columns
-
-(Gap typically: 1 = open gap / non-compliant, 0 = closed; Score = performance value)
-
-BPD_Gap – Gap flag for Blood Pressure control measure.
-
-BPD_Score – Performance score for BPD (e.g., 0–1 or 0–100).
-
-CBP_Gap – Gap flag for Controlling High Blood Pressure measure.
-
-CBP_Score – Performance score for CBP.
-
-COA_Gap – Gap flag for Care for Older Adults measure.
-
-COA_Score – Performance score for COA.
-
-GSD_Gap – Gap flag for some behavioral/other measure (GSD).
-
-GSD_Score – Performance score for GSD.
-
-LSC_Gap – Gap flag for lung/smoking cessation or similar measure.
-
-LSC_Score – Performance score for LSC.
-
-PPC_Gap – Gap flag for Prenatal/Postpartum Care measure.
-
-PPC_Score – Performance score for PPC.
-
-TRC_Gap – Gap flag for Transition of Care measure.
-
-TRC_Score – Performance score for TRC.
-
-WCC_Gap – Gap flag for Weight Assessment & Counseling / Well-child visits.
-
-WCC_Score – Performance score for WCC.
-
-Time dimensions & additional gaps
-
-Year – Measurement year (e.g., 2024, 2025).
-
-Month – Measurement month (1–12 or month name).
-
-A1c_gap – Gap flag specifically for HbA1c control (diabetes measure).
-
-LDL_gap – Gap flag for LDL control (cholesterol measure.
+FROM aiagenticdemo.hedisabstractor.gold_provider_year_region;
