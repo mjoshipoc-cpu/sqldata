@@ -1,1 +1,107 @@
-Member_ID	Age	Gender	Provider_ID	Provider_Name	Tin_name	Provider_TIN	Provider_Address	Provider_city	Provider_state	Provider_zip	Provider_county	Provider_Phone	Provider_Specialty	BP_Systolic	BP_Diastolic	HbA1c	LDL	ER_Visits	Hospital_Admits	Readmission_30_Day	PMPM_Cost	BPD_Gap	BPD_Score	CBP_Gap	CBP_Score	COA_Gap	COA_Score	GSD_Gap	GSD_Score	LSC_Gap	LSC_Score	PPC_Gap	PPC_Score	TRC_Gap	TRC_Score	WCC_Gap	WCC_Score
+🔵 A. Provider-Level Ranking Questions (Genie MUST group by provider)
+(These reinforce grouping & ranking logic)
+
+Show the top 5 providers based on Composite VBC Score for the latest year.
+
+List the bottom 10 providers by overall VBC score and include Provider_Insight.
+
+Rank providers by Chronic_Score and highlight the worst-performing providers.
+
+Which providers have the highest Preventive_Score in the latest year?
+
+Show provider performance by state and rank providers within each state.
+
+Identify top 5 providers in Texas based on VBC score grouped by provider.
+
+Which providers have improved their Composite VBC Score compared to last year?
+
+Rank providers by Gap_Severity_Index (highest to lowest).
+
+Show the best-performing providers for Behavioral_Score (GSD).
+
+Rank providers by Care_Coordination_Score and include recommended actions.
+
+🟠 B. Gap Closure & Severity Questions (Models gap logic)
+
+Which providers have severe gaps (Gap_Severity_Index > 0.6)?
+
+For providers with low chronic gap closure, show the Primary_Gap_Driver.
+
+List providers with poor A1c_Closure and LDL_Closure (diabetes control).
+
+Show providers with low TRC_Closure and high readmission rates.
+
+Which providers have poor COA_Closure and what actions do we recommend?
+
+Identify providers with consistently low WCC_Closure (preventive pediatrics).
+
+Show top 10 providers with highest percentage of open gaps across all measures.
+
+Which providers show chronic care deterioration from last year to this year?
+
+Provide a list of providers with low LDL and A1c closure rates.
+
+Which providers have poor PPC_Closure for postpartum care?
+
+🟩 C. VBC Domain Performance Questions (Teaches domain grouping)
+
+Show chronic vs preventive performance by provider for the latest year.
+
+Compare Chronic_Score vs Preventive_Score for top 20 providers.
+
+Which providers struggle in behavioral health domain (GSD)?
+
+Provide a domain-level breakdown for a selected provider (chronic, preventive, care coordination, behavioral).
+
+Show preventive score trend by provider specialty.
+
+Which providers excel in care coordination but have high costs?
+
+Identify providers with weak performance in more than one domain.
+
+Compare average domain scores by state.
+
+Show which providers have the largest gap between Chronic_Score and VBC score.
+
+For each state, show top providers in each domain.
+
+🟣 D. Cost & Utilization Questions (Link quality → cost)
+
+Show correlation between Composite VBC Score and avg_pmpm_cost by provider.
+
+Which providers have high ER visit rates but low VBC scores?
+
+Identify providers with high cost and poor chronic care outcomes.
+
+Provide top providers with low PMPM cost but strong VBC performance.
+
+Which providers contributed most to hospital admissions last year?
+
+Show readmission rate vs TRC_Closure for each provider.
+
+Identify outlier providers with high utilization but average quality scores.
+
+Compare PMPM cost across provider specialties.
+
+Show provider performance segmented by PMPM cost quartiles.
+
+Which counties have highest ER visit rates and which providers drive them?
+
+🌟 Why These Questions Are Perfect for Training Genie
+
+These 40 questions teach Genie:
+
+✔ Always group by Provider_ID / TIN / State
+✔ Always use latest year if year is missing
+✔ Understand VBC domain scores
+✔ Apply gap logic (gap closure < 0.5 = poor)
+✔ Use cost & utilization intelligently
+✔ Read & use your NLP insight fields
+✔ Automatically generate SQL without row-level detail
+✔ Provide payer-facing language and reasoning
+
+👉 Want me to turn these into a structured Genie help panel or JSON training block for Databricks?
+
+Just say “Give me Genie help panel” or “Give me Genie training JSON”.
+
+You said:
