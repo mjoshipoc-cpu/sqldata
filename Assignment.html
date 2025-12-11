@@ -1,68 +1,8 @@
-CREATE OR REPLACE TABLE aiagenticdemo.hedisabstractor.gold_vbc_with_intervention AS
-SELECT
-    g.*,
-
-    /* 1) WHICH MEASURE IS DRIVING THE INTERVENTION? */
-    CASE
-        /* --- Chronic control: CBP / BPD / Diabetes --- */
-        WHEN Risk_Category = 'High' 
-             AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y' OR HbA1c > 9) 
-            THEN 'Chronic_Control'
-
-        WHEN Risk_Category = 'Medium' 
-             AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y' OR (HbA1c BETWEEN 7 AND 9)) 
-            THEN 'Chronic_Control'
-
-        WHEN Risk_Category = 'Low' 
-             AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y') 
-            THEN 'Chronic_Control'
-
-        /* --- Preventive / Screening: COA / GSD / LSC --- */
-        WHEN Risk_Category = 'High'
-             AND (COA_Gap = 'Y' OR GSD_Gap = 'Y' OR LSC_Gap = 'Y')
-            THEN 'Preventive_Screening'
-
-        WHEN Risk_Category = 'Medium'
-             AND (COA_Gap = 'Y' OR GSD_Gap = 'Y' OR LSC_Gap = 'Y')
-            THEN 'Preventive_Screening'
-
-        WHEN Risk_Category = 'Low'
-             AND (COA_Gap = 'Y' OR GSD_Gap = 'Y' OR LSC_Gap = 'Y')
-            THEN 'Preventive_Screening'
-
-        /* --- Care Coordination: PPC / TRC --- */
-        WHEN Risk_Category = 'High'
-             AND (PPC_Gap = 'Y' OR TRC_Gap = 'Y')
-            THEN 'Care_Coordination'
-
-        WHEN Risk_Category = 'Medium'
-             AND (PPC_Gap = 'Y' OR TRC_Gap = 'Y')
-            THEN 'Care_Coordination'
-
-        WHEN Risk_Category = 'Low'
-             AND (PPC_Gap = 'Y' OR TRC_Gap = 'Y')
-            THEN 'Care_Coordination'
-
-        /* --- Pediatric: WCC --- */
-        WHEN Risk_Category = 'High'
-             AND WCC_Gap = 'Y'
-            THEN 'Pediatric_WCC'
-
-        WHEN Risk_Category = 'Medium'
-             AND WCC_Gap = 'Y'
-            THEN 'Pediatric_WCC'
-
-        WHEN Risk_Category = 'Low'
-             AND WCC_Gap = 'Y'
-            THEN 'Pediatric_WCC'
-
-        ELSE 'Standard_Preventive'
-    END AS Intervention_Measure,
-
-    /* 2) WHAT INTERVENTION TO APPLY (MEASURE + RISK WISE) */
-    CASE
+UPDATE aiagenticdemo.hedisabstractor.gold_vbc_insights
+SET Intervention_Method = 
+CASE
         
-        /* ================= CHRONIC: CBP / BPD / DIABETES ================= */
+        /* ====================== CHRONIC: CBP / BPD / DIABETES ====================== */
 
         -- High risk chronic
         WHEN Risk_Category = 'High'
@@ -72,97 +12,99 @@ SELECT
         -- Medium risk chronic
         WHEN Risk_Category = 'Medium'
              AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y' OR (HbA1c BETWEEN 7 AND 9)) THEN
-            'Health coach outreach + PCP visit scheduling + lifestyle counseling + SMS reminders for medication adherence'
+            'Health coach outreach + PCP visit scheduling + lifestyle counseling + SMS reminders'
 
         -- Low risk chronic
         WHEN Risk_Category = 'Low'
              AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y') THEN
             'Preventive reminders + digital coaching + annual chronic check-up reminder'
 
-        /* ============= PREVENTIVE / SCREENING: COA / GSD / LSC ============= */
+
+        /* ================= PREVENTIVE: COA / GSD / LSC ================= */
 
         -- COA high
         WHEN Risk_Category = 'High'
              AND COA_Gap = 'Y' THEN
-            'Care manager + comprehensive COA visit scheduling + home visit evaluation + medication reconciliation + SDOH & fall-risk assessment'
+            'Care manager + COA visit scheduling + home assessment + medication reconciliation + fall-risk/SDOH evaluation'
 
         -- COA medium
         WHEN Risk_Category = 'Medium'
              AND COA_Gap = 'Y' THEN
-            'Call center outreach + COA/PCP visit scheduling + reminder calls/SMS to member/caregiver'
+            'Call center outreach + COA/PCP visit scheduling + caregiver reminders'
 
         -- COA low
         WHEN Risk_Category = 'Low'
              AND COA_Gap = 'Y' THEN
-            'Automated COA visit reminder + educational material for preventive check-ups'
+            'Automated COA reminder + preventive education material'
 
         -- GSD / LSC high
         WHEN Risk_Category = 'High'
              AND (GSD_Gap = 'Y' OR LSC_Gap = 'Y') THEN
-            'Pharmacist review + lab test scheduling + care plan update + high-touch follow-up'
+            'Pharmacist review + lab scheduling + high-touch follow-up'
 
         -- GSD / LSC medium
         WHEN Risk_Category = 'Medium'
              AND (GSD_Gap = 'Y' OR LSC_Gap = 'Y') THEN
-            'Lab reminder + PCP follow-up + health coach outreach to close screening gap'
+            'Lab reminder + PCP follow-up + health coach outreach'
 
         -- GSD / LSC low
         WHEN Risk_Category = 'Low'
              AND (GSD_Gap = 'Y' OR LSC_Gap = 'Y') THEN
-            'Screening reminder via SMS/email + app notification for preventive lab/visit'
+            'Screening reminder via SMS/email + app notification'
+
 
         /* ================= CARE COORDINATION: PPC / TRC ================= */
 
         -- PPC high
         WHEN Risk_Category = 'High'
              AND PPC_Gap = 'Y' THEN
-            'OB care manager assignment + frequent follow-up calls + prenatal & postpartum visit scheduling + SDOH support (transport, childcare)'
+            'OB care manager + frequent follow-up + prenatal/postpartum scheduling + SDOH support'
 
         -- PPC medium
         WHEN Risk_Category = 'Medium'
              AND PPC_Gap = 'Y' THEN
-            'Automated reminders + SMS for prenatal/postpartum visit scheduling + nurse helpline support'
+            'Automated reminders + SMS scheduling support + nurse helpline'
 
         -- PPC low
         WHEN Risk_Category = 'Low'
              AND PPC_Gap = 'Y' THEN
-            'Preventive educational content for pregnancy + app-based reminders + one nurse touchpoint if non-compliant'
+            'Preventive pregnancy education + app-based reminders'
 
         -- TRC high
         WHEN Risk_Category = 'High'
              AND TRC_Gap = 'Y' THEN
-            'Nurse-led post-discharge call within 48 hours + medication reconciliation + follow-up appointment booking + home health referral if needed'
+            'Nurse-led 48-hour post-discharge call + med reconciliation + follow-up appointment + home health referral'
 
         -- TRC medium
         WHEN Risk_Category = 'Medium'
              AND TRC_Gap = 'Y' THEN
-            'Telephonic follow-up within 7 days of discharge + PCP appointment scheduling'
+            'Telephonic follow-up in 7 days + PCP appointment support'
 
         -- TRC low
         WHEN Risk_Category = 'Low'
              AND TRC_Gap = 'Y' THEN
-            'Automated call/SMS check-in + reminder for follow-up visit'
+            'Automated check-in + follow-up visit reminder'
+
 
         /* ================= PEDIATRIC: WCC ================= */
 
         -- WCC high
         WHEN Risk_Category = 'High'
              AND WCC_Gap = 'Y' THEN
-            'Care coordinator outreach to parents/caregiver + pediatrician visit scheduling + social worker referral if SDOH barriers'
+            'Parent/caregiver outreach + pediatric scheduling + social worker support if SDOH barriers'
 
         -- WCC medium
         WHEN Risk_Category = 'Medium'
              AND WCC_Gap = 'Y' THEN
-            'Parent reminder calls + SMS reminders + share weekend/evening clinic options'
+            'Parent reminder calls + SMS + weekend clinic options'
 
         -- WCC low
         WHEN Risk_Category = 'Low'
              AND WCC_Gap = 'Y' THEN
-            'Automated well-child visit reminder + app notification + educational content for age-appropriate visits'
+            'Automated well-child reminder + app notification + educational content'
 
-        /* ================ DEFAULT / NO SPECIFIC GAP ================ */
+
+        /* ================= DEFAULT ================= */
         ELSE
             'Standard preventive reminders + digital engagement'
-    END AS Intervention_Method
-
-FROM aiagenticdemo.hedisabstractor.gold_vbc_insights g;
+END;
