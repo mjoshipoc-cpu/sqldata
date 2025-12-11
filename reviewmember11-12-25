@@ -1,0 +1,670 @@
+
+
+# Only reset session state when search value changed to avoid clearing 'has_changes'
+if st.session_state.get('last_search_value') != search_value: # -------SUBMIT BUTTON CHANGE-----
+    reset_session_state(search_value) # -------SUBMIT BUTTON CHANGE-----
+    st.session_state['last_search_value'] = search_value # -------SUBMIT BUTTON CHANGE-----
+
+
+
+
+# search_value = st.text_input(
+#     f'**Search {search_option}**',
+#     placeholder=f"Enter {search_option}",
+#     value=field_value #AK
+# )
+#search_value = st.text_input(f'**Search {search_option}**', label_visibility="visible", disabled=False, placeholder=f"Enter {search_option}")
+
+#AY 
+reset_session_state(search_value)
+
+print(f"LOG0 :{type(search_value)}")
+
+# if search_value and search_value != 'None': AK
+print(f"LOG1: {search_value}")
+
+#AYU - condition when seach_value is non-empty then only next section will should be displayed.
+
+if search_value:
+    if 'page_number' not in st.session_state:
+        st.session_state.page_number = 1
+    
+    #AK 
+    if search_option == 'File Name':
+        file_name=search_value
+        member_id= get_member_id_via_pdf(file_name)
+        data = getdata3(member_id, "memberinfo",search_type=search_option)
+        #data = getdata3(search_value, "memberinfo", search_type=search_option)
+    else:
+        member_id = search_value
+        data = getdata3(member_id, "memberinfo")
+    
+    print(data)
+    #AK - commented the below code, as we don't need to dislay the search results @Anchal
+    
+    #AY - Now we are using file_name as a edit index instead of member_id    
+    # if not data.empty:
+    #     st.write("**Search Results:**")
+    #     columns = list(data.columns)
+    #     for i, row in data.iterrows():
+    #         cols = st.columns(6)
+    #         cols[0].write(row['Member_id'])
+    #         cols[1].write(row['File Name'].replace('.pdf','') if 'Name' in row else 'N/A') #AYU need to add file_id 
+    #         cols[2].write(row['Name'].replace('.pdf','') if 'Name' in row else 'N/A')
+    #         cols[3].write(row['Gender'] if 'Gender' in row else 'N/A')
+    #         cols[4].write(row['DOB'] if 'DOB' in row else 'N/A')
+    #         #if cols[5].button("Edit", key=f"edit_{row['Member_id']}"):
+    #         if cols[5].button("Edit", type='primary', key=f"edit_{row['File Name']}"): #AYU added file name as key
+    #             st.session_state['edit_index'] = row['File Name'] #AYU passing file name as edit index
+    #             #search_value = row['File Name']
+    #             st.session_state['Member_id'] = row['Member_id'] #AYU passing member_id as session state
+    #             #st.session_state['file_name'] = row['Member_id']  # Store Member_id
+    #             #st.write(f"DEBUG: Selected File Name: {row['File Name']}, Member_id: {row['Member_id']}")
+    #             st.session_state['updated_data'] = {}
+    #             st.session_state['original_data'] = {}  # Reset original data
+    #             st.session_state['compliance_status'] = {}
+    #             st.session_state['page_number'] = 1
+           
+    #             st.session_state['field_compliance'] = {}
+  
+                  
+    #             st.session_state['show_confirmation'] = {}
+    #             st.session_state['pending_updates'] = {}
+    #             st.session_state['pending_measure'] = None
+    #             st.session_state['has_changes'] = False  # Reset changes tracker
+
+
+
+    if not data.empty:
+        st.write("**🔎 Search Results**")
+
+        # Add hidden action column
+        data['__action__'] = ''
+
+        # Build Grid Options dynamically
+        gb = GridOptionsBuilder.from_dataframe(data)
+        for col in data.columns:
+            if col != '__action__':
+                gb.configure_column(
+                    col,
+                    resizable=True,
+                    sortable=True,
+                    filter=True,
+                    autoHeight=True,
+                    wrapText=True,
+                    cellStyle={'textAlign': 'center', 'fontSize': '14px'}
+                )
+
+        # Add Edit button column
+        gb.configure_column(
+            'Edit',
+            headerTooltip='Click to edit member record',
+            editable=False,
+            filter=False,
+            sortable=False,
+            cellRenderer=edit_button_renderer,
+            autoHeight=True,
+            width=120,
+            suppressMovable=True,
+            lockPosition='right'
+        )
+
+        # Hide helper action column
+        gb.configure_column('__action__', hide=True, editable=False)
+
+        gb.configure_grid_options(
+            domLayout='normal',
+            enableRangeSelection=False,
+            rowSelection='single',
+            suppressRowClickSelection=True,
+            animateRows=True,
+            rowHeight=50,
+            headerHeight=50
+        )
+
+        gb.configure_pagination(enabled=True, paginationAutoPageSize=False, paginationPageSize=10)
+        grid_options = gb.build()
+
+        # Render Grid
+        grid_response = AgGrid(
+            data,
+            gridOptions=grid_options,
+            fit_columns_on_grid_load=True,
+            theme='alpine',
+            update_mode='MODEL_CHANGED',
+            allow_unsafe_jscode=True,
+            height=300
+        )
+
+        # --- Handle Edit button action (same as your old loop) ---
+        if grid_response['data'].__action__.eq('edit').any():
+            selected_row = grid_response['data'][grid_response['data']['__action__'] == 'edit'].iloc[0]
+
+            st.session_state['edit_index'] = selected_row['File Name']
+            st.session_state['Member_id'] = selected_row['Member_id']
+
+            # Reset states exactly as before
+            st.session_state['updated_data'] = {}
+            st.session_state['original_data'] = {}
+            st.session_state['compliance_status'] = {}
+            st.session_state['page_number'] = 1
+            st.session_state['field_compliance'] = {}
+            st.session_state['show_confirmation'] = {}
+            st.session_state['pending_updates'] = {}
+            st.session_state['pending_measure'] = None
+            st.session_state['has_changes'] = False
+                
+    # else:
+    #     st.session_state['edit_index'] = None
+
+    # Edit Section
+    # if st.session_state['edit_index']: #AK
+    # member_id = search_value #AK st.session_state.get('member_id', '') #st.session_state['edit_index']
+    # Check if a row is selected for editing
+                                              
+    if 'edit_index' in st.session_state and st.session_state['edit_index']:
+            # Get the row data to be edited
+        row_to_edit = data[data['File Name'] == st.session_state['edit_index']].iloc[0]
+        left_column, right_column = st.columns([0.5, 0.5], gap="large")
+
+        # PDF Viewer
+        
+        pdf_location = lookup_pdf_location(st.session_state['edit_index']) #AYU Passing the file name using session state
+        print(f"pdf_location: {pdf_location}")
+        pdf_document = None
+        #member_id=search_value
+        filename = st.session_state.get('edit_index','') #AYU passing filename session state to be used for CRUD operations
+        member_id=st.session_state.get('Member_id','') #Member_id to be used for compliance check
+        #st.write(f"2--------Member ID: {member_id}")
+
+        # if pdf_location and os.path.exists(pdf_location):
+        #     pdf_document = fitz.open(pdf_location)
+        #     with right_column:
+        #         with st.container(height=775, border=True):
+        #             st.markdown('<div class="page-input-container">', unsafe_allow_html=True)
+        #             page_input = st.number_input(
+        #                 "Enter page number",
+        #                 min_value=1,
+        #                 max_value=len(pdf_document),
+        #                 value=st.session_state['page_number'],
+        #                 key="page_input"
+        #             )
+        #             if page_input != st.session_state['page_number']:
+        #                 st.session_state['page_number'] = page_input
+        #             st.markdown('</div>', unsafe_allow_html=True)
+        #             display_pdf_page(st.session_state['page_number'] - 1, pdf_document)
+        # else:
+        #     with right_column:
+        #         with st.container(height=775, border=True):
+        #             st.warning("PDF file not found or inaccessible.", icon="⚠️")
+
+        # Measures Tabs
+        with left_column:
+            with st.container(height=775, border=True):
+                print(f"tabs_MEMBER_ID: {filename}")
+                measures_available = {
+                    "Member Info": getdata(filename, "memberinfo"),
+                    "BCS": getdata(filename, "bcs"),
+                    "CBP": getdata(filename, "cbp"),
+                    "HBD": getdata(filename, "hbd"),
+                    "BPD": getdata(filename, "bpd"),
+                    "EED": getdata(filename, "eed"),
+                    "CCS": getdata(filename, "ccs"),
+                    "COL": getdata(filename, "col"),
+                    # "LSD": getdata(filename, "lsd"),
+                    # "PPC": getdata(filename, "ppc"),
+                }
+                
+                # Store original data for each measure
+                for measure, df in measures_available.items():
+                    if not df.empty:
+                        if measure == "Member Info":
+                            data1 = create_new_dataframe_meminfo(df)
+                        else:
+                            data1 = create_new_dataframe(df, measure)
+                        if not data1.empty:
+                            st.session_state['original_data'][measure] = data1.iloc[0].to_dict()
+
+
+                available_tabs = ["Member Info"]
+                for measure in all_measures:
+                    if not measures_available[measure].empty:
+                        available_tabs.append(measure)
+
+                tabs = st.tabs(available_tabs)
+                member_info_df = measures_available["Member Info"]
+
+                # Member Info Tab only
+                with tabs[0]:
+                    data = measures_available["Member Info"]
+                    data1 = create_new_dataframe_meminfo(data)
+                    filter_col=[col.replace('_', ' ') for col in data1.columns] #AYU added to remove _ from column names
+
+                    pagedf = page_df(data)
+                    if not data1.empty:
+                        cols = st.columns([0.65, 0.35])
+                        with cols[0]:
+                            #confidence_score= get_confidence_score().get('generic', '89.2%')
+                            confidence_score='89.2%'
+                            confidence_score= f"{float(confidence_score.rstrip('%')):.2f}%"
+
+                            st.markdown(f"<span style='color:#888; cursor:pointer; ; font-size:16px;' >Confidence Score: {confidence_score}</span>", unsafe_allow_html=True)
+                            st.markdown(f"<span style='color:#888; cursor:pointer; ; font-size:16px;' >Measurement Year: {MEASUREMENT_YEAR}</span>", unsafe_allow_html=True)
+                        # with cols[1]:
+                        #     review=st.checkbox("Review Completed", key="review_completed", value=False, help="Check this box if you have completed the review for this member.")
+
+
+                        updated_membinfo = st.session_state['updated_data'].setdefault("Member Info", {})
+                        for idx, (filter_col,col, val) in enumerate(zip(filter_col,data1.columns, pagedf + [None] * (len(data1.columns) - len(pagedf)))):
+                            cols = st.columns([0.85, 0.15])
+                            with cols[0]:
+                                placeholder = "Enter as MM/DD/YYYY" if col == "DOB" else ""
+                                current_value = str(data1.at[0, col]) if pd.notna(data1.at[0, col]) else ""
+
+                                # Synd: Check if the field is non-compliant#add this 
+                                field_key = f"{col}_Member Info"
+                                #OLD_CODE
+                                # is_non_compliant = st.session_state['field_compliance'].get(field_key, "").startswith("Non-compliant")
+                                # label = f"**{'*' if is_non_compliant else ''}{col}**"
+
+                                # updated_membinfo[col] = st.text_input(
+                                    # label,
+                                    # value=current_value,
+                                    # key=f"edit_{col}_meminfo",
+                                    # placeholder=placeholder,
+                                    # on_change=check_field_compliance,
+                                    # args=(member_id, "Member Info", updated_membinfo, member_info_df, col)
+                                # )
+                                #SYND
+                                compliance_message = st.session_state['field_compliance'].get(field_key, "")
+                                is_non_compliant = compliance_message.startswith("Non-compliant")
+
+                                if is_non_compliant:
+                                    help_text = f"Required for compliance: {compliance_message.replace('Non-compliant: ', '')}"
+                                else:
+                                    help_text = "Enter as MM/DD/YYYY" if col == "DOB" else ""
+                                label = f"{'' if is_non_compliant else ''}{filter_col}"
+                                #st.markdown(f"**{label}**", unsafe_allow_html=True) #AYU not required as already added as labels
+                                
+                        #AYU Change the position of the updated_membinfo which waas present in col[2] earlier dur to which extra gap were seen between the label and input box
+                                                      
+                                updated_membinfo[col] = st.text_input(
+                                f"**{label}**",  #AYU
+                                value=current_value,
+
+                                key=f"edit_{col}_meminfo",
+                                placeholder=placeholder,
+                                on_change=on_field_change,
+                                args=(filename, "Member Info", updated_membinfo, member_info_df, col)
+                            )
+                            # with cols[1]:
+                            #     # if help_text
+                            #         # pass   #AYU Commented this line as of no use(NEED TO CHECK WITH SYN)
+                            #         #st.markdown(f"<span style='color:#888; cursor:pointer;' title='{help_text}'>❓</span>", unsafe_allow_html=True)
+                            #     # else:
+                            #          pass
+                            #     #      #st.markdown("", unsafe_allow_html=True) 
+
+
+                            
+                    
+
+
+                            with cols[1]:
+                                label = f"{'' if is_non_compliant else ''}{filter_col}"                   
+                                #if st.button("📃", key=f"page_{col}_meminfo_{idx}"):
+                                    # page_to_show = int(val) if val and val != "0" else 1
+                                    # st.session_state['page_number'] = page_to_show
+                                # AYU----MODIFY---- Check if val is a valid integer before conversion
+                                if st.button("📃", key=f"page_{col}_{measure.lower()}_{idx}"):
+                                        
+                                        if val is None or val == "0": 
+                                                #st.session_state['page_number'] = st.session_state.get('page_number', 1)
+                                                st.session_state['page_number'] = 1 
+                                        else:
+                                            #print(type(val), val)
+                                            try:
+                                                if len(val) > 1:
+                                                    st.session_state['page_number'] = 1
+                                                else:
+                                                    st.session_state['page_number'] = int(val)
+                                            except (NameError, TypeError, ValueError):
+                                                st.session_state['page_number'] = int(val)
+                            #AYU # Commented the below code as it was not required (MOVED TO THE ABOVE in col[0])
+
+                            #         updated_membinfo[col] = st.text_input(
+                            #     f"**{label}**",  #AYU Bold the label
+                            #     value=current_value,
+                            #     key=f"edit_{col}_meminfo",
+                            #     placeholder=placeholder,
+                            #     on_change=on_field_change,
+                            #     args=(filename, "Member Info", updated_membinfo, member_info_df, col)
+                            # )
+                            
+                        cols = st.columns([0.7, 0.3])
+                        with cols[0]:
+                            pass
+                            #review=st.checkbox("Review Completed", key="review_completed"+"_MemberInfo", value=False, help="Check this box if you have completed the review for this member.")
+                        with cols[1]:
+                            if st.button("Submit General",type='primary', disabled=not st.session_state.get('has_changes', False)):
+                                # Compare original and updated data
+                                original = st.session_state['original_data'].get("Member Info", {})
+                                changed_fields = get_changed_fields(original, updated_membinfo)
+                                if changed_fields:
+                                    st.session_state['show_confirmation']['Member Info'] = True
+
+                                    st.session_state['pending_updates']['Member Info'] = updated_membinfo
+                                    # print(f"LOG1_AK : {st.session_state['pending_updates']['Member Info']}")
+                                    st.session_state['pending_measure'] = "Member Info"
+                                else:
+                                    st.info("No changes detected to submit.", icon="ℹ️")
+
+                        # Show confirmation prompt if triggered
+                        if st.session_state.get('show_confirmation', {}).get("Member Info", False):
+                            with st.container():
+                                # st.markdown('<div class="confirmation-modal">', unsafe_allow_html=True)
+                                st.markdown("⚠️ Do you want to proceed?", unsafe_allow_html=True)
+                                st.markdown("The following fields have changed:")
+                                for change in get_changed_fields(st.session_state['original_data'].get("Member Info", {}), st.session_state['pending_updates'].get("Member Info", {})):
+                                    st.markdown(change)
+                                col_yes, col_no = st.columns(2)
+                                with col_yes:
+                                    if st.button("Yes",type='primary', key="confirm_yes_meminfo"):
+                                        # Proceed with the update
+                                        update_multiple_columns("memberinfo", filename, st.session_state['pending_updates']['Member Info'])
+                                        # Update original data with the new values
+                                        # print(f"LOG2_AK : {st.session_state['pending_updates']['Member Info']}")
+                                        st.session_state['original_data']['Member Info'] = st.session_state['pending_updates']['Member Info'].copy()
+                                        st.session_state['updated_data']["Member Info"] = {}
+                                        st.session_state['field_compliance'] = {}
+                                        st.session_state['show_confirmation']['Member Info'] = False
+                                        st.session_state['pending_updates']['Member Info'] = {}
+                                        st.session_state['pending_measure'] = None
+                                        st.session_state['has_changes'] = False  # Reset changes tracker
+                                        st.session_state['reset_measure'] = None
+                                        st.success("Changes saved successfully", icon="✅")
+                                with col_no:
+                                    if st.button("No", type='primary', key="confirm_no_meminfo"):
+                                        # Cancel the update, reset fields to original values
+                                        for col in updated_membinfo.keys():
+                                            st.session_state[f"edit_{col}_meminfo"] = st.session_state['original_data']['Member Info'].get(col, '')
+                                        st.session_state['updated_data']["Member Info"] = {}
+                                        st.session_state['field_compliance'] = {}
+                                        st.session_state['show_confirmation']['Member Info'] = False
+                                        st.session_state['pending_updates']['Member Info'] = {}
+                                        st.session_state['pending_measure'] = None
+                                        st.session_state['has_changes'] = False  # Reset changes tracker
+                                        st.info("Update cancelled.", icon="ℹ️")
+                                st.markdown('</div>', unsafe_allow_html=True)
+
+                # Track if any measure has changes so submit buttons can be enabled
+                measures_have_changes = False # -------SUBMIT BUTTON CHANGE-----
+                # Dynamic Measure Tabs -- for remaining measures
+                for measure in available_tabs[1:]:
+                    confidence_score= get_confidence_score().get(measure,'89.26%')
+                    confidence_score= f"{float(confidence_score.rstrip('%')):.2f}%"
+
+                    with tabs[available_tabs.index(measure)]:
+                        cols = st.columns([0.85, 0.15])
+                        with cols[0]:
+                            st.markdown(f"<span style='color:#888; cursor:pointer; ; font-size:16px;' >Confidence Score: {confidence_score}</span>", unsafe_allow_html=True)
+
+                            st.markdown(f"<span style='color:#888; cursor:pointer; ; font-size:16px;' >Measurement Year: {MEASUREMENT_YEAR}</span>", unsafe_allow_html=True)
+                            
+                        with cols[1]:
+                            #review=st.checkbox("Review Completed", key="review_completed"+measure, value=False, help="Check this box if you have completed the review for this member.")
+                            
+                            if st.button("ℹ️", key=f"info_{measure}", help=f"View {measure} specifications"):
+                                    if st.session_state['current_measure'] == measure and st.session_state['show_modal']:
+                                        st.session_state['show_modal'] = False
+                                        st.session_state['current_measure'] = None
+                                    else:
+                                        st.session_state['show_modal'] = True
+                                        st.session_state['current_measure'] = measure
+                        
+
+                        if st.session_state.get('current_measure') == measure and st.session_state['show_modal']:
+                            st.session_state['MY']=MEASUREMENT_YEAR #AYU added to pass measurement year to avoid error when user directly jumps to Review Member page
+                            html_content = load_measure_spec(st.session_state['MY'], measure)
+                            render_spec_modal(measure, html_content)
+
+                        data = measures_available[measure]
+                        data1 = create_new_dataframe(data, measure)
+
+                        filter_col=[col.replace('_', ' ') for col in data1.columns] #AYU added to remove _ from column names
+                        pagedf = page_df(data)
+                        if not data1.empty:
+                            original_data = st.session_state['original_data'].get(measure, {})
+                            updated_data = st.session_state['updated_data'].setdefault(measure, original_data.copy())
+
+
+                            #AYU Store original values for reset ---------------MODIFY---------------
+                            if measure not in st.session_state['reset_values']:
+                                st.session_state['reset_values'][measure] = original_data.copy()
+ 
+                            add_compliance_status(member_id, measure, updated_data, member_info_df)
+
+                            for idx, (filter_col,col, val) in enumerate(zip_longest(filter_col,data1.columns, pagedf)):
+                                     
+                                cols = st.columns([0.85, 0.15])
+                                with cols[0]:
+                                    placeholder = "Enter as MM/DD/YYYY" if col in ["DateofService", "DateofScreening", "Mammogram DOS", "Bilateral Mastectomy DOS", "Unilateral Mastectomy R DOS", "Unilateral Mastectomy L DOS"] else "Enter as XXX/YY (e.g., 120/80)" if col == "BP" else "Enter Yes/No" if col in ["Mammogram", "Bilateral Mastectomy", "Unilateral Mastectomy R", "Unilateral Mastectomy L"] else ""
+                                    
+                                    #synd
+                                    #is_non_compliant = col in get_non_compliant_fields(measure, updated_data, member_info_df)
+                                    #synd Check if the field is non-compliant using session state
+                                    field_key = f"{col}_{measure}"
+                                    tooltip_key = f"tooltip_{col}_{measure}"
+                                    is_non_compliant = st.session_state['field_compliance'].get(field_key, "").startswith("Non-compliant")
+                                    label = f"{'' if is_non_compliant else ''}{filter_col}"
+
+
+                                    session_key = f"edit_{col}_{measure.lower()}"
+                                    # if session_key in st.session_state:
+                                    #     current_value = st.session_state[session_key]
+                                    # else:
+                                    #     current_value = str(data1.at[0, col]) if pd.notna(data1.at[0, col]) else ""
+
+                                    #AYU Use reset values if reset_measure is set ---------------MODIFY---------------
+                                    if st.session_state['reset_measure'] == measure and col in st.session_state['reset_values'][measure]:
+                                        current_value = str(st.session_state['reset_values'][measure][col]) if pd.notna(st.session_state['reset_values'][measure][col]) else ""
+                                    elif session_key in st.session_state:
+                                        current_value = st.session_state[session_key]
+                                    else:
+                                        current_value = str(data1.at[0, col]) if pd.notna(data1.at[0, col]) else ""
+                                    if is_non_compliant:
+                                        help_text = f"Required for compliance: {st.session_state['field_compliance'].get(field_key, '').replace('Non-compliant: ', '')}"
+                                    else:
+                                        help_text = st.session_state['field_compliance'].get(tooltip_key, "") or ("Enter date in MM/DD/YYYY format" if col.lower().endswith("dos") else "")
+
+                                    #This is a quick  fix for HBD only, we need to rename the prompts and in table also
+                                    label  ='Diabetes' if ('Posg' in  label) and (measure == 'HBD') else label
+
+                                    # updated_data[col] = st.text_input(
+                                    #     f"**{label}**", #AYU Bold the label
+                                    #     value=current_value,
+                                    #     key=session_key,
+                                    #     placeholder=placeholder,
+                                    #     help=help_text,
+                                    #     on_change=on_field_change,
+                                    #     args=(member_id, measure, updated_data, member_info_df, col)
+                                    # )
+                                    
+                                    #AYU -----REVIEW FLAG UPDATE-----
+                                    if col == "Review_Completed":
+                                        radio_options = ["Yes","No"]
+                                        default_value = str(current_value).strip().capitalize()
+                                        radio_index = default_value
+                                        if default_value not in radio_options:
+                                            default_value = "No"
+                                        selected_value = st.radio(
+                                            f"**{measure} Review completed**",
+                                            options=radio_options,
+                                            index=radio_options.index(default_value),
+                                            key=session_key,
+                                            horizontal=True,
+                                            help="Check this box if you have completed the review for this member",
+                                            on_change=on_field_change,
+                                            args=(member_id, measure, updated_data, member_info_df, col)
+                                        )
+                                        # Store 1 for Yes, 0 for No
+                                        updated_data[col] = "Yes" if selected_value == "Yes" else "No"
+                                    
+                                    # -----REVIEW FLAG UPDATE-----
+                                    else:
+                                        updated_data[col] = st.text_input(
+                                            f"**{label}**", #AYU Bold the label
+                                            value=current_value,
+                                            key=session_key,
+                                            placeholder=placeholder,
+                                            help=help_text,
+                                            on_change=on_field_change,
+                                            args=(member_id, measure, updated_data, member_info_df, col)
+                                        )
+                                
+                                with cols[1]:
+                                    #OLD CODE
+                                    # if val and val != "0":
+                                    #     if st.button("📃", key=f"page_{col}_{measure.lower()}_{idx}"):
+                                    #         st.session_state['page_number'] = int(val)
+                                            
+                                    # AYU----MODIFY---- Check if val is a valid integer before conversion
+                                    if data1.columns[idx]=="Review_Completed":
+                                        pass
+                                    else:
+                                        if st.button("📃", key=f"page_{col}_{measure.lower()}_{idx}"):
+                                                
+                                                if val is None or val == "0": 
+                                                        #st.session_state['page_number'] = st.session_state.get('page_number', 1)
+                                                        st.session_state['page_number'] = 1 
+                                                else:
+                                                    #print(type(val), val)
+                                                    try:
+                                                        if len(val) > 1:
+                                                            st.session_state['page_number'] = 1
+                                                        else:
+                                                            st.session_state['page_number'] = int(val)
+                                                    except (NameError, TypeError, ValueError):
+                                                        st.session_state['page_number'] = int(val)
+                                                        
+                            # After rendering inputs for this measure, determine if it has changes
+                            if get_changed_fields(original_data, updated_data):
+                                measures_have_changes = True # -------SUBMIT BUTTON CHANGE-----   
+
+                            col1, col2, col3 = st.columns([0.33, 0.33, 0.34])
+                            with col1:
+                                pass
+                                #review=st.checkbox(measure+" Review Completed", key="review_completed"+measure, value=False, help="Check this box if you have completed the review for this member.")
+                            with col2:
+                                #synd Removed: Undo Compliance button
+                                # if st.button("Undo",type='primary', key=f"undo_{measure.lower()}"):
+                                #     st.session_state['updated_data'][measure] = original_data.copy()
+                                #     st.session_state['compliance_status'] = {}
+                                pass
+
+                            _, _, col3 = st.columns([0.33, 0.33, 0.34])#syn :add this 
+
+                            with col3:
+                                # Ensure global has_changes reflects any measure changes
+                                st.session_state['has_changes'] = measures_have_changes or st.session_state.get('has_changes', False) # -------SUBMIT BUTTON CHANGE-----
+                                if st.button(f"Submit {measure}", type='primary', disabled=not st.session_state.get('has_changes', False)):
+                                    # Compare original and updated data
+                                    changed_fields = get_changed_fields(original_data, updated_data)
+                                    if changed_fields:
+                                        st.session_state['show_confirmation'][measure] = True
+                                        st.session_state['pending_updates'][measure] = updated_data
+                                        st.session_state['pending_measure'] = measure
+                                    else:
+                                        st.info("No changes detected to submit.", icon="ℹ️")
+
+                            # Show confirmation prompt if triggered
+                            if st.session_state.get('show_confirmation', {}).get(measure, False):
+                                with st.container():
+                                    # st.markdown('<div class="confirmation-modal">', unsafe_allow_html=True)
+                                    st.markdown("⚠️ Do you wish to proceed?", unsafe_allow_html=True)
+                                    st.markdown("The following fields have changed:")
+                                    for change in get_changed_fields(st.session_state['original_data'].get(measure, {}), st.session_state['pending_updates'].get(measure, {})):
+                                        st.markdown(change)
+                                    col_yes, col_no = st.columns(2)
+                                    with col_yes:
+                                        if st.button("Yes", type='primary' ,key=f"confirm_yes_{measure}"):
+                                            # Proceed with the update
+                                            update_multiple_columns(measure.lower(), filename, st.session_state['pending_updates'][measure])
+                                            overall_compliance_remark = check_compliance(member_id, measure, st.session_state['pending_updates'][measure], member_info_df)
+                                            remark_col = f"Remark_{measure.upper()}"
+                                            conn = create_connection()
+                                            if conn:
+                                                try:
+                                                    cursor = conn.cursor()
+                                                    query = f"UPDATE {measure.lower()} SET {remark_col} = ?, updated_date = GETDATE() WHERE Member_id = ? AND is_active IN (1)"
+                                                    cursor.execute(query, (overall_compliance_remark, str(member_id)))
+                                                    conn.commit()
+                                                except Exception as e:
+                                                    st.error(f"Error updating compliance remark: {e}", icon="🚨")
+                                                finally:
+                                                    conn.close()
+                                            # Update original data with the new values
+                                            st.session_state['original_data'][measure] = st.session_state['pending_updates'][measure].copy()
+                                            for col in updated_data:
+                                                session_key = f"edit_{col}_{measure.lower()}"
+                                                if session_key in st.session_state:
+                                                    del st.session_state[session_key]
+                                            st.session_state['updated_data'][measure] = {}
+                                            st.session_state['show_confirmation'][measure] = False
+                                            st.session_state['pending_updates'][measure] = {}
+                                            st.session_state['pending_measure'] = None
+                                            st.session_state['has_changes'] = False  # Reset changes tracker
+                                            # AYU----MODIFY---- Clear reset flag after successful update
+                                            st.session_state['reset_measure'] = None
+                                            st.success(f"Changes saved successfully", icon="✅")
+                                    with col_no:
+                                        if st.button("No",type='primary', key=f"confirm_no_{measure}"):
+                                        #AYU --------COMMENTED THIS CODE AS IT WAS working AS EXPECTED--------------------- 
+                                            # Cancel the update, reset fields to original values
+                                            # for col in updated_data:
+                                            #     session_key = f"edit_{col}_{measure.lower()}"
+                                            #     if session_key in st.session_state:
+                                            #         st.session_state[session_key] = st.session_state['original_data'][measure].get(col, '')
+                                            # st.session_state['updated_data'][measure] = {}
+                                            # st.session_state['show_confirmation'][measure] = False
+                                            # st.session_state['pending_updates'][measure] = {}
+                                            # st.session_state['pending_measure'] = None
+                                            # st.session_state['has_changes'] = False  # Reset changes tracker
+                                            # st.info("Update cancelled.", icon="ℹ️")
+                                        #AYU -------------------------MODIFY----------------
+                                            st.session_state['updated_data'][measure] = st.session_state['original_data'][measure].copy()  # ---------------MODIFY---------------
+                                            st.session_state['reset_measure'] = measure  
+                                            st.session_state['show_confirmation'][measure] = False 
+                                            st.session_state['pending_updates'][measure] = {}  
+                                            st.session_state['pending_measure'] = None 
+                                            st.session_state['has_changes'] = False  
+                                            st.info("Update cancelled.", icon="ℹ️")
+                                        #AYU -------------------------MODIFY----------------
+                                    st.markdown('</div>', unsafe_allow_html=True)
+                        else:
+                            st.warning(f"No data to display for {measure}.")
+        
+        if pdf_location and os.path.exists(pdf_location):
+            pdf_document = fitz.open(pdf_location)
+            with right_column:
+                with st.container(height=775, border=True):
+                    st.markdown('<div class="page-input-container">', unsafe_allow_html=True)
+                    page_input = st.number_input(
+                        "Enter page number",
+                        min_value=1,
+                        max_value=len(pdf_document),
+                        value=st.session_state['page_number'],
+                        key="page_input"
+                    )
+                    if page_input != st.session_state['page_number']:
+                        st.session_state['page_number'] = page_input
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    display_pdf_page(st.session_state['page_number'] - 1, pdf_document)
+        else:
+            with right_column:
+                with st.container(height=775, border=True):
+                    st.warning("PDF file not found or inaccessible.", icon="⚠️")   
+                    
+        if pdf_document:
+            pdf_document.close()
+                    
