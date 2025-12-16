@@ -1,105 +1,133 @@
- 
-prompt_HBD = """
-    Your task is to read EMR closely and respond with the details as discussed below:
-    - Members aged 18–75 with diabetes must have one HbA1c test in the current or prior calendar year.
-    - Value must be numeric (e.g., 7.2).
-    - Ignore thresholds (e.g., “target <7.0”) and ranges (e.g., “7.3–9.1”).
-    - if multiple results are present, extract the most recent numeric result and its corresponding date.
-      Use the following hierarchy to determine the date of service (DOS):
-    1. Collection date → 2. Reported date → 3. Result received date / Receipt date
-   
-If an HbA1c test is documented but the result is not numeric, mark it as invalid.
- 
-        ***EMR***
-        {}
- 
-        ***Extraction***
- 
-        Extract the following patient details and provide them in JSON format:
- 
-    1. Name
-        What is patient's full name: `Name`
-        - -Make sure to pickup the patient's name from the document when it doesn't appear at the top
- 
-    2. DOB
-        What is patient's Date of Birth: `DOB`
- 
-    3. Gender
-        What is patient's Gender: `Gender`
- 
-    4. Age
-        What is patient's Age in years: `Age`
- 
-    5. DOS
-        -What is patient's date of service/Date of Visit: `DOS`
-        -This will be single date of service mention on top of EMR
- 
-    6. Provider_Name
-        What is Service Provider Name: `Provider_Name`
- 
-    7. Hospice_Pallitative
-        Wether the member is in Hospice or Pallitative care: `Hospice_Pallitative`
- 
-    8. HbA1c_Result
-        What is HbA1c/A1c or hemoglobin A1c result: `HbA1c_Result`
-       
-        Note1: Exclude the HbA1c value if it is explicitly mentioned as a threshold value. For instance, if the specified threshold value is 5.6, do not add to the output.
-        Note2: range value like 7.8-9.7 not to be considered as the valid HbA1c/A1c value.
- 
-    9. HbA1c_Result_page_No
-        What is the Page Number from which  HbA1c_Result value is extracted: `HbA1c_Result_page_No`
- 
-    10. HbA1c_DOS
-        Most Recent HbA1c/A1c Reading Date:`HbA1c_DOS` recorded in Measurement Year
-        -Don't defualt to DOS on emr generated date
-        -order or recommendation should not be taken as HbA1c_DOS
-        -can use dos collected from office visit
-        -If only the month (e.g., Oct) and year (2002–2024) are present, convert the date to MM/01/YYYY format.
-    11. HbA1c_DOS_page_No
-        What is the Page Number from which  HbA1c_DOS value is extracted: `HbA1c_DOS_page_No`
- 
-    12. Posg_diabetes
-        What is Positive Diabetes Status: `Diabetes`  
-        You must return the "Diabetes" value from the EMR even if it appears in later pages or only as ICD codes like E11, E11.9, E119, or terms like "Type 2 diabetes mellitus". Return "Yes" if found, else "No". Never return NR for Diabetes.
-        Mark "Diabetes" = "Yes" if any of the following are found anywhere in the document:
-        - Keywords: "diabetes", "type 2 diabetes", "DM2", "diabetic retinopathy"
-        - ICD codes: E11.9, E119, E11, E10.9, E10, etc.
-        - Do not rely solely on structured diagnosis sections — scan entire document.
-        - If no such terms or codes are found, then and only then mark "Diabetes" = "No".
- 
- 
-    13. Posg_diabetes_page_No
-        What is the Page Number from which  Posg_diabetes value is extracted: `Posg_diabetes_page_No`
- 
- 
-    Here are the keywords to consider for HbA1c_Result:
-        - HbA1c/A1c or Hemoglobin A1c level or H6xA1c
- 
-        Instructions:
-        1. Only provide the details mentioned above, nothing else.
-        2. Please extract the patient's Gender from the given text. Avoid making assumptions or judgments about the patient's sex based solely on their name. If explicit information about the patient's sex is not available, leave the field blank or indicate it as None. Please rely on explicit mentions or reliable sources within the text to determine the patient's sex accurately.
-        3. Do not judge sex from the name of the patient.
-        4. Do not include timeframes in any Date extraction.Write the dates in mm/dd/yyyy format
-        5. For any test you have to write Yes only if that particular test has been actually  performed not planned or ordered or recommended for any date otherwise write 'No'
-        7. If you do not found any generic information of member then simmply write as "null".
-        8. For age only write the number nothing else.
-        9. For HbA1c_Result extract the result in numeric format do not include special character as "7.3". if <>7.9 like data is present then also provide the numeric part.
-        10.If any Exams or procedure is Scheduled and not performed, Fill the respective columns with "Scheduled"
-        11.If the context clearly indicates that a specific test or procedure was performed, mark the <TestName>_Was_Performed column as Yes.
-           -If the test or procedure name is not mentioned, but the sentence clearly indicates that the test/procedure was performed (e.g., mentions results, readings, or findings), still mark it as Yes.
-            -Extract the associated date from the context and populate it in the <TestName>_DOS columns.
-        12. Only set "Diabetes" = Yes if there is an explicit diagnosis or mention (e.g., ICD code E11.9, “diabetes”, “DM2”) in the EMR.make sure to checkfully for the diagnosis of diabetes.
-        13.If a date is described using relative references (e.g., “day after Memorial Day 2024”), explicitly resolve the reference:
-                - Memorial Day = , it is 05/27/2024, so “day after” = 05/28/2024 not 05/30/2024 so you need write this as dos.
-                - Always convert holiday-based or relative date phrases into exact calendar dates and  relative references into exact mm/dd/yyyy format dates.
-         14. If a procedure or exam is described using indirect or descriptive language (e.g., “a screening was done the day after Memorial Day” without stating the procedure name), infer the corresponding procedure name based on clinical context.
-                -Mark its corresponding column (e.g., Mammogram, Eye Exam, HbA1c) with "Yes".
-                - Fill its date of service (DOS) column with the resolved mm/dd/yyyy date.
- 
-       
- 
- 
-        Here is the sample output for any date: mm/dd/yyyy. You have to strictly follow this format.
- 
-    """
- 
+What you are doing today is best described as prompt engineering (a handcrafted instruction prompt embedded in code). It becomes prompt tuning only if you run a systematic, measurable optimization loop over that prompt (or you tune model parameters via a tuning/fine-tuning method). In most client settings, you should call this “prompt optimization / prompt refinement with evaluation” unless you are actually doing parameter-level tuning.
+
+Is your current approach “prompt tuning”?
+
+Not by itself. A single static prompt string in code is a prompt template.
+It becomes “prompt tuning” when you:
+
+define a target schema + success metrics,
+
+run the prompt on a labeled test set,
+
+measure errors,
+
+revise the prompt in versions,
+
+re-test, and
+
+select the best-performing version with evidence.
+
+That is what you should document to the client.
+
+How to perform prompt tuning (practical, client-ready process)
+1) Create a “golden dataset” (10–50 EMRs)
+
+For each EMR, prepare expected outputs:
+
+HbA1c numeric value (most recent)
+
+HbA1c DOS (apply your hierarchy)
+
+page number
+
+Diabetes Yes/No
+
+demographics fields if present
+
+This is your ground truth.
+
+2) Define measurable acceptance criteria
+
+Examples (you can use these as KPIs):
+
+JSON validity rate: % responses parse successfully
+
+Schema compliance rate: all keys present, correct types
+
+HbA1c accuracy: exact match of numeric value
+
+HbA1c DOS accuracy: exact match (mm/dd/yyyy)
+
+Most recent logic correctness: correct selection when multiple results exist
+
+False positives: “ordered/recommended/scheduled” incorrectly marked as performed
+
+3) Convert prompt into a cleaner, testable template
+
+Your prompt is strong, but it mixes multiple rules and contains a few conflicts:
+
+You say “only provide the details mentioned above” but also introduce generic rules like “Scheduled”.
+
+You say “Only provide JSON format” but don’t explicitly forbid any extra text before/after JSON.
+
+You ask DOS (visit date) and HbA1c_DOS (lab date) but the prompt sometimes suggests using DOS for HbA1c date—this increases confusion.
+
+Tuning step: tighten constraints and reduce ambiguity.
+
+4) Run a controlled iteration loop (this is the “tuning”)
+
+Do this in versions (v1, v2, v3…), each with a changelog:
+
+v1: baseline (your current prompt)
+
+v2: enforce JSON-only + strict schema + null rules
+
+v3: add explicit negative rules for “target <7”, ranges, “ordered”, “plan”
+
+v4: add evidence snippets for HbA1c to improve auditability (optional)
+
+Each version is run on the same golden dataset and scored.
+
+5) Add guardrails in code (post-processing)
+
+Prompt tuning alone won’t guarantee correctness. Add:
+
+JSON parse + schema validation
+
+date validation (mm/dd/yyyy)
+
+numeric validation for HbA1c (regex for decimals)
+
+reject ranges (“7.3–9.1”) and thresholds (“<7.0”) deterministically
+
+if invalid, re-ask model with an error-correction prompt (“Your JSON failed schema: … fix only …”)
+
+This materially improves client confidence.
+
+What you can write in the client document (accurate wording)
+
+Use this phrasing if you are not parameter-tuning the model:
+
+We implemented a prompt-optimization (prompt tuning) workflow for EMR abstraction. A standardized prompt template was iteratively refined using a labeled test set of representative EMRs. Each prompt revision was version-controlled and evaluated using objective metrics including JSON validity, schema compliance, HbA1c value accuracy, HbA1c date-of-service accuracy (using the defined date hierarchy), and false-positive rate for ordered vs performed tests. The final prompt version was selected based on measurable improvements and is enforced at runtime with schema validation and deterministic post-processing rules.
+
+Two concrete improvements you should make to your prompt (high impact)
+A) Force “JSON only”
+
+Add at the top (and repeat near the output section):
+
+“Return ONLY valid JSON. No explanation, no markdown, no extra text.”
+
+B) Require “evidence fields” for HbA1c
+
+To reduce disputes and rework, add:
+
+HbA1c_Result_Evidence_Text
+
+HbA1c_DOS_Evidence_Text
+This makes tuning easier and defensible.
+
+If you want, I can rewrite your prompt into a “v2 tuned prompt”
+
+I will produce:
+
+a cleaned system prompt + user prompt structure,
+
+strict JSON schema,
+
+explicit rules to avoid ranges/thresholds/orders,
+
+optional evidence fields,
+
+and a simple evaluation checklist you can attach to the client document.
+
+If you paste 1–2 sample EMR text snippets (anonymized), I’ll tune it specifically to the patterns you are seeing (multiple HbA1c results, OCR issues, “target <7”, etc.).
