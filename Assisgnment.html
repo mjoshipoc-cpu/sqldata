@@ -1,107 +1,105 @@
-🔵 A. Provider-Level Ranking Questions (Genie MUST group by provider)
-(These reinforce grouping & ranking logic)
-
-Show the top 5 providers based on Composite VBC Score for the latest year.
-
-List the bottom 10 providers by overall VBC score and include Provider_Insight.
-
-Rank providers by Chronic_Score and highlight the worst-performing providers.
-
-Which providers have the highest Preventive_Score in the latest year?
-
-Show provider performance by state and rank providers within each state.
-
-Identify top 5 providers in Texas based on VBC score grouped by provider.
-
-Which providers have improved their Composite VBC Score compared to last year?
-
-Rank providers by Gap_Severity_Index (highest to lowest).
-
-Show the best-performing providers for Behavioral_Score (GSD).
-
-Rank providers by Care_Coordination_Score and include recommended actions.
-
-🟠 B. Gap Closure & Severity Questions (Models gap logic)
-
-Which providers have severe gaps (Gap_Severity_Index > 0.6)?
-
-For providers with low chronic gap closure, show the Primary_Gap_Driver.
-
-List providers with poor A1c_Closure and LDL_Closure (diabetes control).
-
-Show providers with low TRC_Closure and high readmission rates.
-
-Which providers have poor COA_Closure and what actions do we recommend?
-
-Identify providers with consistently low WCC_Closure (preventive pediatrics).
-
-Show top 10 providers with highest percentage of open gaps across all measures.
-
-Which providers show chronic care deterioration from last year to this year?
-
-Provide a list of providers with low LDL and A1c closure rates.
-
-Which providers have poor PPC_Closure for postpartum care?
-
-🟩 C. VBC Domain Performance Questions (Teaches domain grouping)
-
-Show chronic vs preventive performance by provider for the latest year.
-
-Compare Chronic_Score vs Preventive_Score for top 20 providers.
-
-Which providers struggle in behavioral health domain (GSD)?
-
-Provide a domain-level breakdown for a selected provider (chronic, preventive, care coordination, behavioral).
-
-Show preventive score trend by provider specialty.
-
-Which providers excel in care coordination but have high costs?
-
-Identify providers with weak performance in more than one domain.
-
-Compare average domain scores by state.
-
-Show which providers have the largest gap between Chronic_Score and VBC score.
-
-For each state, show top providers in each domain.
-
-🟣 D. Cost & Utilization Questions (Link quality → cost)
-
-Show correlation between Composite VBC Score and avg_pmpm_cost by provider.
-
-Which providers have high ER visit rates but low VBC scores?
-
-Identify providers with high cost and poor chronic care outcomes.
-
-Provide top providers with low PMPM cost but strong VBC performance.
-
-Which providers contributed most to hospital admissions last year?
-
-Show readmission rate vs TRC_Closure for each provider.
-
-Identify outlier providers with high utilization but average quality scores.
-
-Compare PMPM cost across provider specialties.
-
-Show provider performance segmented by PMPM cost quartiles.
-
-Which counties have highest ER visit rates and which providers drive them?
-
-🌟 Why These Questions Are Perfect for Training Genie
-
-These 40 questions teach Genie:
-
-✔ Always group by Provider_ID / TIN / State
-✔ Always use latest year if year is missing
-✔ Understand VBC domain scores
-✔ Apply gap logic (gap closure < 0.5 = poor)
-✔ Use cost & utilization intelligently
-✔ Read & use your NLP insight fields
-✔ Automatically generate SQL without row-level detail
-✔ Provide payer-facing language and reasoning
-
-👉 Want me to turn these into a structured Genie help panel or JSON training block for Databricks?
-
-Just say “Give me Genie help panel” or “Give me Genie training JSON”.
-
-You said:
+ 
+prompt_HBD = """
+    Your task is to read EMR closely and respond with the details as discussed below:
+    - Members aged 18–75 with diabetes must have one HbA1c test in the current or prior calendar year.
+    - Value must be numeric (e.g., 7.2).
+    - Ignore thresholds (e.g., “target <7.0”) and ranges (e.g., “7.3–9.1”).
+    - if multiple results are present, extract the most recent numeric result and its corresponding date.
+      Use the following hierarchy to determine the date of service (DOS):
+    1. Collection date → 2. Reported date → 3. Result received date / Receipt date
+   
+If an HbA1c test is documented but the result is not numeric, mark it as invalid.
+ 
+        ***EMR***
+        {}
+ 
+        ***Extraction***
+ 
+        Extract the following patient details and provide them in JSON format:
+ 
+    1. Name
+        What is patient's full name: `Name`
+        - -Make sure to pickup the patient's name from the document when it doesn't appear at the top
+ 
+    2. DOB
+        What is patient's Date of Birth: `DOB`
+ 
+    3. Gender
+        What is patient's Gender: `Gender`
+ 
+    4. Age
+        What is patient's Age in years: `Age`
+ 
+    5. DOS
+        -What is patient's date of service/Date of Visit: `DOS`
+        -This will be single date of service mention on top of EMR
+ 
+    6. Provider_Name
+        What is Service Provider Name: `Provider_Name`
+ 
+    7. Hospice_Pallitative
+        Wether the member is in Hospice or Pallitative care: `Hospice_Pallitative`
+ 
+    8. HbA1c_Result
+        What is HbA1c/A1c or hemoglobin A1c result: `HbA1c_Result`
+       
+        Note1: Exclude the HbA1c value if it is explicitly mentioned as a threshold value. For instance, if the specified threshold value is 5.6, do not add to the output.
+        Note2: range value like 7.8-9.7 not to be considered as the valid HbA1c/A1c value.
+ 
+    9. HbA1c_Result_page_No
+        What is the Page Number from which  HbA1c_Result value is extracted: `HbA1c_Result_page_No`
+ 
+    10. HbA1c_DOS
+        Most Recent HbA1c/A1c Reading Date:`HbA1c_DOS` recorded in Measurement Year
+        -Don't defualt to DOS on emr generated date
+        -order or recommendation should not be taken as HbA1c_DOS
+        -can use dos collected from office visit
+        -If only the month (e.g., Oct) and year (2002–2024) are present, convert the date to MM/01/YYYY format.
+    11. HbA1c_DOS_page_No
+        What is the Page Number from which  HbA1c_DOS value is extracted: `HbA1c_DOS_page_No`
+ 
+    12. Posg_diabetes
+        What is Positive Diabetes Status: `Diabetes`  
+        You must return the "Diabetes" value from the EMR even if it appears in later pages or only as ICD codes like E11, E11.9, E119, or terms like "Type 2 diabetes mellitus". Return "Yes" if found, else "No". Never return NR for Diabetes.
+        Mark "Diabetes" = "Yes" if any of the following are found anywhere in the document:
+        - Keywords: "diabetes", "type 2 diabetes", "DM2", "diabetic retinopathy"
+        - ICD codes: E11.9, E119, E11, E10.9, E10, etc.
+        - Do not rely solely on structured diagnosis sections — scan entire document.
+        - If no such terms or codes are found, then and only then mark "Diabetes" = "No".
+ 
+ 
+    13. Posg_diabetes_page_No
+        What is the Page Number from which  Posg_diabetes value is extracted: `Posg_diabetes_page_No`
+ 
+ 
+    Here are the keywords to consider for HbA1c_Result:
+        - HbA1c/A1c or Hemoglobin A1c level or H6xA1c
+ 
+        Instructions:
+        1. Only provide the details mentioned above, nothing else.
+        2. Please extract the patient's Gender from the given text. Avoid making assumptions or judgments about the patient's sex based solely on their name. If explicit information about the patient's sex is not available, leave the field blank or indicate it as None. Please rely on explicit mentions or reliable sources within the text to determine the patient's sex accurately.
+        3. Do not judge sex from the name of the patient.
+        4. Do not include timeframes in any Date extraction.Write the dates in mm/dd/yyyy format
+        5. For any test you have to write Yes only if that particular test has been actually  performed not planned or ordered or recommended for any date otherwise write 'No'
+        7. If you do not found any generic information of member then simmply write as "null".
+        8. For age only write the number nothing else.
+        9. For HbA1c_Result extract the result in numeric format do not include special character as "7.3". if <>7.9 like data is present then also provide the numeric part.
+        10.If any Exams or procedure is Scheduled and not performed, Fill the respective columns with "Scheduled"
+        11.If the context clearly indicates that a specific test or procedure was performed, mark the <TestName>_Was_Performed column as Yes.
+           -If the test or procedure name is not mentioned, but the sentence clearly indicates that the test/procedure was performed (e.g., mentions results, readings, or findings), still mark it as Yes.
+            -Extract the associated date from the context and populate it in the <TestName>_DOS columns.
+        12. Only set "Diabetes" = Yes if there is an explicit diagnosis or mention (e.g., ICD code E11.9, “diabetes”, “DM2”) in the EMR.make sure to checkfully for the diagnosis of diabetes.
+        13.If a date is described using relative references (e.g., “day after Memorial Day 2024”), explicitly resolve the reference:
+                - Memorial Day = , it is 05/27/2024, so “day after” = 05/28/2024 not 05/30/2024 so you need write this as dos.
+                - Always convert holiday-based or relative date phrases into exact calendar dates and  relative references into exact mm/dd/yyyy format dates.
+         14. If a procedure or exam is described using indirect or descriptive language (e.g., “a screening was done the day after Memorial Day” without stating the procedure name), infer the corresponding procedure name based on clinical context.
+                -Mark its corresponding column (e.g., Mammogram, Eye Exam, HbA1c) with "Yes".
+                - Fill its date of service (DOS) column with the resolved mm/dd/yyyy date.
+ 
+       
+ 
+ 
+        Here is the sample output for any date: mm/dd/yyyy. You have to strictly follow this format.
+ 
+    """
+ 
