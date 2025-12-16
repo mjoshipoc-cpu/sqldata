@@ -1,193 +1,118 @@
-Below is **exactly how you should explain this to a client**, in a **clear, defensible, and professional way**, without overstating or misrepresenting what you are doing.
-
-I will break this into **three parts**:
-
-1. Honest assessment of your current approach
-2. How to position it as **prompt tuning (correctly)**
-3. What to **present to the client (slide / document content)**
-
----
-
-## 1. First, be precise: what you are doing TODAY
-
-With the prompt you shared:
-
-> You are **not just “passing a prompt”**
-> You are using a **rule-driven, domain-constrained extraction prompt**
-
-However, **by itself**, this is **prompt engineering**, not full prompt tuning.
-
-### Why?
-
-Because:
-
-* The prompt is static
-* There is no visible evaluation loop
-* There is no version comparison
-* There are no documented metrics
-
-That said — **this is very close to prompt tuning**, and clients usually care about **process and controls**, not academic terminology.
-
----
-
-## 2. How to truthfully position this as “Prompt Tuning”
-
-### The key idea clients want to hear:
-
-> “We iteratively refined and validated this prompt using real EMR samples and domain rules.”
-
-Prompt tuning does **not require model fine-tuning**.
-It requires **controlled refinement + validation**.
-
-### You should explain prompt tuning as a **3-layer process**:
-
----
-
-## 3. What to present to the client (USE THIS STRUCTURE)
-
-### Slide / Section 1: What is being tuned
-
-**Title:** Prompt Tuning for EMR HbA1c Extraction
-
-**Content (you can say this verbatim):**
-
-> We use a structured prompt template designed specifically for EMR abstraction of HbA1c and diabetes indicators. The prompt encodes clinical rules (HEDIS-aligned), exclusion logic (thresholds, ranges, orders), date-hierarchy resolution, and strict JSON output constraints.
-
-This shows **domain intelligence**, not just AI usage.
-
----
-
-### Slide / Section 2: How prompt tuning is performed (MOST IMPORTANT)
-
-#### Step 1: Baseline Prompt
-
-* Initial version of the prompt was created based on:
-
-  * HEDIS HbA1c requirements
-  * EMR variability (labs, progress notes, scanned reports)
-  * Known error patterns (ranges, target values, ordered tests)
-
-#### Step 2: Test Dataset (Golden Set)
-
-* A representative sample of EMRs was selected:
-
-  * Single HbA1c
-  * Multiple HbA1c values
-  * Threshold-only mentions
-  * Ordered / planned tests
-  * ICD-only diabetes mentions
-* Expected outputs were defined manually (HbA1c value, date, diabetes Yes/No)
-
-#### Step 3: Iterative Prompt Refinement
-
-* The prompt was refined iteratively to handle:
-
-  * Numeric-only extraction
-  * Date hierarchy enforcement
-  * Exclusion of ranges and targets
-  * Differentiation between performed vs ordered tests
-  * Document-wide diabetes detection
-
-> Each refinement addressed a specific observed failure mode.
-
-✅ **THIS SENTENCE IS KEY FOR CLIENTS**
-
----
-
-### Slide / Section 3: What exactly is “tuned” in your prompt
-
-Map directly to your prompt content:
-
-| Prompt Element     | Why It Exists         | What Was Tuned                                        |
-| ------------------ | --------------------- | ----------------------------------------------------- |
-| Numeric-only HbA1c | Avoid false positives | Added exclusion rules for `<`, `>`, ranges            |
-| Date hierarchy     | EMR inconsistency     | Explicit precedence: collection → reported → received |
-| Diabetes detection | ICDs scattered in EMR | Full-document scan rules                              |
-| JSON-only output   | Downstream automation | Strict field naming & null handling                   |
-| Gender handling    | Compliance            | Explicit “no inference from name” rule                |
-
-This shows **engineering discipline**.
-
----
-
-### Slide / Section 4: Validation & Quality Controls
-
-You **must include this**.
-
-Say:
-
-> Prompt tuning is complemented by deterministic validation in code.
-
-Examples you can mention:
-
-* JSON schema validation
-* Date format validation (mm/dd/yyyy)
-* Numeric validation for HbA1c
-* Rejection of ranges and thresholds via regex
-* Null enforcement when data is missing
-
-This reassures the client that **LLM output is not blindly trusted**.
-
----
-
-### Slide / Section 5: Versioning & Governance (Even if simple)
-
-Even if informal, say:
-
-* Prompt versions are maintained (v1, v2, v3…)
-* Each change is documented with:
-
-  * Issue observed
-  * Prompt adjustment
-  * Expected impact
-* Production uses a **locked prompt version**
-
-This is **exactly what regulated clients want to hear**.
-
----
-
-## 4. How to answer directly if client asks:
-
-### “You are directly passing the prompt—so how is this prompt tuning?”
-
-### Your answer (memorize this):
-
-> We treat prompts as versioned configuration artifacts, not static text. Prompt tuning is performed by iteratively refining the prompt based on observed extraction errors across real EMR samples, validating each change against defined acceptance criteria such as numeric HbA1c accuracy, correct date resolution, and diabetes identification. The final prompt version is locked and governed, with additional post-processing validation in code to ensure consistency and auditability.
-
-This answer is **100% correct and defensible**.
-
----
-
-## 5. What NOT to say to the client
-
-❌ “We fine-tuned the model”
-❌ “The model learns automatically”
-❌ “GPT figures it out on its own”
-❌ “We rely only on the prompt”
-
----
-
-## 6. Optional (Strongly Recommended Enhancement)
-
-If you want to **upgrade your story from good → excellent**, add:
-
-* A small table showing:
-
-  * Prompt v1 accuracy vs v2 accuracy
-* Even with **10 EMRs**, this looks very strong
-
----
-
-## Final Summary (You can put this on last slide)
-
-> Prompt tuning in our solution refers to a controlled, iterative optimization of EMR extraction prompts, driven by domain rules, tested against representative EMRs, validated with deterministic checks, and governed through version control—without modifying the underlying language model.
-
----
-
-If you want, next I can:
-
-* Rewrite your exact prompt into a **“v2 tuned” production-grade version**
-* Create a **1-slide architecture diagram** (EMR → Prompt → GPT → Validator → Output)
-* Draft a **client-ready SOP page** titled *“LLM Prompt Tuning & Governance”*
-
-Just tell me which one you want.
+You are a clinical abstraction and information extraction engine.
+Your task is to extract structured patient and HbA1c details from the provided EMR text.
+
+You must strictly follow all rules below. This is a deterministic extraction task, not a summarization task.
+
+────────────────────────────────────
+SCOPE & CLINICAL RULES
+────────────────────────────────────
+• Members aged 18–75 with diabetes must have at least one HbA1c test in the current or prior calendar year.
+• HbA1c value must be a single numeric result (example: 7.2).
+• Ignore and EXCLUDE:
+  - Thresholds (e.g., “target <7.0”, “goal ≤6.5”)
+  - Ranges (e.g., “7.3–9.1”, “between 8 and 9”)
+• If an HbA1c test is documented but the result is NOT numeric, treat it as INVALID and return null.
+• If multiple numeric HbA1c results are present, extract ONLY the most recent performed result.
+
+────────────────────────────────────
+HbA1c DATE RESOLUTION (STRICT HIERARCHY)
+────────────────────────────────────
+When determining HbA1c_DOS, use the following hierarchy:
+1) Collection date
+2) Reported date
+3) Result received / receipt date
+
+Rules:
+• Do NOT default HbA1c_DOS to the EMR generation date.
+• Do NOT use ordered, planned, or recommended dates.
+• If only month and year are present (e.g., “Oct 2023”), convert to MM/01/YYYY.
+
+────────────────────────────────────
+INPUT EMR
+────────────────────────────────────
+***EMR***
+{EMR_TEXT}
+
+────────────────────────────────────
+OUTPUT REQUIREMENTS
+────────────────────────────────────
+Return ONLY valid JSON.
+Do NOT include explanations, markdown, comments, or additional text.
+All keys must be present. Use null if data is not found.
+
+────────────────────────────────────
+FIELDS TO EXTRACT
+────────────────────────────────────
+
+1. Name
+   • Patient full name
+   • Search entire document if not present at top
+
+2. DOB
+   • Patient date of birth (MM/DD/YYYY)
+
+3. Gender
+   • Extract ONLY if explicitly mentioned
+   • Do NOT infer from name
+   • If not found, return null
+
+4. Age
+   • Age in years (numeric only)
+
+5. DOS
+   • Patient visit / service date shown at top of EMR
+   • Single date only
+
+6. Provider_Name
+   • Rendering or service provider name
+
+7. Hospice_Pallitative
+   • Return "Yes" if hospice or palliative care is explicitly mentioned
+   • Else return "No" or null if unclear
+
+8. HbA1c_Result
+   • Single numeric HbA1c value only
+   • Exclude thresholds, ranges, targets, planned or ordered tests
+   • Extract numeric portion only (e.g., “>7.9” → 7.9)
+
+9. HbA1c_Result_page_No
+   • Page number where HbA1c_Result is found
+
+10. HbA1c_DOS
+    • Most recent performed HbA1c test date
+    • Must follow date hierarchy rules above
+
+11. HbA1c_DOS_page_No
+    • Page number where HbA1c_DOS is found
+
+12. Diabetes
+    • Return "Yes" if diabetes is explicitly mentioned anywhere in the document
+    • Return "No" only if no evidence exists
+    • Acceptable indicators:
+        - Keywords: diabetes, type 2 diabetes, DM2, diabetic retinopathy
+        - ICD codes: E11, E11.9, E119, E10, E10.9
+    • Scan entire document, not just diagnosis sections
+    • Never return NR
+
+13. Posg_diabetes_page_No
+    • Page number where diabetes evidence is found
+
+────────────────────────────────────
+DATE NORMALIZATION RULES
+────────────────────────────────────
+• All dates must be formatted as MM/DD/YYYY.
+• Do NOT include time or time ranges.
+• Resolve relative dates explicitly:
+  - Example: “day after Memorial Day 2024” → 05/28/2024
+• Holiday references must be converted to exact calendar dates.
+
+────────────────────────────────────
+GENERAL EXTRACTION RULES
+────────────────────────────────────
+• If information is not found, return null.
+• Do NOT guess or infer missing values.
+• Do NOT contradict clinical logic.
+• Do NOT output partial JSON.
+• This task requires accuracy over completeness.
+
+Return ONLY the final JSON object.
