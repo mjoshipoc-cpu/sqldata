@@ -334,3 +334,45 @@ scores_df.write.format("delta").mode("overwrite").option("mergeSchema", "true").
 
 print(f"✅ Gold: member_risk_scores — {scores_df.count():,} members scored")
 
+
+
+
+# Ensure SHAP values are numeric and clean
+shap_all_df = shap_all_df.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+
+# Add member_id to SHAP dataframe
+shap_all_df["member_id"] = full_df["member_id"].values
+
+# Function to extract top N drivers
+def get_top_n_drivers(shap_df, feature_list, n=5):
+    """
+    Returns dataframe with top N drivers per member based on absolute SHAP value
+    """
+    top_n = (
+        shap_df[feature_list]
+        .abs()
+        .apply(lambda row: row.nlargest(n).index.tolist(), axis=1)
+        .apply(pd.Series)
+    )
+
+    top_n.columns = [f"clinical_driver_{i+1}" for i in range(n)]
+
+    return top_n
+
+
+# Get Top 5 Clinical Drivers
+top5_clinical_df = get_top_n_drivers(shap_all_df, CLINICAL_FEATURES, n=5)
+
+# Combine with member_id
+top5_clinical_df["member_id"] = shap_all_df["member_id"].values
+
+# Merge into scores table
+scores_pd = scores_pd.merge(
+    top5_clinical_df,
+    on="member_id",
+    how="left"
+)
+
+print(f"✅ Top 5 clinical drivers computed for {len(scores_pd):,} members")
+
+
