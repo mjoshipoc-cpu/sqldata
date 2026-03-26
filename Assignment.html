@@ -1,110 +1,16 @@
-UPDATE aiagenticdemo.hedisabstractor.gold_vbc_insights
-SET Intervention_Method = 
-CASE
-        
-        /* ====================== CHRONIC: CBP / BPD / DIABETES ====================== */
-
-        -- High risk chronic
-        WHEN Risk_Category = 'High'
-             AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y' OR HbA1c > 9) THEN
-            'Care Manager outreach + physician consult + medication titration + monthly BP/HbA1c monitoring + SDOH screening'
-
-        -- Medium risk chronic
-        WHEN Risk_Category = 'Medium'
-             AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y' OR (HbA1c BETWEEN 7 AND 9)) THEN
-            'Health coach outreach + PCP visit scheduling + lifestyle counseling + SMS reminders'
-
-        -- Low risk chronic
-        WHEN Risk_Category = 'Low'
-             AND (CBP_Gap = 'Y' OR BPD_Gap = 'Y') THEN
-            'Preventive reminders + digital coaching + annual chronic check-up reminder'
-
-
-        /* ================= PREVENTIVE: COA / GSD / LSC ================= */
-
-        -- COA high
-        WHEN Risk_Category = 'High'
-             AND COA_Gap = 'Y' THEN
-            'Care manager + COA visit scheduling + home assessment + medication reconciliation + fall-risk/SDOH evaluation'
-
-        -- COA medium
-        WHEN Risk_Category = 'Medium'
-             AND COA_Gap = 'Y' THEN
-            'Call center outreach + COA/PCP visit scheduling + caregiver reminders'
-
-        -- COA low
-        WHEN Risk_Category = 'Low'
-             AND COA_Gap = 'Y' THEN
-            'Automated COA reminder + preventive education material'
-
-        -- GSD / LSC high
-        WHEN Risk_Category = 'High'
-             AND (GSD_Gap = 'Y' OR LSC_Gap = 'Y') THEN
-            'Pharmacist review + lab scheduling + high-touch follow-up'
-
-        -- GSD / LSC medium
-        WHEN Risk_Category = 'Medium'
-             AND (GSD_Gap = 'Y' OR LSC_Gap = 'Y') THEN
-            'Lab reminder + PCP follow-up + health coach outreach'
-
-        -- GSD / LSC low
-        WHEN Risk_Category = 'Low'
-             AND (GSD_Gap = 'Y' OR LSC_Gap = 'Y') THEN
-            'Screening reminder via SMS/email + app notification'
-
-
-        /* ================= CARE COORDINATION: PPC / TRC ================= */
-
-        -- PPC high
-        WHEN Risk_Category = 'High'
-             AND PPC_Gap = 'Y' THEN
-            'OB care manager + frequent follow-up + prenatal/postpartum scheduling + SDOH support'
-
-        -- PPC medium
-        WHEN Risk_Category = 'Medium'
-             AND PPC_Gap = 'Y' THEN
-            'Automated reminders + SMS scheduling support + nurse helpline'
-
-        -- PPC low
-        WHEN Risk_Category = 'Low'
-             AND PPC_Gap = 'Y' THEN
-            'Preventive pregnancy education + app-based reminders'
-
-        -- TRC high
-        WHEN Risk_Category = 'High'
-             AND TRC_Gap = 'Y' THEN
-            'Nurse-led 48-hour post-discharge call + med reconciliation + follow-up appointment + home health referral'
-
-        -- TRC medium
-        WHEN Risk_Category = 'Medium'
-             AND TRC_Gap = 'Y' THEN
-            'Telephonic follow-up in 7 days + PCP appointment support'
-
-        -- TRC low
-        WHEN Risk_Category = 'Low'
-             AND TRC_Gap = 'Y' THEN
-            'Automated check-in + follow-up visit reminder'
-
-
-        /* ================= PEDIATRIC: WCC ================= */
-
-        -- WCC high
-        WHEN Risk_Category = 'High'
-             AND WCC_Gap = 'Y' THEN
-            'Parent/caregiver outreach + pediatric scheduling + social worker support if SDOH barriers'
-
-        -- WCC medium
-        WHEN Risk_Category = 'Medium'
-             AND WCC_Gap = 'Y' THEN
-            'Parent reminder calls + SMS + weekend clinic options'
-
-        -- WCC low
-        WHEN Risk_Category = 'Low'
-             AND WCC_Gap = 'Y' THEN
-            'Automated well-child reminder + app notification + educational content'
-
-
-        /* ================= DEFAULT ================= */
-        ELSE
-            'Standard preventive reminders + digital engagement'
-END;
+Input: 
+Employee table:
++----+-------+--------+-----------+
+| id | name  | salary | managerId |
++----+-------+--------+-----------+
+| 1  | Joe   | 70000  | 3         |
+| 2  | Henry | 80000  | 4         |
+| 3  | Sam   | 60000  | Null      |
+| 4  | Max   | 90000  | Null      |
++----+-------+--------+-----------+
+Output: 
++----------+
+| Employee |
++----------+
+| Joe      |
++----------+
