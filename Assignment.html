@@ -1,13 +1,10 @@
 SELECT
-    DATE(START_TIME)                      AS dt,
-    SUM(CREDITS_USED_COMPUTE)             AS compute_credits,
-    SUM(CREDITS_USED_CLOUD_SERVICES)      AS cloud_credits,
-    SUM(CREDITS_USED_COMPUTE) * 0.1       AS free_threshold,
-    GREATEST(0,
-        SUM(CREDITS_USED_CLOUD_SERVICES) -
-        SUM(CREDITS_USED_COMPUTE) * 0.1)  AS billable_cloud_credits
+    WAREHOUSE_NAME,
+    SUM(CREDITS_USED)           AS total_credits,
+    SUM(CREDITS_USED_COMPUTE)   AS compute_credits,
+    SUM(CREDITS_USED_CLOUD_SERVICES) AS cloud_credits,
+    ROUND(SUM(CREDITS_USED) * 3, 2) AS est_cost_usd  -- approx $3/credit
 FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-WHERE START_TIME >= DATEADD('DAY', -30, CURRENT_DATE)
-GROUP BY dt
-ORDER BY dt DESC;
-All billing-related views in ACCOUNT_USAGE
+WHERE START_TIME >= DATE_TRUNC('MONTH', CURRENT_DATE)
+GROUP BY WAREHOUSE_NAME
+ORDER BY total_credits DESC;
