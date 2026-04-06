@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Provider Recruitment Intelligence — SW Texas</title>
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;500;600&family=Calibri:wght@400;600&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg:        #f0f2f5;
+  --surface:   #ffffff;
+  --surface2:  #f7f8fa;
+  --surface3:  #eef0f4;
+  --border:    #d0d4dc;
+  --border2:   #bcc1cc;
+  --text:      #1a1f2e;
+  --text2:     #3d4559;
+  --muted:     #6b7490;
+  --dim:       #9ba3b8;
+
+  --xl-blue:       #1f6dc8;
+  --xl-blue-light: #ddeaf8;
+  --xl-blue-mid:   #4a90d9;
+  --xl-green:      #217346;
+  --xl-green-light:#e6f2ec;
+  --xl-red:        #c00000;
+  --xl-red-light:  #fde8e8;
+  --xl-amber:      #bf8700;
+  --xl-amber-light:#fff3cd;
+  --xl-purple:     #5c3d99;
+  --xl-purple-light:#ede8f7;
+  --xl-teal:       #005f73;
+  --xl-teal-light: #e0f4f7;
+
+  --header-bg:  #1f6dc8;
+  --header-text:#ffffff;
+  --ribbon-bg:  #2b7de9;
+  --nav-active: #1f6dc8;
+  --nav-hover:  #ddeaf8;
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.10);
+}
+
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.4;}
+
+/* ── PAGE SHELL ── */
+.shell{display:grid;grid-template-rows:auto auto 1fr;height:100vh;overflow:hidden;}
+.header{background:var(--header-bg);color:var(--header-text);padding:0 18px;height:44px;display:flex;align-items:center;gap:14px;}
+.header-logo{font-size:16px;font-weight:600;letter-spacing:-0.3px;white-space:nowrap;}
+.header-logo span{opacity:.7;font-weight:400;}
+.header-sep{width:1px;height:20px;background:rgba(255,255,255,0.25);}
+.header-title{font-size:12px;opacity:.85;}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.live-pill{display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:3px;padding:2px 8px;font-size:10px;}
+.live-dot{width:5px;height:5px;border-radius:50%;background:#6dff9b;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.stamp{font-size:10px;opacity:.6;}
+
+/* ── RIBBON / TABS ── */
+.ribbon{background:var(--ribbon-bg);display:flex;align-items:stretch;padding:0 8px;border-bottom:2px solid rgba(0,0,0,0.15);}
+.rib-btn{padding:8px 16px;font-size:11px;font-weight:500;color:rgba(255,255,255,0.8);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:all .15s;}
+.rib-btn:hover{color:#fff;background:rgba(255,255,255,0.1);}
+.rib-btn.active{color:#fff;border-bottom-color:#fff;background:rgba(255,255,255,0.12);}
+
+/* ── BODY LAYOUT ── */
+.body{display:grid;grid-template-columns:190px 1fr;overflow:hidden;height:100%;}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;padding:8px 0;}
+.main{overflow-y:auto;padding:16px 18px;background:var(--bg);}
+
+/* ── SIDEBAR ── */
+.sb-section{padding:8px 12px 3px;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.sb-item{display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer;color:var(--text2);font-size:11px;border-left:3px solid transparent;transition:all .12s;}
+.sb-item:hover{background:var(--nav-hover);color:var(--xl-blue);}
+.sb-item.active{border-left-color:var(--xl-blue);background:var(--xl-blue-light);color:var(--xl-blue);font-weight:500;}
+.sb-dot{width:7px;height:7px;border-radius:1px;flex-shrink:0;}
+.sb-count{margin-left:auto;font-size:10px;background:var(--surface3);border:1px solid var(--border);border-radius:3px;padding:0 5px;color:var(--muted);}
+
+/* ── SECTION HEADERS ── */
+.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px;margin-top:4px;}
+.sec-hdr-title{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;}
+.sec-hdr-line{flex:1;height:1px;background:var(--border);}
+.sec-hdr-badge{font-size:10px;background:var(--xl-blue);color:#fff;border-radius:3px;padding:1px 7px;font-weight:500;}
+
+/* ── KPI STRIP ── */
+.kpi-strip{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px;}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:12px 14px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;}
+.kpi::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;}
+.kpi.c-blue::after{background:var(--xl-blue);}
+.kpi.c-red::after{background:var(--xl-red);}
+.kpi.c-green::after{background:var(--xl-green);}
+.kpi.c-amber::after{background:var(--xl-amber);}
+.kpi.c-purple::after{background:var(--xl-purple);}
+.kpi.c-teal::after{background:var(--xl-teal);}
+.kpi-label{font-size:10px;color:var(--muted);margin-bottom:5px;font-weight:400;}
+.kpi-val{font-size:22px;font-weight:700;line-height:1;font-family:Calibri,sans-serif;}
+.kpi-val.red{color:var(--xl-red);}
+.kpi-val.green{color:var(--xl-green);}
+.kpi-val.blue{color:var(--xl-blue);}
+.kpi-val.amber{color:var(--xl-amber);}
+.kpi-sub{font-size:10px;color:var(--dim);margin-top:3px;}
+
+/* ── LAYOUT GRIDS ── */
+.row{display:grid;gap:10px;margin-bottom:10px;}
+.cols-2{grid-template-columns:1fr 1fr;}
+.cols-3{grid-template-columns:1fr 1fr 1fr;}
+.cols-32{grid-template-columns:1.55fr 1fr;}
+.cols-23{grid-template-columns:1fr 1.55fr;}
+
+/* ── CARDS ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:12px 14px;box-shadow:var(--shadow-sm);}
+.card-title{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;display:flex;align-items:center;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--surface3);}
+
+/* ── TABLE ── */
+.tbl{width:100%;border-collapse:collapse;font-size:11px;}
+.tbl thead{background:var(--xl-blue);}
+.tbl th{font-size:10px;font-weight:600;color:#fff;text-align:left;padding:6px 8px;white-space:nowrap;border-right:1px solid rgba(255,255,255,0.15);}
+.tbl th:last-child{border-right:none;}
+.tbl td{padding:5px 8px;border-bottom:1px solid var(--surface3);color:var(--text);white-space:nowrap;vertical-align:middle;}
+.tbl tbody tr:nth-child(even){background:var(--surface2);}
+.tbl tbody tr:hover td{background:var(--xl-blue-light);}
+.tbl tbody tr:last-child td{border-bottom:none;}
+.tbl-name{max-width:130px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
+
+/* ── TAGS / BADGES ── */
+.tag{display:inline-flex;align-items:center;font-size:9px;font-weight:600;padding:2px 6px;border-radius:2px;white-space:nowrap;}
+.tag-red{background:var(--xl-red-light);color:var(--xl-red);border:1px solid rgba(192,0,0,0.2);}
+.tag-green{background:var(--xl-green-light);color:var(--xl-green);border:1px solid rgba(33,115,70,0.2);}
+.tag-amber{background:var(--xl-amber-light);color:var(--xl-amber);border:1px solid rgba(191,135,0,0.2);}
+.tag-blue{background:var(--xl-blue-light);color:var(--xl-blue);border:1px solid rgba(31,109,200,0.2);}
+.tag-purple{background:var(--xl-purple-light);color:var(--xl-purple);border:1px solid rgba(92,61,153,0.2);}
+.tag-teal{background:var(--xl-teal-light);color:var(--xl-teal);border:1px solid rgba(0,95,115,0.2);}
+
+/* ── SCORE BAR ── */
+.score-wrap{display:flex;align-items:center;gap:5px;}
+.score-track{width:48px;height:6px;background:var(--surface3);border-radius:1px;overflow:hidden;border:1px solid var(--border);}
+.score-fill{height:100%;}
+.score-num{font-size:10px;font-weight:600;font-family:Calibri,sans-serif;}
+
+/* ── HORIZ BAR ── */
+.hbar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+.hbar-label{font-size:10px;color:var(--text2);width:110px;flex-shrink:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hbar-track{flex:1;height:10px;background:var(--surface3);border:1px solid var(--border);border-radius:1px;overflow:hidden;}
+.hbar-fill{height:100%;transition:width .5s ease;}
+.hbar-val{font-size:10px;color:var(--muted);width:28px;text-align:right;flex-shrink:0;font-weight:500;}
+
+/* ── HEATMAP ── */
+.heat-hdr{font-size:9px;font-weight:600;color:var(--muted);text-align:center;padding:3px 2px;background:var(--surface2);border:1px solid var(--border);}
+.heat-row-lbl{font-size:9px;color:var(--text2);text-align:right;padding-right:6px;display:flex;align-items:center;justify-content:flex-end;font-weight:500;}
+.heat-cell{height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;border:1px solid var(--border);cursor:default;}
+.heat-cell:hover{outline:2px solid var(--xl-blue);z-index:2;position:relative;}
+
+/* ── COUNTY PILLS ── */
+.county-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px;}
+.county-card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:10px 12px;box-shadow:var(--shadow-sm);border-top:3px solid transparent;}
+.county-card.danger{border-top-color:var(--xl-red);}
+.county-card.warn{border-top-color:var(--xl-amber);}
+.county-card.ok{border-top-color:var(--xl-green);}
+.county-name{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
+.county-num{font-size:24px;font-weight:700;font-family:Calibri,sans-serif;line-height:1;}
+.county-sub{font-size:9px;color:var(--dim);margin-top:3px;}
+
+/* ── FEE BARS ── */
+.fee-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.fee-label{font-size:10px;color:var(--text2);width:110px;flex-shrink:0;text-align:right;}
+.fee-track{flex:1;height:12px;background:var(--surface3);border:1px solid var(--border);border-radius:1px;overflow:hidden;display:flex;}
+.fee-yours{background:var(--xl-green);}
+.fee-gap{background:var(--xl-red-light);border-left:1px solid rgba(192,0,0,0.2);}
+.fee-pct{font-size:10px;font-weight:600;color:var(--xl-red);width:34px;text-align:right;flex-shrink:0;}
+
+/* ── INSIGHTS ── */
+.insight{background:var(--surface);border:1px solid var(--border);border-radius:4px;border-left:4px solid var(--xl-blue);padding:10px 12px;margin-bottom:0;box-shadow:var(--shadow-sm);}
+.insight-num{font-size:9px;font-weight:700;color:var(--xl-blue);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;}
+.insight-title{font-size:11px;font-weight:600;color:var(--text);margin-bottom:3px;}
+.insight-desc{font-size:10px;color:var(--muted);line-height:1.6;}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:var(--surface3);}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:var(--muted);}
+
+/* ── STATUS BAR ── */
+.statusbar{background:var(--xl-blue);color:rgba(255,255,255,.8);font-size:10px;padding:2px 14px;display:flex;gap:16px;align-items:center;}
+.statusbar span{display:flex;align-items:center;gap:4px;}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-logo">Network<span>IQ</span></div>
+    <div class="header-sep"></div>
+    <div class="header-title">Provider Recruitment Intelligence Dashboard — SW Texas</div>
+    <div class="header-right">
+      <div class="live-pill"><div class="live-dot"></div>Live</div>
+      <div class="stamp">Source: ndm_providers.csv · network360.csv · claims_oon.csv · inn_directory.csv · members.csv</div>
+    </div>
+  </div>
+
+  <!-- RIBBON -->
+  <div class="ribbon">
+    <button class="rib-btn active" onclick="scrollTo2('s-kpi',this)">Summary</button>
+    <button class="rib-btn" onclick="scrollTo2('s-county',this)">County Coverage</button>
+    <button class="rib-btn" onclick="scrollTo2('s-whitespace',this)">Whitespace Map</button>
+    <button class="rib-btn" onclick="scrollTo2('s-prospects',this)">Prospect List</button>
+    <button class="rib-btn" onclick="scrollTo2('s-competitor',this)">Competitor Intel</button>
+    <button class="rib-btn" onclick="scrollTo2('s-fees',this)">Fee Benchmarks</button>
+    <button class="rib-btn" onclick="scrollTo2('s-insights',this)">Key Insights</button>
+  </div>
+
+  <!-- BODY -->
+  <div class="body">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="sb-section">Navigation</div>
+      <div class="sb-item active" onclick="scrollTo2('s-kpi',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-blue)"></div>Summary KPIs</div>
+      <div class="sb-item" onclick="scrollTo2('s-county',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-red)"></div>County Coverage<span class="sb-count">5</span></div>
+
+      <div class="sb-section">Gap Analysis</div>
+      <div class="sb-item" onclick="scrollTo2('s-whitespace',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-red)"></div>Whitespace Map<span class="sb-count">38</span></div>
+      <div class="sb-item" onclick="scrollTo2('s-specialty',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-amber)"></div>Specialty Gaps<span class="sb-count">10</span></div>
+      <div class="sb-item" onclick="scrollTo2('s-prospects',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-green)"></div>Prospect List<span class="sb-count">20</span></div>
+
+      <div class="sb-section">Intelligence</div>
+      <div class="sb-item" onclick="scrollTo2('s-competitor',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-purple)"></div>Competitor Intel</div>
+      <div class="sb-item" onclick="scrollTo2('s-fees',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-amber)"></div>Fee Benchmarks</div>
+      <div class="sb-item" onclick="scrollTo2('s-insights',null,'sb',this)"><div class="sb-dot" style="background:var(--xl-teal)"></div>Key Insights</div>
+
+      <div style="margin-top:16px;padding:10px 12px;border-top:1px solid var(--border);">
+        <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Data Sources</div>
+        <div style="font-size:10px;color:var(--text2);line-height:2.1;">
+          <div style="display:flex;justify-content:space-between;"><span>NDM Providers</span><span style="color:var(--xl-green);font-weight:600;">200</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>Network 360</span><span style="color:var(--xl-green);font-weight:600;">533</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>NPI Registry</span><span style="color:var(--xl-green);font-weight:600;">200</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>Claims OON</span><span style="color:var(--xl-green);font-weight:600;">600</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>Members</span><span style="color:var(--xl-green);font-weight:600;">300</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>INN Directory</span><span style="color:var(--xl-amber);font-weight:600;">18</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="main" id="main-scroll">
+
+      <!-- KPIs -->
+      <div id="s-kpi">
+        <div class="sec-hdr"><div class="sec-hdr-title">Summary KPIs</div><div class="sec-hdr-line"></div><div class="sec-hdr-badge">SW Texas · 5 Counties</div></div>
+      </div>
+      <div class="kpi-strip">
+        <div class="kpi c-red">
+          <div class="kpi-label">INN Providers Today</div>
+          <div class="kpi-val red">18</div>
+          <div class="kpi-sub">Webb + Val Verde only</div>
+        </div>
+        <div class="kpi c-blue">
+          <div class="kpi-label">OON Prospect Pool</div>
+          <div class="kpi-val blue">200</div>
+          <div class="kpi-sub">Scored &amp; ranked</div>
+        </div>
+        <div class="kpi c-red">
+          <div class="kpi-label">Zero-Coverage Gaps</div>
+          <div class="kpi-val red">38</div>
+          <div class="kpi-sub">County × specialty combos</div>
+        </div>
+        <div class="kpi c-amber">
+          <div class="kpi-label">Annual OON Spend</div>
+          <div class="kpi-val amber">$230K</div>
+          <div class="kpi-sub">Reclaimable as INN</div>
+        </div>
+        <div class="kpi c-amber">
+          <div class="kpi-label">Avg Fee Gap vs NDM</div>
+          <div class="kpi-val amber">−20%</div>
+          <div class="kpi-sub">Root cause of rejections</div>
+        </div>
+        <div class="kpi c-green">
+          <div class="kpi-label">Members in Region</div>
+          <div class="kpi-val green">300</div>
+          <div class="kpi-sub">5 SW Texas counties</div>
+        </div>
+      </div>
+
+      <!-- COUNTY COVERAGE -->
+      <div id="s-county">
+        <div class="sec-hdr"><div class="sec-hdr-title">County Coverage</div><div class="sec-hdr-line"></div></div>
+      </div>
+      <div class="county-strip">
+        <div class="county-card danger">
+          <div class="county-name">Maverick Co.</div>
+          <div class="county-num" style="color:var(--xl-red)">0</div>
+          <div class="county-sub">Your INN providers</div>
+          <div style="margin-top:5px;font-size:9px;color:var(--muted)">Competitor avg: 22 providers</div>
+          <div style="margin-top:5px;"><span class="tag tag-red">Zero coverage</span></div>
+        </div>
+        <div class="county-card danger">
+          <div class="county-name">Zavala Co.</div>
+          <div class="county-num" style="color:var(--xl-red)">0</div>
+          <div class="county-sub">Your INN providers</div>
+          <div style="margin-top:5px;font-size:9px;color:var(--muted)">Competitor avg: 21 providers</div>
+          <div style="margin-top:5px;"><span class="tag tag-red">Zero coverage</span></div>
+        </div>
+        <div class="county-card danger">
+          <div class="county-name">Kinney Co.</div>
+          <div class="county-num" style="color:var(--xl-red)">0</div>
+          <div class="county-sub">Your INN providers</div>
+          <div style="margin-top:5px;font-size:9px;color:var(--muted)">Competitor avg: 16 providers</div>
+          <div style="margin-top:5px;"><span class="tag tag-red">Zero coverage</span></div>
+        </div>
+        <div class="county-card warn">
+          <div class="county-name">Webb Co.</div>
+          <div class="county-num" style="color:var(--xl-amber)">8</div>
+          <div class="county-sub">Your INN providers</div>
+          <div style="margin-top:5px;font-size:9px;color:var(--muted)">Competitor avg: 23 providers</div>
+          <div style="margin-top:5px;"><span class="tag tag-amber">Partial coverage</span></div>
+        </div>
+        <div class="county-card ok">
+          <div class="county-name">Val Verde Co.</div>
+          <div class="county-num" style="color:var(--xl-green)">10</div>
+          <div class="county-sub">Your INN providers</div>
+          <div style="margin-top:5px;font-size:9px;color:var(--muted)">Competitor avg: 25 providers</div>
+          <div style="margin-top:5px;"><span class="tag tag-green">Partial coverage</span></div>
+        </div>
+      </div>
+
+      <!-- WHITESPACE + SPECIALTY -->
+      <div id="s-whitespace">
+        <div class="sec-hdr"><div class="sec-hdr-title">Whitespace Map + Specialty Gaps</div><div class="sec-hdr-line"></div></div>
+      </div>
+      <div class="row cols-32" style="margin-bottom:10px;">
+        <div class="card">
+          <div class="card-title">Whitespace heatmap — county × specialty &nbsp;<span class="tag tag-red">Red = 0 INN</span>&nbsp;<span class="tag tag-green">Green = covered</span></div>
+          <div id="heatmap-container"></div>
+        </div>
+        <div class="card" id="s-specialty">
+          <div class="card-title">Specialty INN count — all 10 specialties</div>
+          <div id="spec-bars"></div>
+        </div>
+      </div>
+
+      <!-- PROSPECTS -->
+      <div id="s-prospects">
+        <div class="sec-hdr"><div class="sec-hdr-title">Prospect Outreach List</div><div class="sec-hdr-line"></div><div class="sec-hdr-badge">Top 20 Scored</div></div>
+      </div>
+      <div class="card" style="margin-bottom:10px;">
+        <div class="card-title">
+          Ranked by composite score · NDM + Network360 + Claims + Members
+          <span style="margin-left:auto;display:flex;gap:5px;">
+            <span class="tag tag-red">Critical ≥80</span>
+            <span class="tag tag-amber">High ≥65</span>
+            <span class="tag tag-green">Medium ≥45</span>
+          </span>
+        </div>
+        <div style="overflow-x:auto;">
+        <table class="tbl">
+          <thead><tr>
+            <th>#</th><th>Provider Name</th><th>Specialty</th><th>County</th>
+            <th>Score</th><th>OON Claims</th><th>OON Spend</th>
+            <th>Comp. Nets</th><th>Market Fee</th><th>Your Fee</th>
+            <th>Fee Gap</th><th>Accepting</th><th>Tier</th>
+          </tr></thead>
+          <tbody id="prospects-body"></tbody>
+        </table>
+        </div>
+      </div>
+
+      <!-- COMPETITOR + FEES -->
+      <div id="s-competitor">
+        <div class="sec-hdr"><div class="sec-hdr-title">Competitor Intelligence</div><div class="sec-hdr-line"></div></div>
+      </div>
+      <div class="row cols-2" style="margin-bottom:10px;">
+        <div class="card">
+          <div class="card-title">Network 360 — Competitor INN strength by county vs you</div>
+          <div id="comp-chart"></div>
+        </div>
+        <div class="card" id="s-fees">
+          <div class="card-title">NDM fee benchmark — your offer (green) vs market gap (red)</div>
+          <div id="fee-chart"></div>
+        </div>
+      </div>
+
+      <!-- INSIGHTS -->
+      <div id="s-insights">
+        <div class="sec-hdr"><div class="sec-hdr-title">Key Insights</div><div class="sec-hdr-line"></div><div class="sec-hdr-badge">Derived from CSV data</div></div>
+      </div>
+      <div class="row cols-3" id="insights-grid" style="margin-bottom:16px;"></div>
+
+    </div><!-- /main -->
+  </div><!-- /body -->
+
+</div><!-- /shell -->
+
+<script>
+const PROSPECTS=[{"npi":"9661772834","name":"Dr. Monica Torres","specialty":"Psychiatry","county":"Kinney","score":74,"tier":"High","oon_claims":6,"oon_billed":2058,"competitor_nets":5,"market_fee":233.78,"your_fee":187.02,"fee_gap_pct":-20.0,"accepting":"Y"},{"npi":"4403845222","name":"Dr. Patricia Gonzalez","specialty":"Psychiatry","county":"Val Verde","score":73,"tier":"High","oon_claims":5,"oon_billed":1753,"competitor_nets":4,"market_fee":228.06,"your_fee":182.45,"fee_gap_pct":-20.0,"accepting":"Y"},{"npi":"8215470878","name":"Dr. James Rodriguez","specialty":"Gen. Dentistry","county":"Maverick","score":73,"tier":"High","oon_claims":10,"oon_billed":2152,"competitor_nets":5,"market_fee":147.51,"your_fee":106.1,"fee_gap_pct":-28.1,"accepting":"Y"},{"npi":"4067919621","name":"Gutierrez Health Svcs","specialty":"Pediatrics","county":"Zavala","score":73,"tier":"High","oon_claims":7,"oon_billed":1419,"competitor_nets":3,"market_fee":153.42,"your_fee":118.12,"fee_gap_pct":-23.0,"accepting":"Y"},{"npi":"1225447588","name":"Dr. Susan Rivera","specialty":"Psychiatry","county":"Maverick","score":72,"tier":"High","oon_claims":5,"oon_billed":1435,"competitor_nets":3,"market_fee":231.91,"your_fee":185.53,"fee_gap_pct":-20.0,"accepting":"N"},{"npi":"4473829163","name":"Rivera Health Assoc.","specialty":"Psychiatry","county":"Val Verde","score":72,"tier":"High","oon_claims":5,"oon_billed":2095,"competitor_nets":3,"market_fee":206.19,"your_fee":164.95,"fee_gap_pct":-20.0,"accepting":"Y"},{"npi":"3772636814","name":"Perez Medical Center","specialty":"Pediatrics","county":"Zavala","score":72,"tier":"High","oon_claims":7,"oon_billed":1725,"competitor_nets":3,"market_fee":154.52,"your_fee":118.12,"fee_gap_pct":-23.6,"accepting":"Y"},{"npi":"5584288132","name":"Hernandez Health Assoc.","specialty":"Psychiatry","county":"Webb","score":72,"tier":"High","oon_claims":7,"oon_billed":2188,"competitor_nets":5,"market_fee":203.64,"your_fee":162.91,"fee_gap_pct":-20.0,"accepting":"Y"},{"npi":"8047347877","name":"Dr. David Delgado","specialty":"Cardiology","county":"Maverick","score":72,"tier":"High","oon_claims":5,"oon_billed":2594,"competitor_nets":3,"market_fee":439.57,"your_fee":350.82,"fee_gap_pct":-20.2,"accepting":"Y"},{"npi":"1194576436","name":"Dr. Miguel Castillo","specialty":"Psychiatry","county":"Val Verde","score":71,"tier":"High","oon_claims":5,"oon_billed":1358,"competitor_nets":4,"market_fee":218.11,"your_fee":174.49,"fee_gap_pct":-20.0,"accepting":"Y"},{"npi":"5471158508","name":"Dr. Teresa Ruiz","specialty":"Gen. Surgery","county":"Kinney","score":70,"tier":"High","oon_claims":7,"oon_billed":4139,"competitor_nets":3,"market_fee":447.81,"your_fee":335.54,"fee_gap_pct":-25.1,"accepting":"Y"},{"npi":"6072939882","name":"Dr. Sandra Ortiz","specialty":"Orthopedics","county":"Maverick","score":69,"tier":"High","oon_claims":9,"oon_billed":4977,"competitor_nets":2,"market_fee":408.74,"your_fee":314.85,"fee_gap_pct":-23.0,"accepting":"Y"},{"npi":"3806215682","name":"Hernandez Medical Ctr","specialty":"Pediatrics","county":"Zavala","score":69,"tier":"High","oon_claims":6,"oon_billed":1265,"competitor_nets":3,"market_fee":156.52,"your_fee":118.12,"fee_gap_pct":-24.5,"accepting":"Y"},{"npi":"8877444318","name":"Dr. Patricia Ramirez","specialty":"Int. Medicine","county":"Webb","score":68,"tier":"High","oon_claims":11,"oon_billed":2732,"competitor_nets":2,"market_fee":163.98,"your_fee":131.18,"fee_gap_pct":-20.0,"accepting":"Y"},{"npi":"2445662585","name":"Martinez Medical Ctr","specialty":"Cardiology","county":"Zavala","score":67,"tier":"High","oon_claims":4,"oon_billed":2875,"competitor_nets":5,"market_fee":428.71,"your_fee":350.82,"fee_gap_pct":-18.2,"accepting":"Y"},{"npi":"8106906538","name":"Dr. Jose Reyes","specialty":"Orthopedics","county":"Maverick","score":67,"tier":"High","oon_claims":4,"oon_billed":2560,"competitor_nets":4,"market_fee":382.94,"your_fee":314.85,"fee_gap_pct":-17.8,"accepting":"Y"},{"npi":"5305985001","name":"Dr. Monica Flores","specialty":"Orthopedics","county":"Val Verde","score":68,"tier":"High","oon_claims":4,"oon_billed":2266,"competitor_nets":5,"market_fee":387.97,"your_fee":314.85,"fee_gap_pct":-18.8,"accepting":"N"},{"npi":"3878719791","name":"Perez Family Clinic","specialty":"Gen. Dentistry","county":"Val Verde","score":69,"tier":"High","oon_claims":5,"oon_billed":979,"competitor_nets":4,"market_fee":134.92,"your_fee":106.1,"fee_gap_pct":-21.4,"accepting":"Y"},{"npi":"7872090713","name":"Dr. Isabel Rivera","specialty":"Psychiatry","county":"Maverick","score":71,"tier":"High","oon_claims":5,"oon_billed":1707,"competitor_nets":3,"market_fee":219.88,"your_fee":175.9,"fee_gap_pct":-20.0,"accepting":"N"},{"npi":"2877279755","name":"Delgado Medical Group","specialty":"Psychiatry","county":"Zavala","score":70,"tier":"High","oon_claims":6,"oon_billed":1950,"competitor_nets":2,"market_fee":212.36,"your_fee":169.89,"fee_gap_pct":-20.0,"accepting":"N"}];
+
+const SPECS_SHORT=['Gen.Dent','Ped.Dent','Fam.Med','Int.Med','Ortho','Cardio','OB/GYN','Peds','Psych','Gen.Surg'];
+const SPECS_FULL=['Gen. Dentistry','Ped. Dentistry','Family Med','Int. Medicine','Orthopedics','Cardiology','OB/GYN','Pediatrics','Psychiatry','Gen. Surgery'];
+const SPEC_INN=[2,4,3,0,1,2,1,4,0,1];
+const COUNTIES=['Webb','Maverick','Zavala','Val Verde','Kinney'];
+const PAYERS=['Aetna','BCBS TX','UHC','Cigna','Humana'];
+const COMP={Webb:[22,22,22,25,22],Maverick:[20,24,24,23,20],Zavala:[18,26,20,16,24],'Val Verde':[27,27,22,23,25],Kinney:[16,18,15,16,16]};
+const YOU_INN={Webb:8,Maverick:0,Zavala:0,'Val Verde':10,Kinney:0};
+const FEES=[{sp:'Gen. Dentistry',mkt:142,you:116},{sp:'Ped. Dentistry',mkt:128,you:105},{sp:'Family Med',mkt:165,you:135},{sp:'Int. Medicine',mkt:172,you:141},{sp:'Orthopedics',mkt:385,you:316},{sp:'Cardiology',mkt:420,you:344},{sp:'OB/GYN',mkt:310,you:254},{sp:'Pediatrics',mkt:155,you:127},{sp:'Psychiatry',mkt:220,you:180},{sp:'Gen. Surgery',mkt:450,you:369}];
+const INN_HEAT={Webb:{'Gen. Dentistry':1,'Family Med':1,'Pediatrics':2},'Val Verde':{'Gen. Dentistry':1,'Ped. Dentistry':2,'Pediatrics':2}};
+
+function fmt$(n){return '$'+Math.round(n).toLocaleString();}
+function scoreColor(s){return s>=70?'var(--xl-red)':s>=55?'var(--xl-amber)':'var(--xl-green)';}
+function tierTag(t){const m={Critical:'tag-red',High:'tag-amber',Medium:'tag-green',Low:'tag-blue'};return `<span class="tag ${m[t]||'tag-blue'}">${t}</span>`;}
+
+// ── PROSPECTS TABLE
+const pb=document.getElementById('prospects-body');
+PROSPECTS.forEach((p,i)=>{
+  const sc=scoreColor(p.score);
+  pb.innerHTML+=`<tr>
+    <td style="color:var(--dim);font-size:10px;">${String(i+1).padStart(2,'0')}</td>
+    <td class="tbl-name">${p.name}</td>
+    <td style="color:var(--muted)">${p.specialty}</td>
+    <td><span class="tag tag-blue">${p.county}</span></td>
+    <td><div class="score-wrap"><div class="score-track"><div class="score-fill" style="width:${p.score}%;background:${sc}"></div></div><span class="score-num" style="color:${sc}">${p.score}</span></div></td>
+    <td style="text-align:center">${p.oon_claims}</td>
+    <td style="color:var(--xl-amber);font-weight:500">${fmt$(p.oon_billed)}</td>
+    <td><span class="tag tag-purple">${p.competitor_nets}</span></td>
+    <td>${fmt$(p.market_fee)}</td>
+    <td>${fmt$(p.your_fee)}</td>
+    <td style="color:var(--xl-red);font-weight:600">${p.fee_gap_pct}%</td>
+    <td><span class="tag ${p.accepting==='Y'?'tag-green':'tag-red'}">${p.accepting==='Y'?'Yes':'No'}</span></td>
+    <td>${tierTag(p.tier)}</td>
+  </tr>`;
+});
+
+// ── HEATMAP
+(function(){
+  const ctr=document.getElementById('heatmap-container');
+  let html=`<div style="display:grid;grid-template-columns:52px repeat(5,1fr);gap:2px;">`;
+  html+=`<div></div>`;
+  COUNTIES.forEach(co=>{html+=`<div class="heat-hdr">${co.split(' ')[0]}</div>`;});
+  SPECS_SHORT.forEach((sp,si)=>{
+    html+=`<div class="heat-row-lbl" style="font-size:9px;">${sp}</div>`;
+    COUNTIES.forEach(co=>{
+      const inn=(INN_HEAT[co]&&INN_HEAT[co][SPECS_FULL[si]])||0;
+      const zero=inn===0;
+      const bg=zero?'#fde8e8':'#e6f2ec';
+      const tc=zero?'var(--xl-red)':'var(--xl-green)';
+      const bc=zero?'rgba(192,0,0,0.15)':'rgba(33,115,70,0.15)';
+      html+=`<div class="heat-cell" style="background:${bg};border-color:${bc};color:${tc};">${inn}</div>`;
+    });
+  });
+  html+='</div>';
+  ctr.innerHTML=html;
+})();
+
+// ── SPECIALTY BARS
+(function(){
+  let html='';
+  SPECS_FULL.forEach((sp,i)=>{
+    const inn=SPEC_INN[i];
+    const pct=inn===0?0:Math.min(100,inn/4*100);
+    const c=inn===0?'var(--xl-red)':inn<=1?'var(--xl-amber)':'var(--xl-green)';
+    html+=`<div class="hbar-row">
+      <div class="hbar-label" style="width:90px;font-size:10px;">${sp}</div>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:${c}"></div></div>
+      <div class="hbar-val" style="color:${c}">${inn===0?'<span class="tag tag-red" style="font-size:8px">0</span>':inn}</div>
+    </div>`;
+  });
+  document.getElementById('spec-bars').innerHTML=html;
+})();
+
+// ── COMPETITOR CHART
+(function(){
+  let html='';
+  COUNTIES.forEach(co=>{
+    const you=YOU_INN[co]||0;
+    html+=`<div style="margin-bottom:11px;"><div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em;">${co}</div>`;
+    PAYERS.forEach((py,pi)=>{
+      const v=COMP[co][pi];
+      html+=`<div class="hbar-row" style="margin-bottom:3px;">
+        <div class="hbar-label" style="width:65px;font-size:10px;">${py}</div>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${Math.min(100,v/30*100)}%;background:var(--xl-purple)"></div></div>
+        <div class="hbar-val">${v}</div>
+      </div>`;
+    });
+    html+=`<div class="hbar-row" style="margin-bottom:3px;">
+      <div class="hbar-label" style="width:65px;font-size:10px;font-weight:700;color:${you===0?'var(--xl-red)':'var(--xl-green)'};">You</div>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${Math.min(100,you/30*100)}%;background:${you===0?'var(--xl-red)':'var(--xl-green)'}"></div></div>
+      <div class="hbar-val" style="color:${you===0?'var(--xl-red)':'var(--xl-green)'};font-weight:700;">${you}</div>
+    </div></div>`;
+  });
+  document.getElementById('comp-chart').innerHTML=html;
+})();
+
+// ── FEE CHART
+(function(){
+  let html='';
+  FEES.forEach(f=>{
+    const gap=f.mkt-f.you;
+    const pct=Math.round(gap/f.mkt*100);
+    const youPct=Math.round(f.you/f.mkt*100);
+    html+=`<div class="fee-row">
+      <div class="fee-label">${f.sp}</div>
+      <div class="fee-track" style="flex:1">
+        <div class="fee-yours" style="flex:${youPct}"></div>
+        <div class="fee-gap" style="flex:${100-youPct}"></div>
+      </div>
+      <div class="fee-pct">-${pct}%</div>
+    </div>`;
+  });
+  html+=`<div style="display:flex;gap:14px;margin-top:10px;">
+    <div style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)"><div style="width:12px;height:4px;background:var(--xl-green);border-radius:1px;"></div>Your fee</div>
+    <div style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)"><div style="width:12px;height:4px;background:var(--xl-red-light);border:1px solid rgba(192,0,0,0.2);border-radius:1px;"></div>Gap to NDM market</div>
+  </div>`;
+  document.getElementById('fee-chart').innerHTML=html;
+})();
+
+// ── INSIGHTS
+(function(){
+  const ins=[
+    {n:'01',t:'3 counties have zero INN providers',d:'Maverick (65 members), Zavala (59), and Kinney (58) have zero INN providers of any specialty. Competitors average 16–22 providers in these same areas.'},
+    {n:'02',t:'Psychiatry + Internal Medicine: 0 INN everywhere',d:'Both specialties have zero INN providers across all 5 counties. 24 Psychiatry and 18 Internal Medicine prospects are scored and ready to contact.'},
+    {n:'03',t:'Fee offers 18–28% below NDM market rate',d:'Gen. Dentistry is the worst at -28%. Raising offers to within 3% of NDM benchmarks is the single fastest lever to improve provider acceptance rates.'},
+    {n:'04',t:'$230K annual OON spend = recruitment fuel',d:'Members already visit these 200 OON providers. Recruiting the top 20 converts that OON spend into lower-cost INN contracts immediately.'},
+    {n:'05',t:'Competitors have 16–27 providers per county',d:'Aetna + BCBS TX each have 27 providers in Val Verde. Every month you delay makes recruitment harder and more expensive.'},
+    {n:'06',t:'Top prospects in 3–5 competitor networks already',d:'Dr. James Rodriguez (Maverick) and Dr. Monica Torres (Kinney) are in all 5 competitor networks — these are the highest urgency recruits.'},
+  ];
+  const ig=document.getElementById('insights-grid');
+  ins.forEach(i=>{
+    const d=document.createElement('div');
+    d.innerHTML=`<div class="insight"><div class="insight-num">${i.n}</div><div class="insight-title">${i.t}</div><div class="insight-desc">${i.d}</div></div>`;
+    ig.appendChild(d);
+  });
+})();
+
+// ── NAVIGATION
+function scrollTo2(id, ribBtn, type, sbItem){
+  const el=document.getElementById(id);
+  if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+  if(ribBtn){document.querySelectorAll('.rib-btn').forEach(b=>b.classList.remove('active'));ribBtn.classList.add('active');}
+  if(sbItem){document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));sbItem.classList.add('active');}
+}
+</script>
+</body>
+</html>
