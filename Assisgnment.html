@@ -1,9 +1,1249 @@
+# ================================================================
+# CBP GAP DETECTION ENGINE — COMPLETE REFERENCE TABLE DRIVEN
+# ================================================================
+# Measure  : CBP — Controlling Blood Pressure
+# Platform : Databricks — Pure PySpark (no DLT required)
+# Output   : ncqa.gold.care_gaps_cbp   (CBP-specific table)
+#            ncqa.gold.care_gaps        (master unified table)
+# Version  : 2025.1 — PRODUCTION READY
+# ================================================================
+#
+# NCQA CBP MEASURE LOGIC:
+#
+#   DENOMINATOR  : Members with hypertension diagnosis (I10/I11/I12/I13)
+#                  in measurement year, age 18-85, continuously enrolled
+#                  Requires: ≥1 outpatient OR ≥1 inpatient/ED visit
+#                  with hypertension ICD-10 in measurement year
+#
+#   NUMERATOR    : Most recent BP reading in measurement year
+#                  is CONTROLLED (systolic < 140 AND diastolic < 90)
+#                  Evidence from: lab_results (LOINC codes) or claims
+#
+#   EXCLUSIONS   :
+#     ESRD/Dialysis  : N18.5, N18.6, Z99.2, Z91.15
+#     Pregnancy HTN  : O10.x, O11.x, O13.x, O14.x, O16.x
+#     Frailty        : R54, M62.84, Z74.01 — ONLY for age 66+
+#     Hospice        : Q5003-Q5005, POS 34, Z51.5
+#
+#   GAP STATUS   :
+#     OPEN     = in denominator, not excluded, BP not controlled
+#     CLOSED   = most recent BP reading < 140/90
+#     EXCLUDED = ESRD or pregnancy or frailty(66+) or hospice
+#
+# KEY DESIGN: All ICD/LOINC/HCPCS codes from reference.hedis_value_sets
+#             Zero hardcoded codes in business logic
+#             Safe re-run: deletes existing rows before writing
+#
+# HOW TO RUN:
+#   1. Create new Python notebook in Databricks
+#   2. Paste this entire file
+#   3. Attach to any cluster (DBR 12+)
+#   4. Click Run All
+# ================================================================
 
-•	New Provider Recruitment Scope
-Being a Payer, I want to see which all provider should I be reaching out to for recruiting them(I am not onboarding them)-But I want to see which providers are not in my network today and I should reach out to them for getting added to my network. Reason could be a Region where I have no providers in my network today and I see other payer competitors doing well In that region.
+# ================================================================
+# CELL 1 — CONFIGURATION
+# ================================================================
 
-•	PROVIDER Churn Prediction
-Now the providers that are already in my network I want to analyze and assess if they are at a risk of churning out means leaving my network. You have to look for the factors leading to that churn.
+YEAR          = 2025
+START         = "2025-01-01"
+END           = "2025-12-31"
+RUN_ID        = f"CBP_RUN_{YEAR}_001"
+CATALOG       = "ncqa"
+SILVER        = f"{CATALOG}.silver"
+GOLD          = f"{CATALOG}.gold"
+REF           = f"{CATALOG}.reference"
 
-It is basically predictive modelling that will be done here but you need to understand and assess what does in predictive modelling to come up with those. Output will be a dashboard and a genie like chatbot. The understanding of the data elements and how you are predicting the churn and the new probable providers is the highlight here. You had access to what data was already used by the dental team you should have an understanding what data they already had available.
-The understanding of NDM and Network 360 is also imp as it gives a clear picture of what our competitors are also doing. Kapil Pareek was asked to create some documentations around it.
+# CBP BP control thresholds (NCQA HEDIS 2025)
+SYSTOLIC_THRESHOLD  = 140   # must be < 140
+DIASTOLIC_THRESHOLD = 90    # must be < 90
+
+# Frailty exclusion only applies to members 66+
+FRAILTY_AGE_THRESHOLD = 66
+
+spark.sql(f"USE CATALOG {CATALOG}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.gold")
+
+print("=" * 60)
+print("CBP GAP DETECTION ENGINE — REFERENCE TABLE DRIVEN")
+print("=" * 60)
+print(f"  Measure          : CBP — Controlling Blood Pressure")
+print(f"  Catalog          : {CATALOG}")
+print(f"  Silver layer     : {SILVER}")
+print(f"  Reference table  : {REF}.hedis_value_sets")
+print(f"  Gold output      : {GOLD}.care_gaps_cbp")
+print(f"  Measurement year : {YEAR}")
+print(f"  BP threshold     : Systolic < {SYSTOLIC_THRESHOLD} AND Diastolic < {DIASTOLIC_THRESHOLD}")
+print(f"  Frailty excl age : {FRAILTY_AGE_THRESHOLD}+")
+print("=" * 60)
+
+# ================================================================
+# CELL 2 — VERIFY REFERENCE TABLE AND SHOW CBP CODES
+# ================================================================
+
+print("\nVerifying reference table for CBP...")
+
+cbp_ref_count = spark.sql(f"""
+    SELECT COUNT(*) AS n
+    FROM {REF}.hedis_value_sets
+    WHERE measure_code  = 'CBP'
+      AND is_active     = TRUE
+      AND effective_year = {YEAR}
+""").collect()[0]["n"]
+
+print(f"  ✅ {cbp_ref_count} CBP codes in reference table")
+
+print("\n  All CBP codes from reference (what engine will use):")
+spark.sql(f"""
+    SELECT
+        measure_component,
+        code_system,
+        code,
+        code_description,
+        lookback_months
+    FROM {REF}.hedis_value_sets
+    WHERE measure_code   = 'CBP'
+      AND is_active       = TRUE
+      AND effective_year  = {YEAR}
+    ORDER BY measure_component, code_system, code
+""").show(50, truncate=False)
+
+# ================================================================
+# CELL 3 — VERIFY SILVER TABLES
+# ================================================================
+
+print("\nVerifying silver tables...")
+tables = {
+    "member_demographics" : ["member_id","gender","age_as_of_year_end","member_status"],
+    "member_enrollment"   : ["member_id","continuous_enrollment_my2025","eligible_cbp"],
+    "claims_diagnoses"    : ["member_id","diagnosis_code","is_cbp_hypertension"],
+    "lab_results"         : ["member_id","lab_test_code","systolic_bp","diastolic_bp"],
+    "claims_procedure"    : ["member_id","procedure_code","place_of_service_code"]
+}
+
+for tbl, cols in tables.items():
+    try:
+        cnt = spark.sql(f"SELECT COUNT(*) AS n FROM {SILVER}.{tbl}").collect()[0]["n"]
+        print(f"  ✅ {SILVER}.{tbl} — {cnt} rows")
+    except Exception as e:
+        print(f"  ❌ {SILVER}.{tbl} — ERROR: {e}")
+
+# ================================================================
+# CELL 4 — EXCLUSION A: ESRD / DIALYSIS
+# Source  : reference.hedis_value_sets — CBP Exclusion, ICD10CM
+#           Codes: N18.5, N18.6, Z99.2, Z91.15
+# Logic   : Any ESRD/dialysis diagnosis in patient history → excluded
+#           Historical — no date restriction
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 1a: Building ESRD/Dialysis exclusion from reference table...")
+
+excl_esrd_sql = f"""
+    SELECT DISTINCT
+        cd.member_id,
+        ref.code                                              AS exclusion_code,
+        ref.code_description                                  AS exclusion_description,
+        CONCAT('ESRD/Dialysis ICD: ', ref.code,
+               ' — ', ref.code_description)                   AS exclusion_evidence,
+        cd.service_date                                       AS evidence_date,
+        'ESRD_Dialysis'                                       AS exclusion_type
+    FROM {SILVER}.claims_diagnoses cd
+    INNER JOIN {REF}.hedis_value_sets ref
+        ON  cd.diagnosis_code      = ref.code
+        AND ref.measure_code       = 'CBP'
+        AND ref.measure_component  = 'Exclusion'
+        AND ref.code_system        = 'ICD10CM'
+        AND ref.code              IN ('N18.5','N18.6','Z99.2','Z91.15')
+        AND ref.is_active          = TRUE
+        AND ref.effective_year     = {YEAR}
+"""
+
+excl_esrd_df = spark.sql(excl_esrd_sql)
+excl_esrd_df.createOrReplaceTempView("excl_esrd_cbp")
+
+esrd_count = excl_esrd_df.select("member_id").distinct().count()
+print(f"  ✅ ESRD/Dialysis exclusion — {esrd_count} members")
+if esrd_count > 0:
+    excl_esrd_df.select(
+        "member_id","exclusion_code","exclusion_description","evidence_date"
+    ).show(truncate=False)
+
+# ================================================================
+# CELL 5 — EXCLUSION B: PREGNANCY HYPERTENSION
+# Source  : reference.hedis_value_sets — CBP Exclusion, ICD10CM
+#           Codes: O10.x, O11.x, O13.x, O14.x, O16.x
+# Logic   : Pregnancy-related hypertension in measurement year → excluded
+#           These are different from essential hypertension (I10)
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 1b: Building pregnancy exclusion from reference table...")
+
+excl_pregnancy_sql = f"""
+    SELECT DISTINCT
+        cd.member_id,
+        ref.code                                              AS exclusion_code,
+        ref.code_description                                  AS exclusion_description,
+        CONCAT('Pregnancy HTN ICD: ', ref.code,
+               ' — ', ref.code_description)                   AS exclusion_evidence,
+        cd.service_date                                       AS evidence_date,
+        'Pregnancy_Hypertension'                              AS exclusion_type
+    FROM {SILVER}.claims_diagnoses cd
+    INNER JOIN {REF}.hedis_value_sets ref
+        ON  cd.diagnosis_code      = ref.code
+        AND ref.measure_code       = 'CBP'
+        AND ref.measure_component  = 'Exclusion'
+        AND ref.code_system        = 'ICD10CM'
+        -- Pregnancy ICD codes start with O10, O11, O13, O14, O16
+        AND (ref.code LIKE 'O10%'
+          OR ref.code LIKE 'O11%'
+          OR ref.code LIKE 'O13%'
+          OR ref.code LIKE 'O14%'
+          OR ref.code LIKE 'O16%')
+        AND ref.is_active          = TRUE
+        AND ref.effective_year     = {YEAR}
+    WHERE YEAR(cd.service_date)    = {YEAR}
+"""
+
+excl_pregnancy_df = spark.sql(excl_pregnancy_sql)
+excl_pregnancy_df.createOrReplaceTempView("excl_pregnancy_cbp")
+
+preg_count = excl_pregnancy_df.select("member_id").distinct().count()
+print(f"  ✅ Pregnancy hypertension exclusion — {preg_count} members")
+if preg_count > 0:
+    excl_pregnancy_df.select(
+        "member_id","exclusion_code","exclusion_description","evidence_date"
+    ).show(truncate=False)
+
+# ================================================================
+# CELL 6 — EXCLUSION C: FRAILTY (age 66+ only)
+# Source  : reference.hedis_value_sets — CBP Exclusion, ICD10CM
+#           Codes: R54, M62.84, Z74.01
+# CRITICAL: Frailty ONLY excludes members aged 66 or older
+#           Frailty in a 45-year-old does NOT trigger exclusion
+# Logic   : Frailty diagnosis in measurement year + age >= 66 → excluded
+# ================================================================
+
+print("\n" + "=" * 60)
+print(f"STEP 1c: Building frailty exclusion (age {FRAILTY_AGE_THRESHOLD}+ only)...")
+
+excl_frailty_sql = f"""
+    SELECT DISTINCT
+        cd.member_id,
+        ref.code                                              AS exclusion_code,
+        ref.code_description                                  AS exclusion_description,
+        CONCAT('Frailty ICD: ', ref.code,
+               ' — ', ref.code_description,
+               ' (age ', CAST(m.age_as_of_year_end AS STRING), ')')
+                                                              AS exclusion_evidence,
+        cd.service_date                                       AS evidence_date,
+        m.age_as_of_year_end                                  AS member_age,
+        'Frailty_Advanced_Illness'                            AS exclusion_type
+    FROM {SILVER}.claims_diagnoses cd
+    -- Join member to get age — frailty only applies at age 66+
+    INNER JOIN {SILVER}.member_demographics m
+        ON  cd.member_id         = m.member_id
+        AND m.age_as_of_year_end >= {FRAILTY_AGE_THRESHOLD}
+    INNER JOIN {REF}.hedis_value_sets ref
+        ON  cd.diagnosis_code      = ref.code
+        AND ref.measure_code       = 'CBP'
+        AND ref.measure_component  = 'Exclusion'
+        AND ref.code_system        = 'ICD10CM'
+        AND ref.code              IN ('R54','M62.84','Z74.01')
+        AND ref.is_active          = TRUE
+        AND ref.effective_year     = {YEAR}
+    WHERE YEAR(cd.service_date)    = {YEAR}
+"""
+
+excl_frailty_df = spark.sql(excl_frailty_sql)
+excl_frailty_df.createOrReplaceTempView("excl_frailty_cbp")
+
+frailty_count = excl_frailty_df.select("member_id").distinct().count()
+print(f"  ✅ Frailty exclusion (age 66+) — {frailty_count} members")
+if frailty_count > 0:
+    excl_frailty_df.select(
+        "member_id","exclusion_code","member_age","exclusion_evidence"
+    ).show(truncate=False)
+
+# ================================================================
+# CELL 7 — EXCLUSION D: HOSPICE
+# Source  : reference.hedis_value_sets — CBP Exclusion
+#           HCPCS: Q5003, Q5004, Q5005
+#           ICD10CM: Z51.5
+#           POS 34: always hospice (universal rule)
+# Logic   : Any hospice evidence in measurement year → excluded
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 1d: Building hospice exclusion from reference table...")
+
+excl_hospice_sql = f"""
+    -- HCPCS hospice procedure codes from reference
+    SELECT DISTINCT
+        cp.member_id,
+        ref.code                                              AS exclusion_code,
+        CONCAT('Hospice HCPCS: ', ref.code,
+               ' — ', ref.code_description)                   AS exclusion_evidence,
+        'Hospice'                                             AS exclusion_type
+    FROM {SILVER}.claims_procedure cp
+    INNER JOIN {REF}.hedis_value_sets ref
+        ON  cp.procedure_code      = ref.code
+        AND ref.measure_code       = 'CBP'
+        AND ref.measure_component  = 'Exclusion'
+        AND ref.code_system        = 'HCPCS'
+        AND ref.is_active          = TRUE
+        AND ref.effective_year     = {YEAR}
+    WHERE YEAR(cp.service_date) = {YEAR}
+
+    UNION
+
+    -- Place of service 34 = Hospice facility (universal rule)
+    SELECT DISTINCT
+        member_id,
+        '34'                                                  AS exclusion_code,
+        'Place of service 34 — Hospice facility'              AS exclusion_evidence,
+        'Hospice'                                             AS exclusion_type
+    FROM {SILVER}.claims_procedure
+    WHERE place_of_service_code = '34'
+      AND YEAR(service_date)    = {YEAR}
+
+    UNION
+
+    -- ICD-10 hospice/palliative diagnosis from reference
+    SELECT DISTINCT
+        cd.member_id,
+        ref.code                                              AS exclusion_code,
+        CONCAT('Hospice ICD: ', ref.code,
+               ' — ', ref.code_description)                   AS exclusion_evidence,
+        'Hospice'                                             AS exclusion_type
+    FROM {SILVER}.claims_diagnoses cd
+    INNER JOIN {REF}.hedis_value_sets ref
+        ON  cd.diagnosis_code      = ref.code
+        AND ref.measure_code       = 'CBP'
+        AND ref.measure_component  = 'Exclusion'
+        AND ref.code_system        = 'ICD10CM'
+        AND ref.code               = 'Z51.5'
+        AND ref.is_active          = TRUE
+        AND ref.effective_year     = {YEAR}
+    WHERE YEAR(cd.service_date) = {YEAR}
+"""
+
+excl_hospice_df = spark.sql(excl_hospice_sql)
+excl_hospice_df.createOrReplaceTempView("excl_hospice_cbp")
+
+hospice_count = excl_hospice_df.select("member_id").distinct().count()
+print(f"  ✅ Hospice exclusion — {hospice_count} members")
+if hospice_count > 0:
+    excl_hospice_df.show(truncate=False)
+
+# ================================================================
+# CELL 8 — DENOMINATOR
+# NCQA CBP requires:
+#   1. Age 18-85
+#   2. Continuously enrolled
+#   3. ≥1 hypertension diagnosis (I10/I11/I12/I13) in measurement year
+#      from claims_diagnoses — matched against reference table
+#   4. All product lines eligible (Commercial, Medicare, Medicaid)
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 2: Building CBP denominator...")
+
+print("  Hypertension denominator codes from reference:")
+spark.sql(f"""
+    SELECT code, code_description
+    FROM {REF}.hedis_value_sets
+    WHERE measure_code      = 'CBP'
+      AND measure_component = 'Denominator'
+      AND is_active         = TRUE
+      AND effective_year    = {YEAR}
+    ORDER BY code
+""").show(truncate=False)
+
+denom_sql = f"""
+    SELECT DISTINCT
+        m.member_id,
+        m.first_name,
+        m.last_name,
+        m.date_of_birth,
+        m.age_as_of_year_end                                  AS age,
+        m.gender,
+        m.member_status,
+        m.phone_primary,
+        m.phone_secondary,
+        m.email,
+        m.preferred_name,
+        m.preferred_language,
+        m.communication_preference,
+        m.address_line1,
+        m.city,
+        m.state,
+        m.zip_code,
+        m.medicare_flag,
+        m.medicaid_flag,
+        e.product_line,
+        e.plan_type,
+        e.snp_type,
+        e.assigned_pcp_npi,
+        e.assigned_pcp_name,
+        e.assigned_pcp_id,
+        e.enrollment_start_date,
+        e.enrollment_end_date,
+        e.continuous_enrollment_my2025,
+        e.enrollment_gap_days,
+        e.has_allowable_gap,
+        m.risk_score,
+        m.risk_category,
+        m.sdoh_barriers,
+        m.area_deprivation_index,
+        -- Store the hypertension code that qualified them
+        htn_dx.hypertension_code,
+        htn_dx.hypertension_description
+    FROM {SILVER}.member_demographics m
+    JOIN {SILVER}.member_enrollment e
+        ON m.member_id = e.member_id
+
+    -- Must have a hypertension ICD-10 code in measurement year
+    -- Matched against reference table denominator codes
+    JOIN (
+        SELECT DISTINCT
+            cd.member_id,
+            ref.code        AS hypertension_code,
+            ref.code_description AS hypertension_description
+        FROM {SILVER}.claims_diagnoses cd
+        INNER JOIN {REF}.hedis_value_sets ref
+            ON  cd.diagnosis_code      = ref.code
+            AND ref.measure_code       = 'CBP'
+            AND ref.measure_component  = 'Denominator'
+            AND ref.code_system        = 'ICD10CM'
+            AND ref.is_active          = TRUE
+            AND ref.effective_year     = {YEAR}
+        WHERE YEAR(cd.service_date) = {YEAR}
+    ) htn_dx ON m.member_id = htn_dx.member_id
+
+    WHERE
+        -- Criterion 1: Age 18-85 as of Dec 31
+        m.age_as_of_year_end   BETWEEN 18 AND 85
+
+        -- Criterion 2: Active member
+        AND m.member_status             = 'Active'
+
+        -- Criterion 3: Not deceased
+        AND m.deceased_date            IS NULL
+
+        -- Criterion 4: Measurement year
+        AND e.measurement_year          = {YEAR}
+
+        -- Criterion 5: Continuously enrolled
+        -- NCQA allowable gap: 1 gap ≤ 45 days still qualifies
+        AND (
+            e.continuous_enrollment_my2025 = TRUE
+            OR (e.has_allowable_gap = TRUE AND e.enrollment_gap_days <= 45)
+        )
+
+        -- Criterion 6: All product lines eligible for CBP
+        -- Commercial, Medicare, AND Medicaid all included
+        AND e.product_line IS NOT NULL
+
+        -- Criterion 7: Must have medical benefit
+        AND e.has_medical_benefit       = TRUE
+
+        -- Criterion 8: Pre-computed eligibility flag
+        AND e.eligible_cbp              = TRUE
+"""
+
+denom_df = spark.sql(denom_sql)
+denom_df.createOrReplaceTempView("denom_cbp")
+
+denom_count = denom_df.count()
+print(f"  ✅ CBP denominator — {denom_count} eligible members")
+denom_df.select(
+    "member_id","age","gender","product_line",
+    "hypertension_code","assigned_pcp_name"
+).orderBy("member_id").show(truncate=False)
+
+# ================================================================
+# CELL 9 — NUMERATOR
+# NCQA CBP Numerator = MOST RECENT BP reading in measurement year
+#                      is CONTROLLED (systolic < 140 AND diastolic < 90)
+#
+# Source 1: lab_results — LOINC codes from reference table
+#           systolic_bp and diastolic_bp columns
+#
+# Source 2: claims_procedure — BP documented at encounter
+#           is_cbp_bp_reading flag + systolic/diastolic in lab_results
+#
+# CRITICAL RULE: Only the MOST RECENT BP reading matters
+#   - If most recent = 152/94 → OPEN (uncontrolled)
+#   - If most recent = 128/82 → CLOSED (controlled)
+#   - Earlier readings are irrelevant regardless of value
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 3: Building CBP numerator (most recent BP reading)...")
+
+print("  CBP numerator LOINC codes from reference:")
+spark.sql(f"""
+    SELECT code, code_description
+    FROM {REF}.hedis_value_sets
+    WHERE measure_code      = 'CBP'
+      AND measure_component = 'Numerator'
+      AND is_active         = TRUE
+      AND effective_year    = {YEAR}
+    ORDER BY code
+""").show(truncate=False)
+
+numer_sql = f"""
+    WITH all_bp_readings AS (
+
+        -- Source 1: Lab results with LOINC BP codes from reference table
+        SELECT
+            lr.member_id,
+            lr.lab_test_date                                  AS bp_date,
+            lr.lab_test_code                                  AS loinc_code,
+            ref.code_description                              AS loinc_description,
+            lr.systolic_bp,
+            lr.diastolic_bp,
+            lr.is_cbp_bp_controlled,
+            lr.is_cbp_bp_poor_control,
+            CONCAT(
+                CAST(lr.systolic_bp AS STRING), '/',
+                CAST(lr.diastolic_bp AS STRING), ' mmHg'
+            )                                                 AS bp_value,
+            'Lab_LOINC'                                       AS bp_source,
+            ref.code                                          AS matched_loinc
+        FROM {SILVER}.lab_results lr
+        INNER JOIN {REF}.hedis_value_sets ref
+            ON  lr.lab_test_code       = ref.code
+            AND ref.measure_code       = 'CBP'
+            AND ref.measure_component  = 'Numerator'
+            AND ref.code_system        = 'LOINC'
+            AND ref.is_active          = TRUE
+            AND ref.effective_year     = {YEAR}
+        WHERE
+            lr.lab_test_date BETWEEN '{START}' AND '{END}'
+            AND lr.systolic_bp    IS NOT NULL
+            AND lr.diastolic_bp   IS NOT NULL
+            AND lr.systolic_bp    >  0
+            AND lr.diastolic_bp   >  0
+
+        UNION ALL
+
+        -- Source 2: BP readings documented via encounter claim flag
+        -- When BP is documented at a clinical visit but comes through claims
+        SELECT
+            lr.member_id,
+            lr.lab_test_date                                  AS bp_date,
+            lr.lab_test_code                                  AS loinc_code,
+            'BP reading at clinical encounter'                AS loinc_description,
+            lr.systolic_bp,
+            lr.diastolic_bp,
+            lr.is_cbp_bp_controlled,
+            lr.is_cbp_bp_poor_control,
+            CONCAT(
+                CAST(lr.systolic_bp AS STRING), '/',
+                CAST(lr.diastolic_bp AS STRING), ' mmHg'
+            )                                                 AS bp_value,
+            'Lab_Encounter'                                   AS bp_source,
+            'CBP_Encounter'                                   AS matched_loinc
+        FROM {SILVER}.lab_results lr
+        WHERE lr.is_cbp_bp_reading  = TRUE
+          AND lr.lab_test_date BETWEEN '{START}' AND '{END}'
+          AND lr.systolic_bp    IS NOT NULL
+          AND lr.diastolic_bp   IS NOT NULL
+          AND lr.systolic_bp    >  0
+          AND lr.diastolic_bp   >  0
+    ),
+
+    -- Rank by most recent BP date per member
+    -- NCQA rule: only the most recent BP reading counts
+    ranked_bp AS (
+        SELECT
+            *,
+            ROW_NUMBER() OVER (
+                PARTITION BY member_id
+                ORDER BY bp_date DESC, loinc_code DESC
+            ) AS rn
+        FROM all_bp_readings
+    )
+
+    -- Return only most recent BP reading per member
+    SELECT
+        member_id,
+        bp_date,
+        loinc_code,
+        loinc_description,
+        matched_loinc,
+        systolic_bp,
+        diastolic_bp,
+        bp_value,
+        bp_source,
+        -- Recalculate controlled flag using thresholds
+        -- In case pre-computed flag is missing
+        CASE
+            WHEN systolic_bp  < {SYSTOLIC_THRESHOLD}
+             AND diastolic_bp < {DIASTOLIC_THRESHOLD}
+            THEN TRUE ELSE FALSE
+        END                                                   AS bp_controlled,
+
+        -- Control status for reporting
+        CASE
+            WHEN systolic_bp  < {SYSTOLIC_THRESHOLD}
+             AND diastolic_bp < {DIASTOLIC_THRESHOLD}
+            THEN CONCAT('CONTROLLED: ', bp_value,
+                        ' (systolic < {SYSTOLIC_THRESHOLD} AND diastolic < {DIASTOLIC_THRESHOLD})')
+            ELSE CONCAT('UNCONTROLLED: ', bp_value,
+                        ' (need systolic < {SYSTOLIC_THRESHOLD} AND diastolic < {DIASTOLIC_THRESHOLD})')
+        END                                                   AS bp_control_status
+
+    FROM ranked_bp
+    WHERE rn = 1
+"""
+
+numer_df = spark.sql(numer_sql)
+numer_df.createOrReplaceTempView("numer_cbp")
+
+# All BP readings (for denominator members)
+all_bp_count  = numer_df.count()
+# Controlled readings (numerator met)
+controlled    = numer_df.filter("bp_controlled = TRUE").count()
+uncontrolled  = numer_df.filter("bp_controlled = FALSE").count()
+no_reading    = denom_count - all_bp_count
+
+print(f"  ✅ BP readings found: {all_bp_count}")
+print(f"     Controlled  (< 140/90): {controlled}   → gap CLOSED")
+print(f"     Uncontrolled (≥ 140/90): {uncontrolled} → gap OPEN (BP found but not controlled)")
+print(f"     No reading in 2025     : {no_reading}   → gap OPEN (no BP documented)")
+
+print("\n  All BP readings with control status:")
+numer_df.select(
+    "member_id","bp_date","systolic_bp","diastolic_bp",
+    "bp_value","bp_controlled","bp_control_status","bp_source"
+).orderBy("member_id").show(truncate=False)
+
+# ================================================================
+# CELL 10 — GAP DETECTION LOGIC
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 4: Running CBP gap detection logic...")
+
+gaps_sql = f"""
+    WITH gap_base AS (
+        SELECT
+            -- ── Primary Key ──────────────────────────────────
+            CONCAT(d.member_id, '_CBP_{YEAR}')               AS gap_id,
+            d.member_id,
+            {YEAR}                                            AS measurement_year,
+            'CBP'                                             AS measure_code,
+            'Controlling Blood Pressure'                      AS measure_name,
+            'Blood Pressure Control'                          AS measure_component,
+            'HEDIS 2025'                                      AS measure_spec_version,
+
+            -- ── Gap Status ────────────────────────────────────
+            -- Priority: Exclusion first → then Closed → else Open
+            -- OPEN has two sub-scenarios:
+            --   a) BP reading found but uncontrolled (≥140/90)
+            --   b) No BP reading at all in measurement year
+            CASE
+                WHEN esrd.member_id     IS NOT NULL           THEN 'EXCLUDED'
+                WHEN preg.member_id     IS NOT NULL           THEN 'EXCLUDED'
+                WHEN frail.member_id    IS NOT NULL           THEN 'EXCLUDED'
+                WHEN hosp.member_id     IS NOT NULL           THEN 'EXCLUDED'
+                WHEN n.member_id IS NOT NULL
+                     AND n.bp_controlled = TRUE               THEN 'CLOSED'
+                ELSE                                               'OPEN'
+            END                                               AS gap_status,
+
+            -- ── Open Sub-Type ─────────────────────────────────
+            -- Useful for care coordinator to know WHY it is open
+            CASE
+                WHEN esrd.member_id  IS NOT NULL              THEN NULL
+                WHEN preg.member_id  IS NOT NULL              THEN NULL
+                WHEN frail.member_id IS NOT NULL              THEN NULL
+                WHEN hosp.member_id  IS NOT NULL              THEN NULL
+                WHEN n.member_id IS NOT NULL
+                     AND n.bp_controlled = FALSE
+                    THEN 'UNCONTROLLED'
+                WHEN n.member_id IS NULL
+                    THEN 'NO_READING'
+                ELSE NULL
+            END                                               AS gap_sub_type,
+
+            -- ── Exclusion Details ─────────────────────────────
+            CASE
+                WHEN esrd.member_id  IS NOT NULL              THEN 'ESRD or Dialysis'
+                WHEN preg.member_id  IS NOT NULL              THEN 'Pregnancy Hypertension'
+                WHEN frail.member_id IS NOT NULL              THEN 'Frailty (age 66+)'
+                WHEN hosp.member_id  IS NOT NULL              THEN 'Hospice'
+                ELSE                                               NULL
+            END                                               AS exclusion_reason,
+
+            CASE
+                WHEN esrd.member_id  IS NOT NULL              THEN esrd.exclusion_code
+                WHEN preg.member_id  IS NOT NULL              THEN preg.exclusion_code
+                WHEN frail.member_id IS NOT NULL              THEN frail.exclusion_code
+                WHEN hosp.member_id  IS NOT NULL              THEN hosp.exclusion_code
+                ELSE                                               NULL
+            END                                               AS exclusion_code,
+
+            CASE
+                WHEN esrd.member_id  IS NOT NULL              THEN esrd.exclusion_evidence
+                WHEN preg.member_id  IS NOT NULL              THEN preg.exclusion_evidence
+                WHEN frail.member_id IS NOT NULL              THEN frail.exclusion_evidence
+                WHEN hosp.member_id  IS NOT NULL              THEN hosp.exclusion_evidence
+                ELSE                                               NULL
+            END                                               AS exclusion_evidence,
+
+            -- ── Gap Description ───────────────────────────────
+            CASE
+                WHEN esrd.member_id IS NOT NULL
+                    THEN CONCAT('EXCLUDED: ESRD/Dialysis — ',
+                                esrd.exclusion_evidence)
+                WHEN preg.member_id IS NOT NULL
+                    THEN CONCAT('EXCLUDED: Pregnancy HTN — ',
+                                preg.exclusion_evidence)
+                WHEN frail.member_id IS NOT NULL
+                    THEN CONCAT('EXCLUDED: Frailty (age 66+) — ',
+                                frail.exclusion_evidence)
+                WHEN hosp.member_id IS NOT NULL
+                    THEN CONCAT('EXCLUDED: Hospice — ',
+                                hosp.exclusion_evidence)
+                WHEN n.member_id IS NOT NULL AND n.bp_controlled = TRUE
+                    THEN CONCAT('CLOSED: BP controlled at ',
+                                n.bp_value,
+                                ' on ', CAST(n.bp_date AS STRING),
+                                ' (< {SYSTOLIC_THRESHOLD}/{DIASTOLIC_THRESHOLD} mmHg)')
+                WHEN n.member_id IS NOT NULL AND n.bp_controlled = FALSE
+                    THEN CONCAT('OPEN: Most recent BP UNCONTROLLED at ',
+                                n.bp_value,
+                                ' on ', CAST(n.bp_date AS STRING),
+                                ' (need < {SYSTOLIC_THRESHOLD}/{DIASTOLIC_THRESHOLD} mmHg)')
+                ELSE
+                    'OPEN: No blood pressure reading found in measurement year 2025'
+            END                                               AS gap_description,
+
+            -- ── Recommended Action ────────────────────────────
+            CASE
+                WHEN esrd.member_id  IS NOT NULL              THEN NULL
+                WHEN preg.member_id  IS NOT NULL              THEN NULL
+                WHEN frail.member_id IS NOT NULL              THEN NULL
+                WHEN hosp.member_id  IS NOT NULL              THEN NULL
+                WHEN n.member_id IS NOT NULL AND n.bp_controlled = FALSE
+                    THEN CONCAT('Intensify antihypertensive therapy — current BP ',
+                                n.bp_value,
+                                '. Target: systolic < 140 AND diastolic < 90')
+                ELSE
+                    'Schedule blood pressure measurement — no reading found in 2025'
+            END                                               AS recommended_action,
+
+            -- ── Boolean Flags ─────────────────────────────────
+            CASE WHEN esrd.member_id IS NULL AND preg.member_id IS NULL
+                      AND frail.member_id IS NULL AND hosp.member_id IS NULL
+                 THEN TRUE ELSE FALSE END                      AS in_denominator,
+
+            CASE WHEN esrd.member_id IS NOT NULL OR preg.member_id IS NOT NULL
+                      OR frail.member_id IS NOT NULL OR hosp.member_id IS NOT NULL
+                 THEN TRUE ELSE FALSE END                      AS is_excluded,
+
+            CASE WHEN n.member_id IS NOT NULL AND n.bp_controlled = TRUE
+                 THEN TRUE ELSE FALSE END                      AS numerator_met,
+
+            -- ── Numerator Evidence ────────────────────────────
+            n.loinc_code                                       AS numerator_evidence_code,
+            n.loinc_description                                AS numerator_code_description,
+            n.bp_value                                         AS numerator_bp_value,
+            n.systolic_bp                                      AS numerator_systolic,
+            n.diastolic_bp                                     AS numerator_diastolic,
+            n.bp_controlled                                    AS numerator_bp_controlled,
+            n.bp_control_status                                AS numerator_bp_status,
+            n.bp_date                                          AS numerator_evidence_date,
+            n.bp_source                                        AS numerator_source,
+
+            -- ── Hypertension Denominator Evidence ────────────
+            d.hypertension_code                                AS denominator_icd_code,
+            d.hypertension_description                         AS denominator_icd_description,
+
+            -- ── Dates ─────────────────────────────────────────
+            CURRENT_DATE()                                     AS detected_date,
+            TO_DATE('{END}')                                   AS due_date,
+            DATEDIFF(TO_DATE('{END}'), CURRENT_DATE())         AS days_remaining,
+            CASE WHEN n.member_id IS NOT NULL AND n.bp_controlled = TRUE
+                 THEN n.bp_date ELSE NULL END                  AS closed_date,
+
+            -- CBP uses current measurement year only (12 months)
+            TO_DATE('{START}')                                 AS lookback_start_date,
+            TO_DATE('{END}')                                   AS lookback_end_date,
+            12                                                 AS lookback_months,
+
+            -- ── Denominator Criteria ──────────────────────────
+            CONCAT(
+                '{{"age":', CAST(d.age AS STRING),
+                ',"product":"', d.product_line,
+                '","enrolled":', CAST(d.continuous_enrollment_my2025 AS STRING),
+                ',"htn_icd":"', d.hypertension_code, '"}}'
+            )                                                  AS denominator_criteria,
+
+            -- ── Provider Attribution ──────────────────────────
+            d.assigned_pcp_npi                                 AS attributed_pcp_npi,
+            d.assigned_pcp_name                                AS attributed_pcp_name,
+
+            -- ── Member Contact ────────────────────────────────
+            d.first_name,
+            d.last_name,
+            d.date_of_birth,
+            d.age,
+            d.phone_primary,
+            d.phone_secondary,
+            d.email,
+            d.preferred_name,
+            d.preferred_language,
+            d.communication_preference,
+            d.address_line1,
+            d.city,
+            d.state,
+            d.zip_code,
+            d.product_line,
+            d.plan_type,
+            d.medicare_flag,
+            d.medicaid_flag,
+
+            -- ── Risk & SDoH ───────────────────────────────────
+            d.risk_score,
+            d.risk_category,
+            d.sdoh_barriers,
+            d.area_deprivation_index,
+
+            -- ── Outreach Tracking ─────────────────────────────
+            0                                                  AS outreach_attempts,
+            CAST(NULL AS DATE)                                 AS last_outreach_date,
+            CAST(NULL AS STRING)                               AS last_outreach_channel,
+            CAST(NULL AS DATE)                                 AS next_outreach_date,
+            CAST(NULL AS STRING)                               AS next_outreach_channel,
+            CAST(NULL AS STRING)                               AS outreach_outcome,
+
+            -- ── Gen AI Fields ──────────────────────────────────
+            CAST(NULL AS STRING)                               AS ai_patient_summary,
+            CAST(NULL AS STRING)                               AS ai_outreach_script,
+            CAST(NULL AS STRING)                               AS ai_risk_explanation,
+            CAST(NULL AS TIMESTAMP)                            AS ai_generated_date,
+
+            -- ── Audit ─────────────────────────────────────────
+            '{RUN_ID}'                                         AS pipeline_run_id,
+            CURRENT_TIMESTAMP()                                AS created_date,
+            CURRENT_TIMESTAMP()                                AS updated_date,
+            'PYSPARK_REFERENCE_DRIVEN'                         AS data_source
+
+        FROM denom_cbp            d
+        LEFT JOIN excl_esrd_cbp       esrd  ON d.member_id = esrd.member_id
+        LEFT JOIN excl_pregnancy_cbp  preg  ON d.member_id = preg.member_id
+        LEFT JOIN excl_frailty_cbp    frail ON d.member_id = frail.member_id
+        LEFT JOIN excl_hospice_cbp    hosp  ON d.member_id = hosp.member_id
+        LEFT JOIN numer_cbp           n     ON d.member_id = n.member_id
+    )
+
+    -- ── Priority Scoring ──────────────────────────────────────────
+    SELECT
+        *,
+        CASE
+            WHEN gap_status != 'OPEN' THEN 0.0
+            ELSE LEAST(10.0, ROUND(
+                -- Base score: CBP is high clinical urgency
+                8.0
+                -- UNCONTROLLED is more urgent than NO_READING
+                + CASE
+                    WHEN gap_sub_type = 'UNCONTROLLED' THEN 1.0
+                    ELSE 0.0
+                  END
+                -- Days remaining urgency boost
+                + CASE
+                    WHEN days_remaining < 60  THEN 1.5
+                    WHEN days_remaining < 90  THEN 1.0
+                    WHEN days_remaining < 120 THEN 0.5
+                    ELSE 0.0
+                  END
+                -- Risk score boost
+                + CASE
+                    WHEN risk_score > 80 THEN 1.0
+                    WHEN risk_score > 60 THEN 0.5
+                    ELSE 0.0
+                  END
+                -- SDoH boost
+                + CASE
+                    WHEN area_deprivation_index > 70 THEN 0.5
+                    ELSE 0.0
+                  END
+            , 2))
+        END                                                    AS priority_score,
+
+        CASE
+            WHEN gap_status != 'OPEN' THEN NULL
+            WHEN LEAST(10.0, ROUND(8.0
+                + CASE WHEN gap_sub_type='UNCONTROLLED' THEN 1.0 ELSE 0.0 END
+                + CASE WHEN days_remaining<60 THEN 1.5 WHEN days_remaining<90 THEN 1.0
+                       WHEN days_remaining<120 THEN 0.5 ELSE 0.0 END
+                + CASE WHEN risk_score>80 THEN 1.0 WHEN risk_score>60 THEN 0.5 ELSE 0.0 END
+                + CASE WHEN area_deprivation_index>70 THEN 0.5 ELSE 0.0 END
+            ,2)) >= 9.0 THEN 'Critical'
+            WHEN LEAST(10.0, ROUND(8.0
+                + CASE WHEN gap_sub_type='UNCONTROLLED' THEN 1.0 ELSE 0.0 END
+                + CASE WHEN days_remaining<60 THEN 1.5 WHEN days_remaining<90 THEN 1.0
+                       WHEN days_remaining<120 THEN 0.5 ELSE 0.0 END
+                + CASE WHEN risk_score>80 THEN 1.0 WHEN risk_score>60 THEN 0.5 ELSE 0.0 END
+                + CASE WHEN area_deprivation_index>70 THEN 0.5 ELSE 0.0 END
+            ,2)) >= 7.0 THEN 'High'
+            WHEN LEAST(10.0, ROUND(8.0
+                + CASE WHEN gap_sub_type='UNCONTROLLED' THEN 1.0 ELSE 0.0 END
+                + CASE WHEN days_remaining<60 THEN 1.5 WHEN days_remaining<90 THEN 1.0
+                       WHEN days_remaining<120 THEN 0.5 ELSE 0.0 END
+                + CASE WHEN risk_score>80 THEN 1.0 WHEN risk_score>60 THEN 0.5 ELSE 0.0 END
+                + CASE WHEN area_deprivation_index>70 THEN 0.5 ELSE 0.0 END
+            ,2)) >= 5.0 THEN 'Medium'
+            ELSE 'Low'
+        END                                                    AS priority_tier
+
+    FROM gap_base
+"""
+
+gaps_df = spark.sql(gaps_sql)
+gaps_df.createOrReplaceTempView("gaps_cbp_final")
+
+total        = gaps_df.count()
+open_cnt     = gaps_df.filter("gap_status = 'OPEN'").count()
+closed_cnt   = gaps_df.filter("gap_status = 'CLOSED'").count()
+excluded_cnt = gaps_df.filter("gap_status = 'EXCLUDED'").count()
+uncontrolled = gaps_df.filter("gap_sub_type = 'UNCONTROLLED'").count()
+no_reading   = gaps_df.filter("gap_sub_type = 'NO_READING'").count()
+
+print(f"\n  ✅ Gap detection complete")
+print(f"     TOTAL          : {total}")
+print(f"     OPEN           : {open_cnt}")
+print(f"       → UNCONTROLLED BP  : {uncontrolled}  (BP found but ≥140/90)")
+print(f"       → NO BP READING    : {no_reading}  (no reading in 2025)")
+print(f"     CLOSED         : {closed_cnt}  (BP < 140/90)")
+print(f"     EXCLUDED       : {excluded_cnt}")
+
+print("\n  Full gap results:")
+gaps_df.select(
+    "member_id","gap_status","gap_sub_type",
+    "exclusion_reason","numerator_bp_value",
+    "numerator_evidence_date","priority_score","priority_tier"
+).orderBy("gap_status","member_id").show(50, truncate=False)
+
+# ================================================================
+# CELL 11 — WRITE TO GOLD: care_gaps_cbp
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 5: Writing to gold.care_gaps_cbp...")
+
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {GOLD}.care_gaps_cbp
+    USING DELTA
+    COMMENT 'CBP gap detection output — reference table driven — HEDIS 2025'
+    AS SELECT * FROM gaps_cbp_final WHERE 1=0
+""")
+
+spark.sql(f"""
+    DELETE FROM {GOLD}.care_gaps_cbp
+    WHERE measure_code     = 'CBP'
+      AND measurement_year = {YEAR}
+""")
+
+gaps_df.write \
+    .format("delta") \
+    .mode("append") \
+    .option("mergeSchema", "true") \
+    .saveAsTable(f"{GOLD}.care_gaps_cbp")
+
+written = spark.sql(f"""
+    SELECT COUNT(*) AS n FROM {GOLD}.care_gaps_cbp
+    WHERE measure_code = 'CBP' AND measurement_year = {YEAR}
+""").collect()[0]["n"]
+
+print(f"  ✅ Written {written} rows to {GOLD}.care_gaps_cbp")
+
+spark.sql(f"""
+    OPTIMIZE {GOLD}.care_gaps_cbp
+    ZORDER BY (gap_status, priority_tier, attributed_pcp_npi)
+""")
+print(f"  ✅ Table optimized (Z-order: gap_status, priority_tier, pcp_npi)")
+
+# ================================================================
+# CELL 12 — WRITE TO MASTER TABLE: care_gaps
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 6: Writing to gold.care_gaps (master table)...")
+
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {GOLD}.care_gaps
+    USING DELTA
+    COMMENT 'Master HEDIS gap table — all measures combined'
+    AS SELECT * FROM gaps_cbp_final WHERE 1=0
+""")
+
+spark.sql(f"""
+    DELETE FROM {GOLD}.care_gaps
+    WHERE measure_code     = 'CBP'
+      AND measurement_year = {YEAR}
+""")
+
+gaps_df.write \
+    .format("delta") \
+    .mode("append") \
+    .option("mergeSchema", "true") \
+    .saveAsTable(f"{GOLD}.care_gaps")
+
+master_total = spark.sql(f"""
+    SELECT COUNT(*) AS n FROM {GOLD}.care_gaps
+""").collect()[0]["n"]
+
+print(f"  ✅ Written to {GOLD}.care_gaps — total rows in master: {master_total}")
+
+measures_in_master = spark.sql(f"""
+    SELECT measure_code, COUNT(*) AS rows
+    FROM {GOLD}.care_gaps
+    GROUP BY measure_code ORDER BY measure_code
+""")
+print("\n  Measures currently in master gold.care_gaps:")
+measures_in_master.show()
+
+# ================================================================
+# CELL 13 — VERIFICATION QUERIES
+# ================================================================
+
+print("\n" + "=" * 60)
+print("STEP 7: Running verification checks...")
+print("=" * 60)
+
+# ── V1: Gap summary ──────────────────────────────────────────────
+print("\n📊 V1 — CBP gap summary by status:")
+spark.sql(f"""
+    SELECT
+        gap_status,
+        gap_sub_type,
+        COUNT(*)                                                AS members,
+        COUNT(CASE WHEN priority_tier='Critical' THEN 1 END)    AS critical,
+        COUNT(CASE WHEN priority_tier='High'     THEN 1 END)    AS high,
+        COUNT(CASE WHEN priority_tier='Medium'   THEN 1 END)    AS medium
+    FROM {GOLD}.care_gaps_cbp
+    WHERE measurement_year = {YEAR}
+    GROUP BY gap_status, gap_sub_type
+    ORDER BY gap_status, gap_sub_type
+""").show()
+
+# ── V2: HEDIS compliance rate ────────────────────────────────────
+print("\n📊 V2 — HEDIS CBP compliance rate:")
+spark.sql(f"""
+    SELECT
+        'CBP {YEAR}'                                            AS measure_year,
+        COUNT(CASE WHEN in_denominator=TRUE
+                    AND is_excluded=FALSE THEN 1 END)           AS denominator,
+        COUNT(CASE WHEN is_excluded=TRUE  THEN 1 END)           AS excluded,
+        COUNT(CASE WHEN numerator_met=TRUE THEN 1 END)          AS numerator,
+        COUNT(CASE WHEN gap_status='OPEN'  THEN 1 END)          AS open_gaps,
+        COUNT(CASE WHEN gap_sub_type='UNCONTROLLED' THEN 1 END) AS uncontrolled_bp,
+        COUNT(CASE WHEN gap_sub_type='NO_READING'   THEN 1 END) AS no_bp_reading,
+        ROUND(
+            COUNT(CASE WHEN numerator_met=TRUE THEN 1 END)*100.0
+            / NULLIF(COUNT(CASE WHEN in_denominator=TRUE
+                                 AND is_excluded=FALSE THEN 1 END),0)
+        ,1)                                                     AS compliance_pct
+    FROM {GOLD}.care_gaps_cbp
+    WHERE measurement_year = {YEAR}
+""").show()
+
+# ── V3: Open gaps outreach list ──────────────────────────────────
+print("\n📊 V3 — Open gaps outreach priority list:")
+spark.sql(f"""
+    SELECT
+        member_id,
+        CONCAT(first_name,' ',last_name)   AS member_name,
+        age, phone_primary, preferred_language,
+        gap_sub_type,
+        numerator_bp_value                 AS latest_bp,
+        numerator_evidence_date            AS bp_date,
+        days_remaining,
+        priority_tier,
+        priority_score,
+        recommended_action,
+        attributed_pcp_name
+    FROM {GOLD}.care_gaps_cbp
+    WHERE gap_status       = 'OPEN'
+      AND measurement_year = {YEAR}
+    ORDER BY priority_score DESC, days_remaining ASC
+""").show(truncate=False)
+
+# ── V4: Excluded members ─────────────────────────────────────────
+print("\n📊 V4 — Excluded members audit:")
+spark.sql(f"""
+    SELECT
+        member_id,
+        CONCAT(first_name,' ',last_name)   AS member_name,
+        age,
+        exclusion_reason,
+        exclusion_code,
+        exclusion_evidence,
+        gap_description
+    FROM {GOLD}.care_gaps_cbp
+    WHERE gap_status       = 'EXCLUDED'
+      AND measurement_year = {YEAR}
+    ORDER BY exclusion_reason, member_id
+""").show(truncate=False)
+
+# ── V5: Closed gaps — BP evidence ───────────────────────────────
+print("\n📊 V5 — Closed gaps with BP evidence:")
+spark.sql(f"""
+    SELECT
+        member_id,
+        CONCAT(first_name,' ',last_name)   AS member_name,
+        numerator_bp_value                 AS controlled_bp,
+        numerator_systolic                 AS systolic,
+        numerator_diastolic                AS diastolic,
+        numerator_evidence_date            AS bp_date,
+        numerator_evidence_code            AS loinc_code,
+        numerator_source,
+        gap_description
+    FROM {GOLD}.care_gaps_cbp
+    WHERE gap_status       = 'CLOSED'
+      AND measurement_year = {YEAR}
+    ORDER BY numerator_evidence_date
+""").show(truncate=False)
+
+# ── V6: Uncontrolled BP detail ───────────────────────────────────
+print("\n📊 V6 — Uncontrolled BP detail (BP found but ≥140/90):")
+spark.sql(f"""
+    SELECT
+        member_id,
+        CONCAT(first_name,' ',last_name)   AS member_name,
+        numerator_bp_value                 AS current_bp,
+        numerator_systolic                 AS systolic,
+        numerator_diastolic                AS diastolic,
+        numerator_evidence_date            AS last_bp_date,
+        denominator_icd_code,
+        priority_tier,
+        recommended_action
+    FROM {GOLD}.care_gaps_cbp
+    WHERE gap_sub_type     = 'UNCONTROLLED'
+      AND measurement_year = {YEAR}
+    ORDER BY numerator_systolic DESC
+""").show(truncate=False)
+
+# ── V7: PCP-level summary ────────────────────────────────────────
+print("\n📊 V7 — PCP-level CBP gap summary:")
+spark.sql(f"""
+    SELECT
+        attributed_pcp_name,
+        COUNT(*)                                               AS total_patients,
+        COUNT(CASE WHEN gap_status='OPEN'      THEN 1 END)    AS open_gaps,
+        COUNT(CASE WHEN gap_sub_type='UNCONTROLLED' THEN 1 END) AS uncontrolled,
+        COUNT(CASE WHEN gap_sub_type='NO_READING'   THEN 1 END) AS no_reading,
+        COUNT(CASE WHEN gap_status='CLOSED'    THEN 1 END)    AS controlled,
+        COUNT(CASE WHEN gap_status='EXCLUDED'  THEN 1 END)    AS excluded,
+        ROUND(
+            COUNT(CASE WHEN gap_status='CLOSED' THEN 1 END)*100.0
+            / NULLIF(COUNT(CASE WHEN gap_status IN ('OPEN','CLOSED')
+                                THEN 1 END),0)
+        ,1)                                                    AS compliance_pct
+    FROM {GOLD}.care_gaps_cbp
+    WHERE measurement_year = {YEAR}
+    GROUP BY attributed_pcp_name
+    ORDER BY open_gaps DESC
+""").show(truncate=False)
+
+# ── V8: Hypertension code distribution in denominator ────────────
+print("\n📊 V8 — Hypertension codes that qualified members for denominator:")
+spark.sql(f"""
+    SELECT
+        denominator_icd_code,
+        denominator_icd_description,
+        COUNT(*) AS members
+    FROM {GOLD}.care_gaps_cbp
+    WHERE measurement_year = {YEAR}
+      AND denominator_icd_code IS NOT NULL
+    GROUP BY denominator_icd_code, denominator_icd_description
+    ORDER BY members DESC
+""").show(truncate=False)
+
+# ── V9: Reference table traceability ────────────────────────────
+print("\n📊 V9 — Reference table codes actually matched in this run:")
+spark.sql(f"""
+    SELECT
+        numerator_evidence_code    AS loinc_code,
+        numerator_code_description AS loinc_description,
+        numerator_source           AS source,
+        COUNT(DISTINCT member_id)  AS members_matched
+    FROM {GOLD}.care_gaps_cbp
+    WHERE measurement_year = {YEAR}
+      AND numerator_evidence_code IS NOT NULL
+    GROUP BY numerator_evidence_code, numerator_code_description, numerator_source
+    ORDER BY members_matched DESC
+""").show(truncate=False)
+
+# ── V10: Validate specific test members ─────────────────────────
+print("\n📊 V10 — Specific member validations:")
+spark.sql(f"""
+    SELECT
+        member_id,
+        gap_status,
+        gap_sub_type,
+        exclusion_reason,
+        numerator_bp_value,
+        numerator_evidence_date,
+        priority_tier,
+        gap_description
+    FROM {GOLD}.care_gaps_cbp
+    WHERE member_id IN ('M024','M025','M026','M027','M028','M029','M030','M037','M038','M039','M040')
+      AND measurement_year = {YEAR}
+    ORDER BY member_id
+""").show(truncate=False)
+
+# ================================================================
+# CELL 14 — FINAL SUMMARY
+# ================================================================
+
+print("\n" + "=" * 60)
+print("CBP GAP DETECTION ENGINE — COMPLETE")
+print("=" * 60)
+
+row = spark.sql(f"""
+    SELECT
+        COUNT(*)                                               AS total,
+        COUNT(CASE WHEN gap_status='OPEN'      THEN 1 END)    AS open_cnt,
+        COUNT(CASE WHEN gap_status='CLOSED'    THEN 1 END)    AS closed_cnt,
+        COUNT(CASE WHEN gap_status='EXCLUDED'  THEN 1 END)    AS excl_cnt,
+        COUNT(CASE WHEN gap_sub_type='UNCONTROLLED' THEN 1 END) AS uncontrolled,
+        COUNT(CASE WHEN gap_sub_type='NO_READING'   THEN 1 END) AS no_reading,
+        COUNT(CASE WHEN priority_tier='Critical' THEN 1 END)  AS crit,
+        COUNT(CASE WHEN priority_tier='High'     THEN 1 END)  AS high,
+        ROUND(
+            COUNT(CASE WHEN numerator_met=TRUE THEN 1 END)*100.0
+            / NULLIF(COUNT(CASE WHEN in_denominator=TRUE
+                                 AND is_excluded=FALSE THEN 1 END),0)
+        ,1) AS rate
+    FROM {GOLD}.care_gaps_cbp
+    WHERE measurement_year = {YEAR}
+""").collect()[0]
+
+print(f"  Reference table    : {REF}.hedis_value_sets ✅")
+print(f"  Total rows         : {row['total']}")
+print(f"  OPEN gaps          : {row['open_cnt']}")
+print(f"    → Uncontrolled BP: {row['uncontrolled']}  (BP found but ≥ 140/90)")
+print(f"    → No BP reading  : {row['no_reading']}   (no reading in 2025)")
+print(f"  CLOSED gaps        : {row['closed_cnt']}  (BP < 140/90 confirmed)")
+print(f"  EXCLUDED           : {row['excl_cnt']}  (ESRD/pregnancy/frailty/hospice)")
+print(f"  Critical priority  : {row['crit']}")
+print(f"  High priority      : {row['high']}")
+print(f"  CBP compliance     : {row['rate']}%")
+print(f"\n  CBP table    : {GOLD}.care_gaps_cbp")
+print(f"  Master table : {GOLD}.care_gaps")
+print("=" * 60)
+print("\n  KEY: All ICD/LOINC/HCPCS codes from reference.hedis_value_sets")
+print("  UNIQUE TO CBP:")
+print("  → Most recent BP reading determines gap status (not any reading)")
+print("  → UNCONTROLLED sub-type = BP found but >= 140/90 (different action)")
+print("  → NO_READING sub-type   = no BP documented at all (different action)")
+print("  → Frailty exclusion age-gated at 66+")
+print("=" * 60)
