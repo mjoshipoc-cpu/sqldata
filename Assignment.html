@@ -1013,35 +1013,14 @@ def main():
     )
 
     event = None
-        # ✅ ADD HERE
-    if action in ["Review", "Summarize & Chat"]:
-        if st.session_state.get('selected_row_idx') is None:
-            st.markdown("""
-                        <style>
-                        div[data-testid="stAlert"] {
-                            background-color: #fff3cd !important;
-                            border: 1px solid #ffc107 !important;
-                            opacity: 1 !important;
-                        }
-                        div[data-testid="stAlert"] p,
-                        div[data-testid="stAlert"] span,
-                        div[data-testid="stAlert"] div {
-                            color: #856404 !important;
-                            opacity: 1 !important;
-                        }
-                        </style>
-                        """, unsafe_allow_html=True)
-            msg_placeholder.warning("Please select a member row first.")
-        else:
-            msg_placeholder.empty()
-    else:
-        msg_placeholder.empty()
 
     if display_df.empty:
         st.markdown(
             '<div class="sel-none">No records found for the selected filters.</div>',
             unsafe_allow_html=True
         )
+        selected_rows = []
+        sel_row       = None
     else:
         event = st.dataframe(
             display_df,
@@ -1066,53 +1045,92 @@ def main():
         sel_idx = st.session_state['selected_row_idx']
         sel_row = display_df.iloc[sel_idx] if sel_idx is not None and sel_idx < len(display_df) else None
 
-        review_completed=sel_row['Review'] =='Completed' if sel_row is not None else False
+    # ─────────────────────────────────────────────────────────────
+    # Action area — explicit "Go" button so navigation never fires
+    # silently when the user just changes the dropdown or selects a row.
+    # ─────────────────────────────────────────────────────────────
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-        
+    if action == "-- Select --":
+        msg_placeholder.empty()
+    elif action in ["Review", "Summarize & Chat"]:
+        st.markdown("""
+            <style>
+            div[data-testid="stAlert"] {
+                background-color: #fff3cd !important;
+                border: 1px solid #ffc107 !important;
+                opacity: 1 !important;
+            }
+            div[data-testid="stAlert"] p,
+            div[data-testid="stAlert"] span,
+            div[data-testid="stAlert"] div {
+                color: #856404 !important;
+                opacity: 1 !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+        if sel_row is None:
+            msg_placeholder.warning("Please select exactly one member row, then click Go.")
+        elif len(selected_rows) > 1:
+            msg_placeholder.warning(
+                f"You have {len(selected_rows)} rows selected. "
+                "'{}' uses only the first one. Click Go to continue, or unselect extras."
+                .format(action)
+            )
+        else:
+            msg_placeholder.info(f"Ready: **{sel_row['Name']}** ({sel_row['Member ID']}). Click Go to proceed.")
 
-        if action == "Review":
-            if (sel_row is not None) and  review_completed:
-                show_completed_dialog_box(sel_row['Name'], sel_row['Member ID'], sel_row['File ID'])
-            elif sel_row is not None:
+        # Go button — navigation only happens on click
+        if st.button("▶ Go", type="primary", key="action_go", disabled=(sel_row is None)):
+            review_completed = sel_row['Review'] == 'Completed'
+
+            if action == "Review":
+                # Persist target row, clear selection state, then act
                 st.session_state['member_name']      = sel_row['Name']
                 st.session_state['member_id']        = sel_row['Member ID']
                 st.session_state['FileID']           = sel_row['File ID']
                 st.session_state['selected_row_idx'] = None
-                st.switch_page("pages/2_ReviewMember.py")
-            else:
-                pass
-        elif action == "Summarize & Chat":
-            if sel_row is not None:
+                # Reset the action dropdown so we don't auto-trigger on return
+                st.session_state['action_dropdown']  = "-- Select --"
+
+                if review_completed:
+                    # show_completed_dialog_box is an @st.dialog; opening it once is enough.
+                    show_completed_dialog_box(sel_row['Name'], sel_row['Member ID'], sel_row['File ID'])
+                else:
+                    st.switch_page("pages/2_ReviewMember.py")
+
+            elif action == "Summarize & Chat":
                 st.session_state['member_name']      = sel_row['Name']
                 st.session_state['member_id']        = sel_row['Member ID']
                 st.session_state['FileID']           = sel_row['File ID']
                 st.session_state['files_name']       = sel_row['File ID']
                 st.session_state['selected_row_idx'] = None
+                st.session_state['action_dropdown']  = "-- Select --"
                 st.switch_page("pages/3_Summarize & Chat.py")
-            #else:
-            #    st.warning("Please select a member row first.")
 
-        elif action == "Download Detailed Report":
-            if len(selected_rows) > 0:
-                pairs = []
-                for idx in selected_rows:
-                    if idx < len(display_df):
-                        row = display_df.iloc[idx]
-                        pairs.append((str(row['Member ID']).replace(" ", ","), str(row['File ID'])))
-                if pairs:
-                    new_key = str(sorted(selected_rows))
-                    if st.session_state.get('_dl_sel_key') != new_key:
-                        st.session_state['_dl_sel_key'] = new_key
-                        st.session_state['_dl_sel_pairs'] = pairs
-                        st.session_state['_dl_selected_data'] = generate_member_csv_report(pairs)
-                        st.session_state['_dl_selected_name'] = f"member_detail_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                        st.session_state['_dl_selected_count'] = len(pairs)
-                        st.rerun()
-            else:
-                st.session_state['_dl_selected_data'] = None
-                st.session_state['_dl_selected_count'] = 0
-                st.session_state['_dl_sel_key'] = None
-                st.session_state['_dl_sel_pairs'] = None
+    elif action == "Download Detailed Report":
+        msg_placeholder.empty()
+        # Track selection key so we only regenerate when the selection actually changes
+        if len(selected_rows) > 0:
+            pairs = []
+            for idx in selected_rows:
+                if idx < len(display_df):
+                    row = display_df.iloc[idx]
+                    pairs.append((str(row['Member ID']).replace(" ", ","), str(row['File ID'])))
+
+            new_key = str(sorted(selected_rows))
+            if pairs and st.session_state.get('_dl_sel_key') != new_key:
+                st.session_state['_dl_sel_key']         = new_key
+                st.session_state['_dl_sel_pairs']       = pairs
+                # Defer actual report generation to the block above (single source of truth)
+                st.session_state['_dl_selected_data']   = None
+                st.session_state['_dl_selected_count']  = len(pairs)
+                st.rerun()
+        else:
+            st.session_state['_dl_selected_data']  = None
+            st.session_state['_dl_selected_count'] = 0
+            st.session_state['_dl_sel_key']        = None
+            st.session_state['_dl_sel_pairs']      = None
 
     if len(data) > row_limit:
         st.caption(f"Showing first {row_limit} of {len(data)} records.")
