@@ -1,850 +1,1116 @@
-%python
-# ================================================================
-# CBP GAP DETECTION ENGINE — 14 COLUMN OUTPUT
-# ================================================================
-# Measure  : CBP — Controlling Blood Pressure
-# Platform : Databricks — Pure PySpark (no DLT required)
+import streamlit as st
+import pandas as pd
+import json
+import io
+import csv
+import os
+
+from databricks import sql
+from databricks.sdk.core import Config
+
+# =====================================================================
+# DATABRICKS CONNECTION
+# ---------------------------------------------------------------------
+# Replaces Snowflake's `get_active_session()`.
+# Reads connection details from environment variables (recommended for
+# Databricks Apps) or from st.secrets when running locally.
 #
-# OUTPUT TABLE  : cbp_gap  (14 columns)
-# FINAL TABLE   : care_gaps (UNION ALL with bcs_gap + future measures)
+# Required env vars (auto-set inside a Databricks App):
+#   DATABRICKS_HOST          -> workspace hostname (e.g. dbc-xxxx.cloud.databricks.com)
+#   DATABRICKS_WAREHOUSE_ID  -> SQL warehouse id  (or set DATABRICKS_HTTP_PATH directly)
 #
-# 14 COLUMNS:
-#   1.  gap_id
-#   2.  member_id
-#   3.  measure_code
-#   4.  measurement_year
-#   5.  gap_status
-#   6.  gap_sub_type
-#   7.  gap_description
-#   8.  in_denominator
-#   9.  is_excluded
-#   10. numerator_met
-#   11. exclusion_reason
-#   12. numerator_evidence_code
-#   13. numerator_bp_value
-#   14. denominator_code
-#
-# COLUMN ALIGNMENT WITH BCS:
-#   Columns 1,2,5,7,8,9,10,11,12 → identical to bcs_gap
-#   Columns 3,4                  → new — needed for UNION ALL
-#   Columns 6,13                 → CBP-specific (NULL in bcs_gap)
-#   Column  14                   → CBP/CDC-specific (NULL in bcs_gap)
-#
-# CBP-SPECIFIC LOGIC:
-#   Denominator → hypertension ICD-10 from reference + age 18-85
-#   Numerator   → MOST RECENT BP reading < 140 systolic AND < 90 diastolic
-#   Exclusions  → 4 types: ESRD, Pregnancy, Frailty(66+), Hospice
-#   gap_sub_type→ UNCONTROLLED (BP found but high) | NO_READING (no BP in year)
-#
-# HOW TO RUN:
-#   1. Create new Python notebook in Databricks
-#   2. Paste this file
-#   3. Attach to any cluster
-#   4. Click Run All
-# ================================================================
+# If running outside a Databricks App, also set:
+#   DATABRICKS_TOKEN         -> PAT for local auth
+# =====================================================================
 
-# ================================================================
-# CELL 1 — CONFIGURATION
-# ================================================================
+_cfg = Config()  # picks up DATABRICKS_HOST / auth automatically
 
-YEAR                 = 2025
-START                = "2025-01-01"
-END                  = "2025-12-31"
-RUN_ID               = f"CBP_RUN_{YEAR}_001"
-CATALOG              = "aiagenticdemo"
-SILVER               = f"{CATALOG}.hedisabstractor"
-GOLD                 = f"{CATALOG}.hedisabstractor"
-REF                  = f"{CATALOG}.hedisabstractor"
-SYSTOLIC_THRESHOLD   = 140
-DIASTOLIC_THRESHOLD  = 90
-FRAILTY_AGE          = 66
+def _get_http_path():
+    # Prefer an explicit HTTP path if provided, else build it from a warehouse id
+    http_path = os.getenv("DATABRICKS_HTTP_PATH")
+    if http_path:
+        return http_path
+    warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+    if not warehouse_id:
+        try:
+            warehouse_id = st.secrets["databricks"]["warehouse_id"]
+        except Exception:
+            warehouse_id = None
+    if warehouse_id:
+        return f"/sql/1.0/warehouses/{warehouse_id}"
+    raise RuntimeError(
+        "Set DATABRICKS_HTTP_PATH or DATABRICKS_WAREHOUSE_ID for the SQL warehouse."
+    )
 
-spark.sql(f"USE CATALOG {CATALOG}")
+@st.cache_resource(ttl=3600, show_spinner=False)
+def get_connection():
+    return sql.connect(
+        server_hostname=_cfg.host,
+        http_path=_get_http_path(),
+        credentials_provider=lambda: _cfg.authenticate,
+    )
 
-print("=" * 55)
-print("CBP GAP DETECTION ENGINE — 14-COLUMN OUTPUT")
-print("=" * 55)
-print(f"  Catalog   : {CATALOG}")
-print(f"  Silver    : {SILVER}")
-print(f"  Output    : {GOLD}.cbp_gap")
-print(f"  Final     : {GOLD}.care_gaps")
-print(f"  Year      : {YEAR}")
-print(f"  BP target : < {SYSTOLIC_THRESHOLD} systolic AND < {DIASTOLIC_THRESHOLD} diastolic")
-print(f"  Frailty   : age {FRAILTY_AGE}+ only")
-print("=" * 55)
+# =====================================================================
+# CATALOG / SCHEMA
+# Snowflake DB/SCHEMA -> Databricks CATALOG/SCHEMA
+# =====================================================================
+CATALOG_NAME = "HEDISABSTRACTOR"   # Unity Catalog catalog (was Snowflake DB)
+SCHEMA_NAME  = "AGENTICAIDEMO"
 
-# ================================================================
-# CELL 2 — VERIFY REFERENCE TABLE
-# ================================================================
+measures = ["All", "BCS", "CBP", "GSD", "BPD", "EED", "CCS", "COL"]
 
-print("\nVerifying reference table...")
+def fq(table_name):
+    return f"{CATALOG_NAME}.{SCHEMA_NAME}.{table_name.upper()}"
 
-ref_count = spark.sql(f"""
-    SELECT COUNT(*) AS n
-    FROM {REF}.hedis_value_sets
-    WHERE measure_code   = 'CBP'
-      AND is_active      = TRUE
-      AND effective_year = {YEAR}
-""").collect()[0]["n"]
+def to_df(query):
+    """
+    Drop-in replacement for `session.sql(query).to_pandas()`.
+    Executes the query on the Databricks SQL warehouse and returns a
+    pandas DataFrame with upper-cased columns (matching the original code).
+    """
+    conn = get_connection()
+    with conn.cursor() as cursor:
+        cursor.execute(query)
+        try:
+            df = cursor.fetchall_arrow().to_pandas()
+        except Exception:
+            # Fallback if arrow is unavailable for some reason
+            rows = cursor.fetchall()
+            cols = [d[0] for d in cursor.description] if cursor.description else []
+            df = pd.DataFrame(rows, columns=cols)
+    df.columns = df.columns.str.upper()
+    return df
 
-print(f"  ✅ {ref_count} CBP codes in reference table")
+# ======================================================================
+# Lightweight session shim so the rest of the code that calls
+# `session.sql(...).to_pandas()` keeps working without any logic change.
+# ======================================================================
+class _SessionShim:
+    class _Query:
+        def __init__(self, q): self._q = q
+        def to_pandas(self):
+            return to_df(self._q)
+    def sql(self, q):
+        return _SessionShim._Query(q)
 
-spark.sql(f"""
-    SELECT measure_component, code_system, code, code_description
-    FROM {REF}.hedis_value_sets
-    WHERE measure_code   = 'CBP'
-      AND is_active       = TRUE
-      AND effective_year  = {YEAR}
-    ORDER BY measure_component, code_system, code
-""").show(50, truncate=False)
+session = _SessionShim()
 
-# ================================================================
-# CELL 3 — VERIFY SILVER TABLES
-# ================================================================
+# =====================================================================
+# Below this line, the logic and UI are kept IDENTICAL to the original.
+# =====================================================================
 
-print("\nVerifying silver tables...")
-for tbl in ["member_demographics","member_enrollment",
-            "claims_diagnoses","lab_results","claims_procedure"]:
-    try:
-        n = spark.sql(f"SELECT COUNT(*) AS n FROM {SILVER}.{tbl}").collect()[0]["n"]
-        print(f"  ✅ {SILVER}.{tbl} — {n} rows")
-    except Exception as e:
-        print(f"  ❌ {SILVER}.{tbl} — {e}")
+st.set_page_config(
+    layout="wide",
+    page_title="HEDISAbstractor.AI",
+    page_icon="\U0001f3e5"
+)
+if "logged_in" not in st.session_state or not st.session_state.logged_in:
+    st.switch_page("streamlit_app.py")
 
-# ================================================================
-# CELL 4 — EXCLUSION A: ESRD / DIALYSIS
-# Codes : N18.5, N18.6, Z99.2, Z91.15
-# Rule  : Historical — any date in patient history
-# ================================================================
+with st.sidebar:
+    st.write(f"Logged in as **{st.session_state.username}**")
+    st.markdown("<br><br><br><br><br><br><br><br><br><br>", unsafe_allow_html=True)
+    if st.button("Logout", use_container_width=True):
+        st.session_state.logged_in = False
+        st.session_state.username = None
+        st.switch_page("streamlit_app.py")
 
-print("\n" + "=" * 55)
-print("STEP 1a: ESRD/Dialysis exclusion...")
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-excl_esrd_df = spark.sql(f"""
-    SELECT DISTINCT cd.member_id,
-           ref.code  AS exclusion_code,
-           'ESRD_Dialysis' AS exclusion_type
-    FROM {SILVER}.claims_diagnoses cd
-    INNER JOIN {REF}.hedis_value_sets ref
-        ON  cd.diagnosis_code     = ref.code
-        AND ref.measure_code      = 'CBP'
-        AND ref.measure_component = 'Exclusion'
-        AND ref.code_system       = 'ICD10CM'
-        -- Codes come from reference table — no hardcoding needed
-        AND ref.is_active         = TRUE
-        AND ref.effective_year    = {YEAR}
-""")
+html, body, [data-testid="stApp"] {
+    font-family: 'Inter', sans-serif;
+    background-color: #F8F9FC;
+}
 
-excl_esrd_df.createOrReplaceTempView("excl_esrd_cbp")
-print(f"  ✅ ESRD — {excl_esrd_df.select('member_id').distinct().count()} members")
+#MainMenu { visibility: hidden; }
+footer    { visibility: hidden; }
 
-# ================================================================
-# CELL 5 — EXCLUSION B: PREGNANCY HYPERTENSION
-# Codes : O10.x, O11.x, O13.x, O14.x, O16.x
-# Rule  : Measurement year only
-# ================================================================
+[data-testid="stHeader"] {
+    background: transparent !important;
+    box-shadow: none !important;
+    height: 0px !important;
+}
 
-print("\n" + "=" * 55)
-print("STEP 1b: Pregnancy hypertension exclusion...")
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    z-index: 99999 !important;
+    top: 12px !important;
+    left: 12px !important;
+}
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="collapsedControl"] svg {
+    color: white !important;
+    fill: white !important;
+}
+[data-testid="stSidebar"] { z-index: 99998 !important; }
 
-excl_pregnancy_df = spark.sql(f"""
-    SELECT DISTINCT cd.member_id,
-           ref.code  AS exclusion_code,
-           'Pregnancy_Hypertension' AS exclusion_type
-    FROM {SILVER}.claims_diagnoses cd
-    INNER JOIN {REF}.hedis_value_sets ref
-        ON  cd.diagnosis_code     = ref.code
-        AND ref.measure_code      = 'CBP'
-        AND ref.measure_component = 'Exclusion'
-        AND ref.code_system       = 'ICD10CM'
-        AND (ref.code LIKE 'O10%' OR ref.code LIKE 'O11%'
-          OR ref.code LIKE 'O13%' OR ref.code LIKE 'O14%'
-          OR ref.code LIKE 'O16%')
-        AND ref.is_active         = TRUE
-        AND ref.effective_year    = {YEAR}
-    WHERE YEAR(cd.service_date) = {YEAR}
-""")
+.navbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    background: linear-gradient(90deg, #E84118 0%, #fb4e0b 60%, #ff6b35 100%);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px 0 60px;
+    z-index: 9999;
+    box-shadow: 0 2px 12px rgba(232,65,24,0.25);
+}
+.navbar-brand {
+    font-size: 20px;
+    font-weight: 700;
+    color: white;
+    letter-spacing: 0.5px;
+}
+.navbar-tag {
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.85);
+    background: rgba(255,255,255,0.15);
+    padding: 4px 14px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.3);
+}
 
-excl_pregnancy_df.createOrReplaceTempView("excl_pregnancy_cbp")
-print(f"  ✅ Pregnancy — {excl_pregnancy_df.select('member_id').distinct().count()} members")
+.page-spacer { height: 10px; }
 
-# ================================================================
-# CELL 6 — EXCLUSION C: FRAILTY (age 66+ only)
-# Codes : R54, M62.84, Z74.01
-# Rule  : Must be measurement year AND member age >= 66
-#         Frailty in younger members does NOT exclude
-# ================================================================
+.main .block-container {
+    padding-top: 4px !important;
+    padding-bottom: 2rem;
+    max-width: 1400px;
+}
 
-print("\n" + "=" * 55)
-print(f"STEP 1c: Frailty exclusion (age {FRAILTY_AGE}+ only)...")
+.page-title-section {
+    background: white;
+    border-radius: 12px;
+    padding: 12px 20px;
+    margin-bottom: 12px;
+    border-left: 4px solid #fb4e0b;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+}
+.page-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1a1a2e;
+    margin: 0;
+}
+.page-subtitle {
+    font-size: 13px;
+    color: #888;
+    margin: 4px 0 0 0;
+}
 
-excl_frailty_df = spark.sql(f"""
-    SELECT DISTINCT cd.member_id,
-           ref.code  AS exclusion_code,
-           'Frailty_Advanced_Illness' AS exclusion_type
-    FROM {SILVER}.claims_diagnoses cd
-    INNER JOIN {SILVER}.member_demographics m
-        ON  cd.member_id         = m.member_id
-        AND m.age_as_of_year_end >= {FRAILTY_AGE}
-    INNER JOIN {REF}.hedis_value_sets ref
-        ON  cd.diagnosis_code     = ref.code
-        AND ref.measure_code      = 'CBP'
-        AND ref.measure_component = 'Exclusion'
-        AND ref.code_system       = 'ICD10CM'
-        -- Codes come from reference table — no hardcoding needed
-        AND ref.is_active         = TRUE
-        AND ref.effective_year    = {YEAR}
-    WHERE YEAR(cd.service_date) = {YEAR}
-""")
+.metric-card {
+    background: white;
+    border-radius: 12px;
+    padding: 18px 22px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+    border-top: 3px solid #fb4e0b;
+    margin-bottom: 16px;
+}
+.metric-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+.metric-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #1a1a2e;
+    line-height: 1;
+}
+.metric-card-blue   { border-top-color: #4361ee; }
+.metric-card-green  { border-top-color: #2ecc71; }
+.metric-card-orange { border-top-color: #fb4e0b; }
 
-excl_frailty_df.createOrReplaceTempView("excl_frailty_cbp")
-print(f"  ✅ Frailty (age 66+) — {excl_frailty_df.select('member_id').distinct().count()} members")
+.table-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px 22px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+    margin-bottom: 16px;
+}
 
-# ================================================================
-# CELL 7 — EXCLUSION D: HOSPICE
-# Codes : HCPCS Q5003-Q5005, ICD Z51.5, POS 34
-# Rule  : Measurement year only
-# ================================================================
+div[data-testid="stSelectbox"] > div > div {
+    border-radius: 8px !important;
+    border-color: #e0e0e0 !important;
+}
 
-print("\n" + "=" * 55)
-print("STEP 1d: Hospice exclusion...")
+div[data-testid="stDateInput"] > div > div {
+    border-radius: 8px !important;
+    border-color: #e0e0e0 !important;
+}
+div[data-testid="stDateInput"] label {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #555 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}
 
-excl_hospice_df = spark.sql(f"""
-    -- HCPCS Q-codes from reference table
-    SELECT DISTINCT cp.member_id,
-           ref.code AS exclusion_code,
-           'Hospice' AS exclusion_type
-    FROM {SILVER}.claims_procedure cp
-    INNER JOIN {REF}.hedis_value_sets ref
-        ON  cp.procedure_code     = ref.code
-        AND ref.measure_code      = 'CBP'
-        AND ref.measure_component = 'Exclusion'
-        AND ref.code_system       = 'HCPCS'
-        AND ref.is_active         = TRUE
-        AND ref.effective_year    = {YEAR}
-    WHERE YEAR(cp.service_date) = {YEAR}
+[data-testid="stDataFrame"] {
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    border: 1px solid #f0e8e4 !important;
+    box-shadow: 0 2px 8px rgba(232,65,24,0.07) !important;
+}
+[data-testid="stDataFrame"] thead tr th {
+    background: #FFF3E0 !important;
+    color: #BF360C !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    padding: 10px 12px !important;
+    border: none !important;
+}
+[data-testid="stDataFrame"] tbody tr td {
+    font-size: 13px !important;
+    color: #2d2d2d !important;
+    padding: 8px 12px !important;
+    border-bottom: 1px solid #faf0ec !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(even) td {
+    background-color: #FFF8F0 !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(odd) td {
+    background-color: #FFF3E0 !important;
+}
+[data-testid="stDataFrame"] tbody tr:hover td {
+    background-color: #FFE0B2 !important;
+    color: #BF360C !important;
+}
+[data-testid="stDataFrame"] tbody tr[aria-selected="true"] td {
+    background-color: #FF9800 !important;
+    color: white !important;
+    font-weight: 600 !important;
+}
+}
+[data-testid="stDataFrame"] tbody tr td {
+    font-size: 13px !important;
+    color: #2d2d2d !important;
+    padding: 8px 12px !important;
+    border-bottom: 1px solid #faf0ec !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(even) td {
+    background-color: #fff8f5 !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(odd) td {
+    background-color: #ffffff !important;
+}
+[data-testid="stDataFrame"] tbody tr:hover td {
+    background-color: #ffe8de !important;
+    color: #c23a00 !important;
+}
+[data-testid="stDataFrame"] tbody tr[aria-selected="true"] td {
+    background-color: #fb4e0b !important;
+    color: white !important;
+    font-weight: 600 !important;
+}
 
-    UNION
+.section-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
 
-    -- Place of service 34 = Hospice facility (attribute-based — no code lookup)
-    SELECT DISTINCT member_id,
-           '34' AS exclusion_code,
-           'Hospice' AS exclusion_type
-    FROM {SILVER}.claims_procedure
-    WHERE place_of_service_code = '34'
-      AND YEAR(service_date)    = {YEAR}
+.sel-none {
+    background: #f5f7ff;
+    border: 1.5px solid #c5ccf0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: #4361ee;
+    font-weight: 500;
+    margin-bottom: 12px;
+}
 
-    UNION
+.date-info-banner {
+    background: #f0f4ff;
+    border: 1.5px solid #4361ee;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #4361ee;
+    font-weight: 500;
+    margin-bottom: 4px !important;
+    padding: 6px 12px !important;
+}
+}
+.date-active-banner {
+    background: #fff8f5;
+    border: 1.5px solid #fb4e0b;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #c23a00;
+    font-weight: 500;
+    margin-bottom: 10px;
+}
 
-    -- ICD-10 Z51.5 palliative care from reference table
-    SELECT DISTINCT cd.member_id,
-           ref.code AS exclusion_code,
-           'Hospice' AS exclusion_type
-    FROM {SILVER}.claims_diagnoses cd
-    INNER JOIN {REF}.hedis_value_sets ref
-        ON  cd.diagnosis_code     = ref.code
-        AND ref.measure_code      = 'CBP'
-        AND ref.measure_component = 'Exclusion'
-        AND ref.code_system       = 'ICD10CM'
-        AND ref.code              = 'Z51.5'
-        AND ref.is_active         = TRUE
-        AND ref.effective_year    = {YEAR}
-    WHERE YEAR(cd.service_date) = {YEAR}
-""")
+.action-panel {
+    background: #f0f4ff;
+    border: 1.5px solid #4361ee;
+    border-radius: 10px;
+    padding: 12px 18px;
+    margin-bottom: 10px;
+}
+.action-panel div.stDownloadButton > button {
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 14px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    background: #4361ee !important;
+    color: white !important;
+    border: none !important;
+    box-shadow: 0 2px 8px rgba(67,97,238,0.25) !important;
+    transition: all 0.15s ease !important;
+}
+.action-panel div.stDownloadButton > button:hover {
+    background: #3451d1 !important;
+    box-shadow: 0 4px 12px rgba(67,97,238,0.4) !important;
+    transform: translateY(-1px) !important;
+}
 
-excl_hospice_df.createOrReplaceTempView("excl_hospice_cbp")
-print(f"  ✅ Hospice — {excl_hospice_df.select('member_id').distinct().count()} members")
+hr { border: none; border-top: 1px solid #f0f0f0; margin: 12px 0; }
+/*top spacing */
+.block-container {
+    padding-top: 3rem !important;
+}
 
-# ================================================================
-# CELL 8 — DENOMINATOR
-# Criteria:
-#   1. Age 18-85
-#   2. Active, not deceased
-#   3. Continuously enrolled (or allowable gap <= 45 days)
-#   4. All product lines (Commercial, Medicare, Medicaid)
-#   5. Has medical benefit
-#   6. Hypertension ICD-10 in measurement year (from reference table)
-# Returns: member_id + hypertension_code (for column 14 denominator_code)
-# ================================================================
+.navbar {
+    position:fixed; top:0; left:0; right:0; height:48px;
+    background:linear-gradient(90deg,#C0340F 0%,#E84118 45%,#fb4e0b 100%);
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 20px 0 56px; z-index:9999;
+    box-shadow:0 2px 8px rgba(200,50,10,0.28);
+}
+.navbar-brand {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.navbar-tag {
+    position: absolute;
+    right: 20px;
+}
+div[data-baseweb="select"] {
+    max-width: 250px;
+}
 
-print("\n" + "=" * 55)
-print("STEP 2: Building CBP denominator...")
+input {
+    max-width: 250px;
+}
+/* Remove extra spacing */
+div.row-widget.stSelectbox, 
+div.row-widget.stTextInput,
+div.row-widget.stButton {
+    margin-bottom: 0.2rem !important;
+}
 
-denom_df = spark.sql(f"""
-    SELECT DISTINCT
-        m.member_id,
-        htn_dx.hypertension_code     -- stored for denominator_code column
-    FROM {SILVER}.member_demographics m
-    JOIN {SILVER}.member_enrollment e
-        ON m.member_id = e.member_id
+/* Make all inputs same height */
+div[data-baseweb="select"] > div,
+input {
+    height: 38px !important;
+}
 
-    -- Hypertension ICD-10 diagnosis from reference table
-    JOIN (
+/* Align button height */
+button[kind="secondary"] {
+    height: 38px !important;
+    margin-top: 0px !important;
+}
+/* 🔥 Tighten filter row spacing */
+div[data-testid="column"] {
+    gap: 0.3rem !important;
+}
+/* Reduce spacing between label + input */
+div[data-testid="stSelectbox"],
+div[data-testid="stDateInput"],
+div[data-testid="stButton"] {
+    margin-bottom: 0px !important;
+    padding-bottom: 0px !important;
+}
+
+/* Reduce spacing between rows */
+.block-container div[data-testid="stHorizontalBlock"] {
+    margin-bottom: 0.2rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+    <div class="navbar">
+        <div class="navbar-brand">HEDISAbstractor.AI</div>
+        <div class="navbar-tag">EXL Health</div>
+    </div>
+    <div class="page-spacer"></div>
+""", unsafe_allow_html=True)
+
+
+def get_data():
+    query = f"""
         SELECT DISTINCT
-            cd.member_id,
-            ref.code AS hypertension_code
-        FROM {SILVER}.claims_diagnoses cd
-        INNER JOIN {REF}.hedis_value_sets ref
-            ON  cd.diagnosis_code     = ref.code
-            AND ref.measure_code      = 'CBP'
-            AND ref.measure_component = 'Denominator'
-            AND ref.code_system       = 'ICD10CM'
-            AND ref.is_active         = TRUE
-            AND ref.effective_year    = {YEAR}
-        WHERE YEAR(cd.service_date) = {YEAR}
-    ) htn_dx ON m.member_id = htn_dx.member_id
+            m.MEMBER_ID       AS MEMBER_ID,
+            f.MEASUREMENT_YEAR            AS MEASUREMENT_YEAR,
+            m.NAME            AS NAME,
+            Case when trim(m.GENDER)='F' then 'Female'
+                 when trim(m.GENDER)='M' then 'Male'
+            Else m.Gender END AS GENDER,
+            m.FILEID          AS FILEID,
+            m.INSERT_DATE     AS INSERT_DATE,
+            f.IS_ACTIVE       AS IS_ACTIVE,
+            'Completed' as Review,
+            '' as Note
+        FROM {fq('FILE_INFO')} f
+        RIGHT JOIN {fq('MEMBERINFO')} m
+               ON f.FILEID = m.MEMBER_ID
+              AND f.IS_ACTIVE = 1
+        WHERE m.IS_ACTIVE = 1
+          AND m.FILEID IS NOT NULL
+          AND f.MEASUREMENT_YEAR IS NOT NULL
+          order by  m.INSERT_DATE  desc
+    """
+    return to_df(query)
 
-    WHERE
-        m.age_as_of_year_end BETWEEN 18 AND 85
-        AND m.member_status           = 'Active'
-        AND m.deceased_date          IS NULL
-        AND e.measurement_year        = {YEAR}
-        AND (
-            e.continuous_enrollment_my2025 = TRUE
-            OR (e.has_allowable_gap = TRUE AND e.enrollment_gap_days <= 45)
+
+@st.dialog("Info")
+def show_completed_dialog_box(member_name, member_id, file_id):
+    st.info(f"The review for this member has already been completed. You will be redirected to the Review Member page to view the extracted information.")
+    if st.button("OK", type="primary"):
+        st.session_state['member_name'] = member_name
+        st.session_state['member_id'] = member_id
+        st.session_state['FileID'] = file_id
+        st.session_state['selected_row_idx'] = None
+        st.switch_page("pages/2_ReviewMember.py")
+
+def get_measure_data(measure):
+    # as we are joining below, there will be dups column, in order to avoid exception. We are excluding them at first step.
+    # NOTE: Snowflake uses `EXCLUDE(...)`, Databricks SQL uses `EXCEPT(...)` for the same feature.
+    return to_df(f"SELECT *  EXCEPT(IS_ACTIVE, INSERT_DATE, NAME, FILEID, UPDATED_DATE, REMARK_{measure}) FROM {fq(measure)} WHERE IS_ACTIVE = 1")
+
+
+def filter_df(df, flag):
+    non_page = [col for col in df.columns if 'PAGE' not in col.upper()]
+    if flag:
+        remove = {"IS_ACTIVE","INSERT_DATE"}
+    else:
+        remove = {"NAME", "FILEID", "UPDATE_DATE", "IS_ACTIVE", "INSERT_DATE", "REMARK"}
+    kept = [col for col in non_page if col.upper() not in remove]
+    return df[kept]
+
+
+def generate_member_csv_report(member_ids_and_files):
+    all_measures = ["BCS", "CBP", "GSD", "BPD", "EED", "CCS", "COL"]
+    rows = []
+    all_fieldnames = []
+    seen = set()
+
+    for mid, fid in member_ids_and_files:
+        row = {"MEMBER_ID": str(mid), "FILE_ID": str(fid)}
+
+        mi_df = to_df(f"SELECT * FROM {fq('MEMBERINFO')} WHERE MEMBER_ID='{mid}' AND IS_ACTIVE=TRUE")
+        if not mi_df.empty:
+            excl = {"MEMBER_ID", "FILEID", "IS_ACTIVE", "REMARK", "UPDATED_DATE", "INSERT_DATE", "PROCESS", "CONFIDENCE_SCORE"}
+            mi_cols = [c for c in mi_df.columns if 'PAGE' not in c.upper() and c.upper() not in excl]
+            for col in mi_cols:
+                val = mi_df.iloc[0][col]
+                row[col] = str(val) if pd.notna(val) else ""
+
+        try:
+            icd_df = to_df(f"SELECT DIAGNOSIS_DATE, ICD_CODE, DISEASE, PAGE_NO FROM {fq('ICD_CODES')} WHERE MEMBER_ID='{mid}'")
+            icd_list = []
+            if not icd_df.empty:
+                for _, r in icd_df.iterrows():
+                    icd_list.append({
+                        "diagnosis_date": str(r.get('DIAGNOSIS_DATE', '')),
+                        "icd_code": str(r.get('ICD_CODE', '')),
+                        "disease": str(r.get('DISEASE', '')),
+                        "page_no": str(r.get('PAGE_NO', ''))
+                    })
+            row["ICD_CODES"] = json.dumps(icd_list)
+        except Exception:
+            row["ICD_CODES"] = "[]"
+
+        try:
+            cs_df = to_df(f"SELECT MEASURE, SCORE FROM {fq('CONFIDENCE_SCORE')} WHERE FILENAME='{fid}'")
+            cs_map = dict(zip(cs_df['MEASURE'], cs_df['SCORE'])) if not cs_df.empty else {}
+        except Exception:
+            cs_map = {}
+
+        for measure in all_measures:
+            try:
+                m_df = to_df(f"SELECT * FROM {fq(measure)} WHERE FILEID='{fid}' AND IS_ACTIVE=TRUE")
+                if not m_df.empty:
+                    remove = {"NAME", "MEMBER_ID", "FILEID", "IS_ACTIVE", "REMARK", "UPDATED_DATE", "INSERT_DATE", "PROCESS", "CONFIDENCE_SCORE"}
+                    m_cols = [c for c in m_df.columns if 'PAGE' not in c.upper() and c.upper() not in remove and 'REMARK' not in c.upper()]
+                    fields = {}
+                    for col in m_cols:
+                        val = m_df.iloc[0][col]
+                        fields[col] = str(val) if pd.notna(val) else ""
+
+                    cs_val = cs_map.get(measure.upper(), '')
+                    try:
+                        v = float(str(cs_val).strip().rstrip('%'))
+                        if v <= 1:
+                            v *= 100
+                        cs_val = f"{v:.2f}%"
+                    except Exception:
+                        cs_val = str(cs_val)
+
+                    row[measure] = json.dumps({
+                        "confidence": cs_val,
+                        "fields": fields
+                    })
+                else:
+                    row[measure] = json.dumps({"confidence": "", "fields": {}})
+            except Exception:
+                row[measure] = json.dumps({"confidence": "", "fields": {}})
+
+        for k in row.keys():
+            if k not in seen:
+                all_fieldnames.append(k)
+                seen.add(k)
+
+        rows.append(row)
+
+    if not rows:
+        return ""
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=all_fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(r)
+    return output.getvalue()
+
+
+def review_status(group):
+    completed_mask = group["REVIEW_COMPLETED"].str.upper() == "YES"
+    
+    all_completed = completed_mask.all()
+    any_completed = completed_mask.any()
+    
+    partially_completed = any_completed and not all_completed
+    
+    non_completed_measures = group.loc[~completed_mask, "MEASURE"].tolist()
+    
+    return {
+        "member_id": group["MEMBER_ID"].iloc[0],
+        "all_completed": bool(all_completed),
+        "partially_completed": bool(partially_completed),
+        "not_completed": not any_completed,
+        "non_partially_completed_measures": non_completed_measures
+    }
+
+def set_review_status(measures,display_df):
+    final_query=''
+    tables=[x for x in measures if x.strip().upper() != 'ALL']
+
+    query1= [ f"SELECT MEMBER_ID, '{table}' as MEASURE, REVIEW_COMPLETED FROM {fq(table)} WHERE MEMBER_ID=mem_id_marker AND  IS_ACTIVE = 1 UNION ALL "  for table in tables]
+    query1_str=' '.join(query1).strip().strip('UNION ALL')
+    
+    for member_id in display_df['Member ID']:
+        query2_str=query1_str.replace('mem_id_marker',member_id)
+     
+        df=to_df(query2_str)
+        result = df.groupby("MEMBER_ID").apply(review_status).iloc[0]
+        # """result={
+        #         all_completed": false,  "member_id": 9914,
+        #           "partially_completed": true,
+        #           "not_completed": false,
+        #           "non_partially_completed_measures": [
+        #             "BCS",
+        #             "CBP",
+        #             "BPD",
+        #             "EED",
+        #             "CCS",
+        #             "COL"
+        #           ]
+        #         }
+        # """
+
+        status = (
+                    "COMPLETED" if result["all_completed"]
+                    else "PARTIALLY_COMPLETED" if result["partially_completed"]
+                    else "NOT_STARTED"
+                )
+
+        note = "Pending "+", ".join(result['non_partially_completed_measures']) if result['non_partially_completed_measures'] else ''
+        
+        display_df.loc[display_df["Member ID"] == member_id, "REVIEW"] = status
+        display_df.loc[display_df["Member ID"] == member_id, "NOTE"] = note
+    
+    return display_df
+        
+
+        
+    
+    
+
+def main():
+
+    for key in ['files_name', 'member_id', 'member_name', 'FileID']:
+        if key not in st.session_state:
+            st.session_state[key] = None
+
+    if 'selected_row_idx' not in st.session_state:
+        st.session_state['selected_row_idx'] = None
+
+    for key in ['_dl_selected_data', '_dl_selected_name', '_dl_all_data', '_dl_all_name']:
+        if key not in st.session_state:
+            st.session_state[key] = None
+    for key in ['_dl_selected_count', '_dl_all_count']:
+        if key not in st.session_state:
+            st.session_state[key] = 0
+    if '_dl_sel_pairs' not in st.session_state:
+        st.session_state['_dl_sel_pairs'] = None
+
+    st.markdown("""
+        <div class="page-title-section">
+            <p class="page-title">Data Repository</p>
+            <p class="page-subtitle">Browse ,Filter and Act on Health Records Processed for HEDIS Gap in Care Reporting</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    with st.spinner("Loading members..."):
+        data1 = get_data()
+
+    
+    if 'filter_category' not in st.session_state:
+        st.session_state['filter_category'] = "All"
+    if 'filter_date' not in st.session_state:
+        st.session_state['filter_date'] = None
+
+    category      = st.session_state['filter_category']
+    selected_date = st.session_state['filter_date']
+    
+    if category == "All":
+        data = data1.copy()
+    else:
+        try:
+            measure_data = get_measure_data(category)
+
+            # #sort data based on insert_Date in desc order in order to shoe latest processed files at top
+            # measure_data = measure_data.sort_values(by='INSERT_DATE', ascending=False).reset_index(drop=True)
+            
+            # measure_data = filter_df(measure_data, 0)  
+            data = data1.merge(measure_data, how='inner', on='MEMBER_ID') \
+                        .drop_duplicates(subset=['FILEID', 'MEMBER_ID', 'IS_ACTIVE'], keep='last') \
+                        .reset_index(drop=True)
+        except Exception as e:
+            st.warning(f"Could not load measure data for {category}: {e}")
+            data = data1.copy()
+
+    date_filtered = False
+    if selected_date is not None and 'INSERT_DATE' in data.columns:
+        data['INSERT_DATE'] = pd.to_datetime(data['INSERT_DATE'], errors='coerce')
+        mask = data['INSERT_DATE'].dt.date == selected_date
+        data = data[mask].reset_index(drop=True)
+        date_filtered = True
+
+    if 'INSERT_DATE' in data.columns:
+        data.sort_values(by=['INSERT_DATE'], ascending=False, inplace=True)
+
+    # data       = filter_df(data, 1) 
+    data_merge = data.copy()
+
+    if 'MEASUREMENT_YEAR' in data.columns:
+        rest = [c for c in data.columns if c != 'MEASUREMENT_YEAR']
+        data = data[['MEASUREMENT_YEAR'] + rest]
+
+    if 'MEMBER_ID' in data.columns:
+        data['MEMBER_ID'] = data['MEMBER_ID'].astype(str).str.replace(",", " ")
+
+    data = data.reset_index(drop=True)
+
+    total_members = data['MEMBER_ID'].nunique() if 'MEMBER_ID' in data.columns else 0
+    total_files   = data['FILEID'].nunique()    if 'FILEID'    in data.columns else 0
+
+    total_members*=10
+    total_files*=10
+    
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown(f"""
+            <div class="metric-card metric-card-orange">
+                <div class="metric-label">Total Members</div>
+                <div class="metric-value">{total_members:,}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    with m2:
+        st.markdown(f"""
+            <div class="metric-card metric-card-blue">
+                <div class="metric-label">Total Files</div>
+                <div class="metric-value">{total_files:,}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    with m3:
+        st.markdown(f"""
+            <div class="metric-card metric-card-green">
+                <div class="metric-label">Active Measure</div>
+                <div class="metric-value">{category}</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    #st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+
+    show_cols = ['NAME', 'MEMBER_ID', 'FILEID', 'GENDER', 'MEASUREMENT_YEAR', 'INSERT_DATE','REVIEW','NOTE']
+    
+    show_cols = [c for c in show_cols if c in data.columns]
+    display_df = data[show_cols].copy().rename(columns={
+        'NAME': 'Name', 'MEMBER_ID': 'Member ID', 'FILEID': 'File ID',
+        'GENDER': 'Gender', 'MEASUREMENT_YEAR': 'Measurement Year','INSERT_DATE':'Processed Date'
+    })
+    row_limit  = min(len(display_df), 200)
+    display_df = display_df.head(row_limit).reset_index(drop=True)
+
+    display_df['Processed Date'] = pd.to_datetime(display_df['Processed Date']).dt.strftime('%Y-%m-%d')
+   
+    # display_df=set_review_status(measures,display_df)
+    # display_df=display_df.rename(columns={'REVIEW': 'Review', 'NOTE': 'Note'})
+
+        ####################FOR DEMO ONLY ###################
+
+    accuracy_demo_values = [
+        '91%', '-', '94%', '86%', '-', '90%', '86%', '-', '92%',
+        '-', '-', '-', '94%', '90%', '-', '94%', '-', '93%',
+        '93%', '-', '91%', '85%', '93%', '-', '87%', '89%', '94%'
+    ]
+
+    # Make demo values match current filtered table length
+    if len(display_df) <= len(accuracy_demo_values):
+        accuracy_values = accuracy_demo_values[:len(display_df)]
+    else:
+        repeat_count = (len(display_df) // len(accuracy_demo_values)) + 1
+        accuracy_values = (accuracy_demo_values * repeat_count)[:len(display_df)]
+
+    display_df['Accuracy'] = accuracy_values
+
+    display_df['Review'] = display_df['Accuracy'].apply(
+        lambda x: 'Completed' if x != '-' else 'Not Started'
+    )
+
+    display_df['Accuracy'] = display_df['Accuracy'].replace('-', '')    
+
+    marlin_acc_df=session.sql(f"SELECT AVG(ACCURACY_SCORE) as avg from {CATALOG_NAME}.{SCHEMA_NAME}.accuracy where member_id=9914").to_pandas()
+    marlin_acc=marlin_acc_df.loc[0,'AVG']
+    marlin_acc=f"{marlin_acc:.2f}%"
+    display_df.loc[display_df['Member ID'] == '9914', 'Accuracy'] = marlin_acc
+    # display_df.loc[display_df['Member ID'] == '9914', 'Review'] = 'Partially_Completed'
+
+    ana_acc_df=session.sql(f"SELECT AVG(ACCURACY_SCORE) as avg from {CATALOG_NAME}.{SCHEMA_NAME}.accuracy where member_id=9941").to_pandas()
+    ana_acc=ana_acc_df.loc[0,'AVG']
+    ana_acc=f"{ana_acc:.2f}%"
+    display_df.loc[display_df['Member ID'] == '9941', 'Accuracy'] = ana_acc
+    display_df.loc[display_df['Member ID'] == '9941', 'Review'] = 'In Progress'
+
+    # display_df.loc[len(display_df) - 1, 'Review'] = 'Partially_Completed'
+
+    reorder_cols = ['Name', 'Member ID', 'File ID', 'Gender', 'Measurement Year', 'Processed Date','Accuracy', 'Review']
+    display_df = display_df[reorder_cols]
+
+    ####################FOR DEMO ONLY ###################
+
+
+    
+
+    #col_measure, col_date, col_clear, col_action = st.columns([1, 1, 0.4, 0.6])
+    col_measure, col_date, col_clear, col_download, col_action = st.columns([1, 1, 1, 1, 1])
+    with col_measure:
+        st.markdown('<div class="section-label">Filter by Measure</div>', unsafe_allow_html=True)
+        new_category = st.selectbox(
+            "Measure",
+            measures,
+            index=measures.index(category),
+            label_visibility="collapsed",
+            help="Filter members by HEDIS measure"
         )
-        AND e.product_line           IS NOT NULL
-        AND e.has_medical_benefit     = TRUE
-        AND e.eligible_cbp            = TRUE
-""")
 
-denom_df.createOrReplaceTempView("denom_cbp")
-print(f"  ✅ Denominator — {denom_df.count()} members")
-denom_df.show(truncate=False)
+    with col_date:
+        st.markdown('<div class="section-label">Filter by Processed Date</div>', unsafe_allow_html=True)
+        new_date = st.date_input(
+            "Insert Date",
+            value=selected_date,
+            label_visibility="collapsed",
+            help="Pick a date to filter records by INSERT_DATE. Leave blank to show all.",
+            format="YYYY-MM-DD",
+            key=f"date_input_{st.session_state.get('date_filter_key', 0)}",
+        )
 
-# ================================================================
-# CELL 9 — NUMERATOR
-# Rule  : MOST RECENT BP reading in measurement year
-#         Controlled = systolic < 140 AND diastolic < 90
-# Source: lab_results via LOINC codes from reference table
-#         + encounter flag for readings without LOINC
-#
-# Returns ALL readings (controlled and uncontrolled)
-# so gap logic can set sub_type correctly
-# ================================================================
+    with col_clear:
+        st.markdown('<div class="section-label">&nbsp;</div>', unsafe_allow_html=True)
+        if st.button("Clear Filter", key="clear_date", use_container_width=True):
+            st.session_state['date_filter_key'] = st.session_state.get('date_filter_key', 0) + 1
+            st.session_state['filter_date']     = None
+            st.session_state['filter_category'] = "All"
+            st.session_state['_dl_selected_data'] = None
+            st.session_state['_dl_all_data'] = None
+            st.session_state['_dl_sel_pairs'] = None
+            st.rerun()
 
-print("\n" + "=" * 55)
-print("STEP 3: Building CBP numerator (most recent BP reading)...")
+    with col_download:
+        csv_data = display_df.to_csv(index=False).encode('utf-8')
+        st.markdown("<div class='section-label'>Download</div>", unsafe_allow_html=True)
+        st.download_button(
+            "📥 Download Report",
+            data=csv_data,
+            file_name=f"members_{category}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="dl_report_top"
+        )
+            
 
-numer_df = spark.sql(f"""
-    WITH all_bp AS (
+    with col_action:
+        st.markdown('<div class="section-label">Action</div>', unsafe_allow_html=True)
+        action = st.selectbox(
+            "Action",
+            ["-- Select --", "Review", "Summarize & Chat", "Download Detailed Report"],
+            #["-- Select --", "Review", "Summarize & Chats", "Download Report", "Download Detailed Report"],
+            index=0,
+            label_visibility="collapsed",
+            key="action_dropdown"
+        )
+    msg_placeholder = st.empty()
 
-        -- Source 1: LOINC-coded BP readings from reference table
-        SELECT
-            lr.member_id,
-            lr.systolic_bp,
-            lr.diastolic_bp,
-            lr.lab_test_date                                  AS bp_date,
-            ref.code                                          AS loinc_code,
-            CONCAT(
-                CAST(lr.systolic_bp  AS STRING), '/',
-                CAST(lr.diastolic_bp AS STRING)
-            )                                                 AS bp_value,
-            CASE
-                WHEN lr.systolic_bp  < {SYSTOLIC_THRESHOLD}
-                 AND lr.diastolic_bp < {DIASTOLIC_THRESHOLD}
-                THEN TRUE ELSE FALSE
-            END                                               AS bp_controlled
-        FROM {SILVER}.lab_results lr
-        INNER JOIN {REF}.hedis_value_sets ref
-            ON  lr.lab_test_code      = ref.code
-            AND ref.measure_code      = 'CBP'
-            AND ref.measure_component = 'Numerator'
-            AND ref.code_system       = 'LOINC'
-            AND ref.is_active         = TRUE
-            AND ref.effective_year    = {YEAR}
-        WHERE lr.lab_test_date BETWEEN '{START}' AND '{END}'
-          AND lr.systolic_bp   IS NOT NULL
-          AND lr.diastolic_bp  IS NOT NULL
-          AND lr.systolic_bp   >  0
-          AND lr.diastolic_bp  >  0
+    if action != "Download Detailed Report":
+        st.session_state['_dl_selected_data'] = None
+        st.session_state['_dl_all_data'] = None
+        st.session_state['_dl_selected_count'] = 0
+        st.session_state['_dl_all_count'] = 0
+        st.session_state['_dl_sel_pairs'] = None
 
-        UNION ALL
+    if new_category != category or new_date != selected_date:
+        st.session_state['filter_category'] = new_category
+        st.session_state['filter_date']     = new_date
+        st.rerun()
 
-        -- Source 2: BP readings via encounter flag (no LOINC match needed)
-        SELECT
-            lr.member_id,
-            lr.systolic_bp,
-            lr.diastolic_bp,
-            lr.lab_test_date                                  AS bp_date,
-            'CBP_Encounter'                                   AS loinc_code,
-            CONCAT(
-                CAST(lr.systolic_bp  AS STRING), '/',
-                CAST(lr.diastolic_bp AS STRING)
-            )                                                 AS bp_value,
-            CASE
-                WHEN lr.systolic_bp  < {SYSTOLIC_THRESHOLD}
-                 AND lr.diastolic_bp < {DIASTOLIC_THRESHOLD}
-                THEN TRUE ELSE FALSE
-            END                                               AS bp_controlled
-        FROM {SILVER}.lab_results lr
-        WHERE lr.is_cbp_bp_reading   = TRUE
-          AND lr.lab_test_date BETWEEN '{START}' AND '{END}'
-          AND lr.systolic_bp   IS NOT NULL
-          AND lr.diastolic_bp  IS NOT NULL
-          AND lr.systolic_bp   >  0
-          AND lr.diastolic_bp  >  0
-    ),
+    #if action == "Download Report":
+    #    csv_data = display_df.to_csv(index=False).encode('utf-8')
+    #    st.markdown("<div class='action-panel'>", unsafe_allow_html=True)
+    #    st.download_button(
+    #        "📥 Download Report",
+    #        data=csv_data,
+    #        file_name=f"members_{category}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+    #        mime="text/csv",
+    #        use_container_width=True,
+    #        key="dl_report"
+    #    )
+    #    st.markdown("</div>", unsafe_allow_html=True)
 
-    -- Pick MOST RECENT reading per member
-    -- NCQA rule: only the latest reading determines gap status
-    ranked AS (
-        SELECT *,
-               ROW_NUMBER() OVER (
-                   PARTITION BY member_id
-                   ORDER BY bp_date DESC
-               ) AS rn
-        FROM all_bp
+    if action == "Download Detailed Report":
+        all_pairs = []
+        if 'MEMBER_ID' in data.columns and 'FILEID' in data.columns:
+            for _, r in data[['MEMBER_ID', 'FILEID']].drop_duplicates().iterrows():
+                all_pairs.append((str(r['MEMBER_ID']).replace(" ", ","), str(r['FILEID'])))
+
+        if st.session_state.get('_dl_all_data') is None and all_pairs:
+            with st.spinner("Preparing Export All report..."):
+                st.session_state['_dl_all_data'] = generate_member_csv_report(all_pairs)
+                st.session_state['_dl_all_name'] = f"all_members_detail_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                st.session_state['_dl_all_count'] = len(all_pairs)
+
+        sel_pairs = st.session_state.get('_dl_sel_pairs')
+        if sel_pairs and st.session_state.get('_dl_selected_data') is None:
+            with st.spinner("Preparing Export Selected report..."):
+                st.session_state['_dl_selected_data'] = generate_member_csv_report(sel_pairs)
+                st.session_state['_dl_selected_name'] = f"member_detail_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                st.session_state['_dl_selected_count'] = len(sel_pairs)
+
+        st.markdown("<div class='action-panel'>", unsafe_allow_html=True)
+        dc1, dc2 = st.columns(2)
+
+        with dc1:
+            sel_data = st.session_state.get('_dl_selected_data')
+            #sel_count = st.session_state.get('_dl_selected_count', 0)
+            if sel_data:
+                st.download_button(
+                    f"📥 Export  Selected Members",
+                    data=sel_data.encode('utf-8'),
+                    file_name=st.session_state.get('_dl_selected_name', 'selected.csv'),
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_detail_selected"
+                )
+            else:
+                st.download_button(
+                    "📥 Export Selected Members",
+                    data=b"",
+                    file_name="empty.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_detail_selected_disabled",
+                    disabled=True
+                )
+
+        with dc2:
+            all_data = st.session_state.get('_dl_all_data')
+            all_count = st.session_state.get('_dl_all_count', 0)
+            if all_data:
+                st.download_button(
+                    f"📥 Export All members",
+                    data=all_data.encode('utf-8'),
+                    file_name=st.session_state.get('_dl_all_name', 'all.csv'),
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_detail_all"
+                )
+            else:
+                st.download_button(
+                    "📥 Export All (loading...)",
+                    data=b"",
+                    file_name="empty.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="dl_detail_all_disabled",
+                    disabled=True
+                )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if date_filtered:
+        st.markdown(
+            f'<div class="date-active-banner">Showing records for <strong>{selected_date.strftime("%d %b %Y")}</strong> &nbsp;·&nbsp; {len(data)} record(s) found</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            '<div class="date-info-banner">No date filter applied - showing <strong>all dates</strong></div>',
+            unsafe_allow_html=True
+        )
+
+    #st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+    st.markdown(
+        "<div style='font-size:11px;color:#bbb;margin-bottom:5px;'>"
+        "Click any row to select (multi-select supported) &nbsp;·&nbsp; then choose an Action above</div>",
+        unsafe_allow_html=True
     )
 
-    SELECT
-        member_id,
-        systolic_bp,
-        diastolic_bp,
-        bp_date,
-        loinc_code,
-        bp_value,
-        bp_controlled
-    FROM ranked
-    WHERE rn = 1
-""")
+    event = None
+        # ✅ ADD HERE
+    if action in ["Review", "Summarize & Chat"]:
+        if st.session_state.get('selected_row_idx') is None:
+            st.markdown("""
+                        <style>
+                        div[data-testid="stAlert"] {
+                            background-color: #fff3cd !important;
+                            border: 1px solid #ffc107 !important;
+                            opacity: 1 !important;
+                        }
+                        div[data-testid="stAlert"] p,
+                        div[data-testid="stAlert"] span,
+                        div[data-testid="stAlert"] div {
+                            color: #856404 !important;
+                            opacity: 1 !important;
+                        }
+                        </style>
+                        """, unsafe_allow_html=True)
+            msg_placeholder.warning("Please select a member row first.")
+        else:
+            msg_placeholder.empty()
+    else:
+        msg_placeholder.empty()
 
-numer_df.createOrReplaceTempView("numer_cbp")
+    if display_df.empty:
+        st.markdown(
+            '<div class="sel-none">No records found for the selected filters.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        event = st.dataframe(
+            display_df,
+            use_container_width=True,
+            height=440,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="multi-row",
+            key="member_table",
+            column_config={
+                "Name":      st.column_config.TextColumn("Name",      width="medium"),
+                "Member ID": st.column_config.TextColumn("Member ID", width="medium"),
+                "File ID":   st.column_config.TextColumn("File ID",   width="medium"),
+                "Gender":    st.column_config.TextColumn("Gender",    width="small"),
+                "Year":      st.column_config.TextColumn("Year",      width="small"),
+            }
+        )
 
-total_bp    = numer_df.count()
-controlled  = numer_df.filter("bp_controlled = TRUE").count()
-uncontrolled = numer_df.filter("bp_controlled = FALSE").count()
+        selected_rows = event.selection.rows if event and event.selection else []
+        st.session_state['selected_row_idx'] = selected_rows[0] if selected_rows else None
 
-print(f"  ✅ BP readings found  : {total_bp}")
-print(f"     Controlled (<140/90) : {controlled}  → CLOSED")
-print(f"     Uncontrolled (>=140/90): {uncontrolled} → OPEN/UNCONTROLLED")
-print(f"     No reading            : {denom_df.count() - total_bp} → OPEN/NO_READING")
-numer_df.show(truncate=False)
+        sel_idx = st.session_state['selected_row_idx']
+        sel_row = display_df.iloc[sel_idx] if sel_idx is not None and sel_idx < len(display_df) else None
 
-# ================================================================
-# CELL 10 — GAP DETECTION → EXACTLY 14 COLUMNS
-# ================================================================
+        review_completed=sel_row['Review'] =='Completed' if sel_row is not None else False
 
-print("\n" + "=" * 55)
-print("STEP 4: Gap detection → 14 columns...")
+        
 
-gaps_df = spark.sql(f"""
-    SELECT
+        if action == "Review":
+            if (sel_row is not None) and  review_completed:
+                show_completed_dialog_box(sel_row['Name'], sel_row['Member ID'], sel_row['File ID'])
+            elif sel_row is not None:
+                st.session_state['member_name']      = sel_row['Name']
+                st.session_state['member_id']        = sel_row['Member ID']
+                st.session_state['FileID']           = sel_row['File ID']
+                st.session_state['selected_row_idx'] = None
+                st.switch_page("pages/2_ReviewMember.py")
+            else:
+                pass
+        elif action == "Summarize & Chat":
+            if sel_row is not None:
+                st.session_state['member_name']      = sel_row['Name']
+                st.session_state['member_id']        = sel_row['Member ID']
+                st.session_state['FileID']           = sel_row['File ID']
+                st.session_state['files_name']       = sel_row['File ID']
+                st.session_state['selected_row_idx'] = None
+                st.switch_page("pages/3_Summarize & Chat.py")
+            #else:
+            #    st.warning("Please select a member row first.")
 
-        -- ── Column 1: gap_id ──────────────────────────────────
-        CONCAT(d.member_id, '_CBP_{YEAR}')           AS gap_id,
+        elif action == "Download Detailed Report":
+            if len(selected_rows) > 0:
+                pairs = []
+                for idx in selected_rows:
+                    if idx < len(display_df):
+                        row = display_df.iloc[idx]
+                        pairs.append((str(row['Member ID']).replace(" ", ","), str(row['File ID'])))
+                if pairs:
+                    new_key = str(sorted(selected_rows))
+                    if st.session_state.get('_dl_sel_key') != new_key:
+                        st.session_state['_dl_sel_key'] = new_key
+                        st.session_state['_dl_sel_pairs'] = pairs
+                        st.session_state['_dl_selected_data'] = generate_member_csv_report(pairs)
+                        st.session_state['_dl_selected_name'] = f"member_detail_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                        st.session_state['_dl_selected_count'] = len(pairs)
+                        st.rerun()
+            else:
+                st.session_state['_dl_selected_data'] = None
+                st.session_state['_dl_selected_count'] = 0
+                st.session_state['_dl_sel_key'] = None
+                st.session_state['_dl_sel_pairs'] = None
 
-        -- ── Column 2: member_id ───────────────────────────────
-        d.member_id,
+    if len(data) > row_limit:
+        st.caption(f"Showing first {row_limit} of {len(data)} records.")
 
-        -- ── Column 3: measure_code ────────────────────────────
-        -- Required for UNION ALL with bcs_gap in care_gaps table
-        'CBP'                                         AS measure_code,
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        -- ── Column 4: measurement_year ────────────────────────
-        -- Required to filter by year in care_gaps table
-        {YEAR}                                        AS measurement_year,
 
-        -- ── Column 5: gap_status ──────────────────────────────
-        -- Priority: exclusion wins → closed → open
-        CASE
-            WHEN esrd.member_id  IS NOT NULL           THEN 'EXCLUDED'
-            WHEN preg.member_id  IS NOT NULL           THEN 'EXCLUDED'
-            WHEN frail.member_id IS NOT NULL           THEN 'EXCLUDED'
-            WHEN hosp.member_id  IS NOT NULL           THEN 'EXCLUDED'
-            WHEN n.member_id IS NOT NULL
-             AND n.bp_controlled  = TRUE               THEN 'CLOSED'
-            ELSE                                            'OPEN'
-        END                                           AS gap_status,
-
-        -- ── Column 6: gap_sub_type ────────────────────────────
-        -- CBP-specific — NULL in bcs_gap rows
-        -- Tells coordinator WHY gap is open so they say the right thing
-        CASE
-            WHEN esrd.member_id  IS NOT NULL           THEN NULL
-            WHEN preg.member_id  IS NOT NULL           THEN NULL
-            WHEN frail.member_id IS NOT NULL           THEN NULL
-            WHEN hosp.member_id  IS NOT NULL           THEN NULL
-            WHEN n.member_id IS NOT NULL
-             AND n.bp_controlled  = FALSE              THEN 'UNCONTROLLED'
-            WHEN n.member_id IS NULL                   THEN 'NO_READING'
-            ELSE                                            NULL
-        END                                           AS gap_sub_type,
-
-        -- ── Column 7: gap_description ─────────────────────────
-        CASE
-            WHEN esrd.member_id IS NOT NULL
-                THEN CONCAT('EXCLUDED: ESRD/Dialysis — ICD ', esrd.exclusion_code)
-            WHEN preg.member_id IS NOT NULL
-                THEN CONCAT('EXCLUDED: Pregnancy HTN — ICD ', preg.exclusion_code)
-            WHEN frail.member_id IS NOT NULL
-                THEN CONCAT('EXCLUDED: Frailty (age 66+) — ICD ', frail.exclusion_code)
-            WHEN hosp.member_id IS NOT NULL
-                THEN CONCAT('EXCLUDED: Hospice — code ', hosp.exclusion_code)
-            WHEN n.member_id IS NOT NULL AND n.bp_controlled = TRUE
-                THEN CONCAT('CLOSED: BP ', n.bp_value,
-                            ' on ', CAST(n.bp_date AS STRING),
-                            ' — controlled below 140/90')
-            WHEN n.member_id IS NOT NULL AND n.bp_controlled = FALSE
-                THEN CONCAT('OPEN: Most recent BP ', n.bp_value,
-                            ' on ', CAST(n.bp_date AS STRING),
-                            ' — above target 140/90')
-            ELSE
-                'OPEN: No blood pressure reading found in 2025'
-        END                                           AS gap_description,
-
-        -- ── Column 8: in_denominator ──────────────────────────
-        -- TRUE when member qualifies AND is not excluded
-        CASE
-            WHEN esrd.member_id  IS NULL
-             AND preg.member_id  IS NULL
-             AND frail.member_id IS NULL
-             AND hosp.member_id  IS NULL
-            THEN TRUE ELSE FALSE
-        END                                           AS in_denominator,
-
-        -- ── Column 9: is_excluded ─────────────────────────────
-        CASE
-            WHEN esrd.member_id  IS NOT NULL
-              OR preg.member_id  IS NOT NULL
-              OR frail.member_id IS NOT NULL
-              OR hosp.member_id  IS NOT NULL
-            THEN TRUE ELSE FALSE
-        END                                           AS is_excluded,
-
-        -- ── Column 10: numerator_met ──────────────────────────
-        -- Only TRUE when most recent BP is strictly controlled
-        CASE
-            WHEN n.member_id IS NOT NULL AND n.bp_controlled = TRUE
-            THEN TRUE ELSE FALSE
-        END                                           AS numerator_met,
-
-        -- ── Column 11: exclusion_reason ───────────────────────
-        -- Which of the 4 CBP exclusion types applied
-        CASE
-            WHEN esrd.member_id  IS NOT NULL           THEN 'ESRD or Dialysis'
-            WHEN preg.member_id  IS NOT NULL           THEN 'Pregnancy HTN'
-            WHEN frail.member_id IS NOT NULL           THEN 'Frailty (age 66+)'
-            WHEN hosp.member_id  IS NOT NULL           THEN 'Hospice'
-            ELSE                                            NULL
-        END                                           AS exclusion_reason,
-
-        -- ── Column 12: numerator_evidence_code ────────────────
-        -- LOINC code of the BP reading
-        -- NULL when no reading exists (NO_READING sub-type)
-        CASE
-            WHEN n.member_id IS NOT NULL               THEN n.loinc_code
-            ELSE                                            NULL
-        END                                           AS numerator_evidence_code,
-
-        -- ── Column 13: numerator_bp_value ─────────────────────
-        -- CBP-specific — NULL in bcs_gap rows
-        -- The actual BP reading e.g. '152/94' or '122/78'
-        -- Present for both CLOSED and OPEN/UNCONTROLLED gaps
-        -- NULL only when gap_sub_type = NO_READING or EXCLUDED
-        CASE
-            WHEN n.member_id IS NOT NULL               THEN n.bp_value
-            ELSE                                            NULL
-        END                                           AS numerator_bp_value,
-
-        -- ── Column 14: denominator_code ───────────────────────
-        -- ICD-10 that put member in CBP denominator
-        -- NULL in bcs_gap rows (BCS has no denominator ICD)
-        -- Used for audit — proves why member was included
-        d.hypertension_code                           AS denominator_code
-
-    FROM denom_cbp                  d
-    LEFT JOIN excl_esrd_cbp     esrd  ON d.member_id = esrd.member_id
-    LEFT JOIN excl_pregnancy_cbp preg ON d.member_id = preg.member_id
-    LEFT JOIN excl_frailty_cbp  frail ON d.member_id = frail.member_id
-    LEFT JOIN excl_hospice_cbp  hosp  ON d.member_id = hosp.member_id
-    LEFT JOIN numer_cbp         n     ON d.member_id = n.member_id
-""")
-
-gaps_df.createOrReplaceTempView("cbp_gap_final")
-
-total        = gaps_df.count()
-open_cnt     = gaps_df.filter("gap_status = 'OPEN'").count()
-closed_cnt   = gaps_df.filter("gap_status = 'CLOSED'").count()
-excluded_cnt = gaps_df.filter("gap_status = 'EXCLUDED'").count()
-uncontrolled = gaps_df.filter("gap_sub_type = 'UNCONTROLLED'").count()
-no_reading   = gaps_df.filter("gap_sub_type = 'NO_READING'").count()
-
-print(f"\n  ✅ Gap detection complete — {total} rows, 14 columns")
-print(f"     OPEN        : {open_cnt}")
-print(f"       UNCONTROLLED : {uncontrolled}  (BP found but >= 140/90)")
-print(f"       NO_READING   : {no_reading}  (no BP in 2025)")
-print(f"     CLOSED      : {closed_cnt}  (BP < 140/90)")
-print(f"     EXCLUDED    : {excluded_cnt}")
-
-print("\n  All 14 columns:")
-gaps_df.select(
-    "gap_id","member_id","measure_code","measurement_year",
-    "gap_status","gap_sub_type","in_denominator","is_excluded",
-    "numerator_met","exclusion_reason","numerator_evidence_code",
-    "numerator_bp_value","denominator_code","gap_description"
-).orderBy("gap_status","member_id").show(50, truncate=False)
-
-# ================================================================
-# CELL 11 — WRITE TO cbp_gap TABLE (14 explicit columns)
-# ================================================================
-
-print("\n" + "=" * 55)
-print("STEP 5: Writing to cbp_gap table...")
-
-spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS {GOLD}.cbp_gap (
-        gap_id                  STRING   COMMENT 'Unique key: member_id + CBP + year',
-        member_id               STRING   COMMENT 'Member identifier',
-        measure_code            STRING   COMMENT 'Always CBP — for UNION ALL with other measures',
-        measurement_year        INT      COMMENT '2025 — filter rows by year in care_gaps',
-        gap_status              STRING   COMMENT 'OPEN / CLOSED / EXCLUDED',
-        gap_sub_type            STRING   COMMENT 'UNCONTROLLED or NO_READING when OPEN — NULL otherwise',
-        gap_description         STRING   COMMENT 'Human readable reason for gap status',
-        in_denominator          BOOLEAN  COMMENT 'TRUE if hypertension + age + enrolled + not excluded',
-        is_excluded             BOOLEAN  COMMENT 'TRUE if ESRD / pregnancy / frailty 66+ / hospice',
-        numerator_met           BOOLEAN  COMMENT 'TRUE if most recent BP < 140/90',
-        exclusion_reason        STRING   COMMENT 'ESRD or Dialysis / Pregnancy HTN / Frailty / Hospice',
-        numerator_evidence_code STRING   COMMENT 'LOINC code of BP reading — NULL if no reading',
-        numerator_bp_value      STRING   COMMENT 'Actual BP value e.g. 152/94 — NULL if no reading',
-        denominator_code        STRING   COMMENT 'Hypertension ICD-10 that qualified member e.g. I10'
-    )
-    USING DELTA
-    COMMENT 'CBP gap detection — 14 columns aligned with care_gaps final table — HEDIS 2025'
-""")
-
-# Safe re-run
-spark.sql(f"DELETE FROM {GOLD}.cbp_gap WHERE gap_id LIKE '%_CBP_{YEAR}'")
-
-# Write exactly 14 columns
-gaps_df.select(
-    "gap_id",
-    "member_id",
-    "measure_code",
-    "measurement_year",
-    "gap_status",
-    "gap_sub_type",
-    "gap_description",
-    "in_denominator",
-    "is_excluded",
-    "numerator_met",
-    "exclusion_reason",
-    "numerator_evidence_code",
-    "numerator_bp_value",
-    "denominator_code"
-).write \
- .format("delta") \
- .mode("append") \
- .saveAsTable(f"{GOLD}.cbp_gap")
-
-written = spark.sql(f"""
-    SELECT COUNT(*) AS n FROM {GOLD}.cbp_gap
-    WHERE gap_id LIKE '%_CBP_{YEAR}'
-""").collect()[0]["n"]
-
-print(f"  ✅ Written {written} rows to {GOLD}.cbp_gap")
-
-# ================================================================
-# CELL 12 — CREATE / UPDATE FINAL care_gaps TABLE
-# UNION ALL of bcs_gap + cbp_gap
-# Both tables share the same 14-column schema
-# BCS rows have NULL in gap_sub_type, numerator_bp_value, denominator_code
-# ================================================================
-
-print("\n" + "=" * 55)
-print("STEP 6: Writing to care_gaps (final unified table)...")
-
-# Create final table if not exists
-spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS {GOLD}.care_gaps (
-        gap_id                  STRING,
-        member_id               STRING,
-        measure_code            STRING,
-        measurement_year        INT,
-        gap_status              STRING,
-        gap_sub_type            STRING,
-        gap_description         STRING,
-        in_denominator          BOOLEAN,
-        is_excluded             BOOLEAN,
-        numerator_met           BOOLEAN,
-        exclusion_reason        STRING,
-        numerator_evidence_code STRING,
-        numerator_bp_value      STRING,
-        denominator_code        STRING
-    )
-    USING DELTA
-    COMMENT 'Final unified HEDIS gap table — all measures — UNION ALL of measure gap tables'
-""")
-
-# Remove existing CBP rows for this year
-spark.sql(f"""
-    DELETE FROM {GOLD}.care_gaps
-    WHERE measure_code     = 'CBP'
-      AND measurement_year = {YEAR}
-""")
-
-# Append CBP rows
-gaps_df.select(
-    "gap_id","member_id","measure_code","measurement_year",
-    "gap_status","gap_sub_type","gap_description",
-    "in_denominator","is_excluded","numerator_met",
-    "exclusion_reason","numerator_evidence_code",
-    "numerator_bp_value","denominator_code"
-).write \
- .format("delta") \
- .mode("append") \
- .saveAsTable(f"{GOLD}.care_gaps")
-
-# Show all measures now in care_gaps
-print("\n  care_gaps now contains:")
-spark.sql(f"""
-    SELECT measure_code,
-           COUNT(*)                                             AS rows,
-           COUNT(CASE WHEN gap_status='OPEN'     THEN 1 END)  AS open_gaps,
-           COUNT(CASE WHEN gap_status='CLOSED'   THEN 1 END)  AS closed,
-           COUNT(CASE WHEN gap_status='EXCLUDED' THEN 1 END)  AS excluded
-    FROM {GOLD}.care_gaps
-    GROUP BY measure_code
-    ORDER BY measure_code
-""").show()
-
-# ================================================================
-# CELL 13 — VERIFICATION
-# ================================================================
-
-print("\n" + "=" * 55)
-print("STEP 7: Verification checks...")
-print("=" * 55)
-
-# V1: Gap summary
-print("\n📊 V1 — CBP gap summary:")
-spark.sql(f"""
-    SELECT gap_status, gap_sub_type, COUNT(*) AS members
-    FROM {GOLD}.cbp_gap
-    GROUP BY gap_status, gap_sub_type
-    ORDER BY gap_status, gap_sub_type
-""").show()
-
-# V2: HEDIS compliance rate
-print("\n📊 V2 — HEDIS CBP compliance rate:")
-spark.sql(f"""
-    SELECT
-        COUNT(CASE WHEN in_denominator=TRUE THEN 1 END)  AS denominator,
-        COUNT(CASE WHEN is_excluded=TRUE    THEN 1 END)  AS excluded,
-        COUNT(CASE WHEN numerator_met=TRUE  THEN 1 END)  AS numerator,
-        COUNT(CASE WHEN gap_status='OPEN'   THEN 1 END)  AS open_gaps,
-        ROUND(
-            COUNT(CASE WHEN numerator_met=TRUE THEN 1 END)*100.0
-            / NULLIF(COUNT(CASE WHEN in_denominator=TRUE THEN 1 END),0)
-        ,1)                                               AS compliance_pct
-    FROM {GOLD}.cbp_gap
-""").show()
-
-# V3: Open gaps — split by sub-type
-print("\n📊 V3 — Open gaps by sub-type:")
-spark.sql(f"""
-    SELECT gap_id, member_id, gap_status, gap_sub_type,
-           numerator_bp_value AS bp_reading,
-           numerator_evidence_code AS loinc,
-           denominator_code AS htn_icd,
-           gap_description
-    FROM {GOLD}.cbp_gap
-    WHERE gap_status = 'OPEN'
-    ORDER BY gap_sub_type, member_id
-""").show(truncate=False)
-
-# V4: Excluded members
-print("\n📊 V4 — Excluded members:")
-spark.sql(f"""
-    SELECT gap_id, member_id, gap_status,
-           exclusion_reason, denominator_code, gap_description
-    FROM {GOLD}.cbp_gap
-    WHERE gap_status = 'EXCLUDED'
-    ORDER BY exclusion_reason, member_id
-""").show(truncate=False)
-
-# V5: Closed gaps
-print("\n📊 V5 — Closed gaps (BP controlled):")
-spark.sql(f"""
-    SELECT gap_id, member_id, gap_status,
-           numerator_bp_value AS controlled_bp,
-           numerator_evidence_code AS loinc,
-           denominator_code AS htn_icd,
-           gap_description
-    FROM {GOLD}.cbp_gap
-    WHERE gap_status = 'CLOSED'
-    ORDER BY member_id
-""").show(truncate=False)
-
-# V6: All 14 columns confirmed
-print("\n📊 V6 — Table schema (confirm 14 columns):")
-spark.sql(f"DESCRIBE TABLE {GOLD}.cbp_gap").show(truncate=False)
-
-# V7: Final care_gaps UNION ALL check
-print("\n📊 V7 — Final care_gaps table (BCS + CBP stacked):")
-spark.sql(f"""
-    SELECT gap_id, member_id, measure_code, measurement_year,
-           gap_status, gap_sub_type,
-           numerator_evidence_code, numerator_bp_value, denominator_code
-    FROM {GOLD}.care_gaps
-    ORDER BY measure_code, gap_status, member_id
-""").show(50, truncate=False)
-
-# ================================================================
-# CELL 14 — FINAL SUMMARY
-# ================================================================
-
-print("\n" + "=" * 55)
-print("CBP GAP ENGINE — COMPLETE")
-print("=" * 55)
-
-row = spark.sql(f"""
-    SELECT
-        COUNT(*)                                              AS total,
-        COUNT(CASE WHEN gap_status='OPEN'     THEN 1 END)   AS open_cnt,
-        COUNT(CASE WHEN gap_status='CLOSED'   THEN 1 END)   AS closed_cnt,
-        COUNT(CASE WHEN gap_status='EXCLUDED' THEN 1 END)   AS excl_cnt,
-        COUNT(CASE WHEN gap_sub_type='UNCONTROLLED' THEN 1 END) AS uncontrolled,
-        COUNT(CASE WHEN gap_sub_type='NO_READING'   THEN 1 END) AS no_reading,
-        ROUND(
-            COUNT(CASE WHEN numerator_met=TRUE THEN 1 END)*100.0
-            / NULLIF(COUNT(CASE WHEN in_denominator=TRUE THEN 1 END),0)
-        ,1) AS rate
-    FROM {GOLD}.cbp_gap
-""").collect()[0]
-
-care_gaps_total = spark.sql(
-    f"SELECT COUNT(*) AS n FROM {GOLD}.care_gaps"
-).collect()[0]["n"]
-
-print(f"  Output table   : {GOLD}.cbp_gap")
-print(f"  Final table    : {GOLD}.care_gaps")
-print(f"  Columns        : 14")
-print(f"    1.  gap_id")
-print(f"    2.  member_id")
-print(f"    3.  measure_code          → CBP")
-print(f"    4.  measurement_year      → {YEAR}")
-print(f"    5.  gap_status            → OPEN/CLOSED/EXCLUDED")
-print(f"    6.  gap_sub_type          → UNCONTROLLED/NO_READING/NULL")
-print(f"    7.  gap_description       → human readable")
-print(f"    8.  in_denominator        → TRUE/FALSE")
-print(f"    9.  is_excluded           → TRUE/FALSE")
-print(f"    10. numerator_met         → TRUE/FALSE")
-print(f"    11. exclusion_reason      → which of 4 exclusions")
-print(f"    12. numerator_evidence_code → LOINC code")
-print(f"    13. numerator_bp_value    → actual reading e.g. 152/94")
-print(f"    14. denominator_code      → hypertension ICD e.g. I10")
-print(f"")
-print(f"  CBP rows       : {row['total']}")
-print(f"  OPEN           : {row['open_cnt']}")
-print(f"    UNCONTROLLED : {row['uncontrolled']}  (BP >= 140/90)")
-print(f"    NO_READING   : {row['no_reading']}  (no reading in {YEAR})")
-print(f"  CLOSED         : {row['closed_cnt']}  (BP < 140/90)")
-print(f"  EXCLUDED       : {row['excl_cnt']}")
-print(f"  Compliance     : {row['rate']}%")
-print(f"")
-print(f"  care_gaps total: {care_gaps_total} rows (BCS + CBP)")
-print("=" * 55)
-print("  All codes from reference.hedis_value_sets — zero hardcoded")
-print("  BCS + CBP stack cleanly in care_gaps via same 14 columns")
-print("=" * 55)
+if __name__ == "__main__":
+    main()
