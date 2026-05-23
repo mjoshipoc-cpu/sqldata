@@ -688,18 +688,63 @@ def main():
         </div>
     """, unsafe_allow_html=True)
 
-    with st.spinner("Loading members..."):
-        data1 = get_data()
-
-    
+    # ── filter state defaults ──
     if 'filter_category' not in st.session_state:
         st.session_state['filter_category'] = "All"
     if 'filter_date' not in st.session_state:
         st.session_state['filter_date'] = None
+    if 'date_filter_key' not in st.session_state:
+        st.session_state['date_filter_key'] = 0
 
-    category      = st.session_state['filter_category']
-    selected_date = st.session_state['filter_date']
-    
+    # ─────────────────────────────────────────────────────────────
+    # FILTER ROW — rendered BEFORE data is loaded so the current
+    # filter values are used to query/shape `data` on the same run.
+    # ─────────────────────────────────────────────────────────────
+    col_measure, col_date, col_clear, col_download, col_action = st.columns([1, 1, 1, 1, 1])
+
+    with col_measure:
+        st.markdown('<div class="section-label">Filter by Measure</div>', unsafe_allow_html=True)
+        category = st.selectbox(
+            "Measure",
+            measures,
+            index=measures.index(st.session_state['filter_category']),
+            label_visibility="collapsed",
+            help="Filter members by HEDIS measure",
+            key="measure_selectbox"
+        )
+        st.session_state['filter_category'] = category
+
+    with col_date:
+        st.markdown('<div class="section-label">Filter by Processed Date</div>', unsafe_allow_html=True)
+        selected_date = st.date_input(
+            "Insert Date",
+            value=st.session_state['filter_date'],
+            label_visibility="collapsed",
+            help="Pick a date to filter records by INSERT_DATE. Leave blank to show all.",
+            format="YYYY-MM-DD",
+            key=f"date_input_{st.session_state['date_filter_key']}",
+        )
+        # st.date_input can return a tuple in range mode; normalize to a single date or None
+        if isinstance(selected_date, tuple):
+            selected_date = selected_date[0] if selected_date else None
+        st.session_state['filter_date'] = selected_date
+
+    with col_clear:
+        st.markdown('<div class="section-label">&nbsp;</div>', unsafe_allow_html=True)
+        if st.button("Clear Filter", key="clear_date", use_container_width=True):
+            st.session_state['date_filter_key'] += 1
+            st.session_state['filter_date']       = None
+            st.session_state['filter_category']   = "All"
+            st.session_state['_dl_selected_data'] = None
+            st.session_state['_dl_all_data']      = None
+            st.session_state['_dl_sel_pairs']     = None
+            st.rerun()
+
+    # NOTE: col_download and col_action are populated later, once display_df exists.
+
+    with st.spinner("Loading members..."):
+        data1 = get_data()
+
     if category == "All":
         data = data1.copy()
     else:
@@ -832,38 +877,8 @@ def main():
     
 
     #col_measure, col_date, col_clear, col_action = st.columns([1, 1, 0.4, 0.6])
-    col_measure, col_date, col_clear, col_download, col_action = st.columns([1, 1, 1, 1, 1])
-    with col_measure:
-        st.markdown('<div class="section-label">Filter by Measure</div>', unsafe_allow_html=True)
-        new_category = st.selectbox(
-            "Measure",
-            measures,
-            index=measures.index(category),
-            label_visibility="collapsed",
-            help="Filter members by HEDIS measure"
-        )
-
-    with col_date:
-        st.markdown('<div class="section-label">Filter by Processed Date</div>', unsafe_allow_html=True)
-        new_date = st.date_input(
-            "Insert Date",
-            value=selected_date,
-            label_visibility="collapsed",
-            help="Pick a date to filter records by INSERT_DATE. Leave blank to show all.",
-            format="YYYY-MM-DD",
-            key=f"date_input_{st.session_state.get('date_filter_key', 0)}",
-        )
-
-    with col_clear:
-        st.markdown('<div class="section-label">&nbsp;</div>', unsafe_allow_html=True)
-        if st.button("Clear Filter", key="clear_date", use_container_width=True):
-            st.session_state['date_filter_key'] = st.session_state.get('date_filter_key', 0) + 1
-            st.session_state['filter_date']     = None
-            st.session_state['filter_category'] = "All"
-            st.session_state['_dl_selected_data'] = None
-            st.session_state['_dl_all_data'] = None
-            st.session_state['_dl_sel_pairs'] = None
-            st.rerun()
+    # ── Download + Action row (filters were rendered above, before data load) ──
+    col_download, col_action = st.columns([1, 1])
 
     with col_download:
         csv_data = display_df.to_csv(index=False).encode('utf-8')
@@ -876,14 +891,12 @@ def main():
             use_container_width=True,
             key="dl_report_top"
         )
-            
 
     with col_action:
         st.markdown('<div class="section-label">Action</div>', unsafe_allow_html=True)
         action = st.selectbox(
             "Action",
             ["-- Select --", "Review", "Summarize & Chat", "Download Detailed Report"],
-            #["-- Select --", "Review", "Summarize & Chats", "Download Report", "Download Detailed Report"],
             index=0,
             label_visibility="collapsed",
             key="action_dropdown"
@@ -896,11 +909,6 @@ def main():
         st.session_state['_dl_selected_count'] = 0
         st.session_state['_dl_all_count'] = 0
         st.session_state['_dl_sel_pairs'] = None
-
-    if new_category != category or new_date != selected_date:
-        st.session_state['filter_category'] = new_category
-        st.session_state['filter_date']     = new_date
-        st.rerun()
 
     #if action == "Download Report":
     #    csv_data = display_df.to_csv(index=False).encode('utf-8')
