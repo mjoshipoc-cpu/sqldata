@@ -11,8 +11,12 @@ from utils.spec_modal_utils import load_measure_spec, render_spec_modal
 from itertools import zip_longest
 import json
 import logging
-from pdf2image import convert_from_bytes
 import ast
+
+# PDF rendering: use PyMuPDF (fitz) — pure-Python, no system Poppler dependency.
+# This avoids the "PDFInfoNotInstalledError / poppler not installed" issue that
+# pdf2image hits on Databricks Apps (no shell access to install poppler-utils).
+import fitz  # PyMuPDF
 
 from databricks import sql
 from databricks.sdk.core import Config
@@ -786,15 +790,25 @@ def display_pdf(pdf_data, pdf_file_name=None):
 
     try:
         # PDF binary may arrive as bytes, bytearray, or memoryview from the
-        # Databricks SQL connector — normalize to bytes for pdf2image.
+        # Databricks SQL connector — normalize to bytes for the renderer.
         if isinstance(pdf_data, (bytearray, memoryview)):
             pdf_data = bytes(pdf_data)
-        images = convert_from_bytes(pdf_data, first_page=current_page, last_page=current_page)
-        if images:
-            st.image(images[0], use_container_width=True)
-            st.caption(f"Page {current_page}")
-        else:
-            st.warning(f"Page {current_page} could not be rendered.")
+
+        # Render the requested page using PyMuPDF (no Poppler dependency).
+        doc = fitz.open(stream=pdf_data, filetype="pdf")
+        try:
+            total_pages = doc.page_count
+            if current_page > total_pages:
+                st.warning(f"Page {current_page} is out of range (document has {total_pages} pages).")
+            else:
+                # zoom factor 2.0 ≈ 144 DPI — readable but not huge.
+                page = doc.load_page(current_page - 1)  # 0-indexed
+                pix  = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+                img_bytes = pix.tobytes("png")
+                st.image(img_bytes, use_container_width=True)
+                st.caption(f"Page {current_page} of {total_pages}")
+        finally:
+            doc.close()
     except Exception as e:
         st.error(f"Error rendering PDF page {current_page}: {e}")
 
