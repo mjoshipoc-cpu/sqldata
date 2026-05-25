@@ -767,6 +767,72 @@ def generate_member_csv(member_id, filename):
     writer.writerow(row)
     return output.getvalue()
 
+def _coerce_to_pdf_bytes(blob):
+    """
+    PDF binary stored in a BINARY column can come back in several shapes
+    depending on the driver / Arrow path. Normalize to raw bytes that start
+    with the %PDF- header.
+
+    Handles:
+      - already raw bytes / bytearray / memoryview
+      - hex string with or without 0x / \\x prefix (e.g. '25504446...')
+      - base64 string (e.g. 'JVBERi0x...')
+    Returns: bytes starting with b'%PDF-' (or raises ValueError).
+    """
+    import binascii
+
+    # 1. Already bytes-like
+    if isinstance(blob, (bytes, bytearray, memoryview)):
+        b = bytes(blob)
+        if b.startswith(b"%PDF"):
+            return b
+        # Some drivers wrap bytes inside bytes (e.g. b"\\x2550..."); strip the literal escape.
+        try:
+            s = b.decode("ascii", errors="ignore").strip()
+            return _coerce_to_pdf_bytes(s)
+        except Exception:
+            pass
+        raise ValueError(f"Binary doesn't start with %PDF header. First 8 bytes: {b[:8]!r}")
+
+    # 2. String — figure out the encoding
+    if isinstance(blob, str):
+        s = blob.strip()
+
+        # Strip common prefixes
+        if s.lower().startswith("0x"):
+            s = s[2:]
+        if s.startswith("\\x"):
+            s = s.replace("\\x", "")
+
+        # Try hex first (PDFs are commonly stored hex-encoded)
+        compact = "".join(s.split())
+        if len(compact) >= 8 and all(c in "0123456789abcdefABCDEF" for c in compact):
+            try:
+                b = binascii.unhexlify(compact)
+                if b.startswith(b"%PDF"):
+                    return b
+            except Exception:
+                pass
+
+        # Try base64
+        try:
+            import base64 as _b64
+            b = _b64.b64decode(s, validate=False)
+            if b.startswith(b"%PDF"):
+                return b
+        except Exception:
+            pass
+
+        # Last resort: maybe it's already the raw byte-string in text form
+        b = s.encode("latin-1", errors="ignore")
+        if b.startswith(b"%PDF"):
+            return b
+
+        raise ValueError(f"Could not decode PDF string. First 60 chars: {s[:60]!r}")
+
+    raise ValueError(f"Unsupported PDF content type: {type(blob).__name__}")
+
+
 def display_pdf(pdf_data, pdf_file_name=None):
     if not pdf_data:
         st.error("No PDF data available")
@@ -788,14 +854,20 @@ def display_pdf(pdf_data, pdf_file_name=None):
         st.session_state['page_number'] = current_page
         st.rerun()
 
+    # Normalize whatever the SQL driver gave us into real PDF bytes (once),
+    # so both the renderer and the download button use the same clean bytes.
     try:
-        # PDF binary may arrive as bytes, bytearray, or memoryview from the
-        # Databricks SQL connector — normalize to bytes for the renderer.
-        if isinstance(pdf_data, (bytearray, memoryview)):
-            pdf_data = bytes(pdf_data)
+        pdf_bytes = _coerce_to_pdf_bytes(pdf_data)
+    except ValueError as ve:
+        st.error(
+            f"PDF data from database isn't a valid PDF byte stream. "
+            f"This usually means the CONTENT column is stored as text/hex/base64 "
+            f"rather than BINARY. Details: {ve}"
+        )
+        return
 
-        # Render the requested page using PyMuPDF (no Poppler dependency).
-        doc = fitz.open(stream=pdf_data, filetype="pdf")
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
             total_pages = doc.page_count
             if current_page > total_pages:
@@ -812,8 +884,12 @@ def display_pdf(pdf_data, pdf_file_name=None):
     except Exception as e:
         st.error(f"Error rendering PDF page {current_page}: {e}")
 
-    #st.download_button("📥 Download PDF", data=pdf_data, file_name="document.pdf", mime="application/pdf")
-    st.download_button("📥 Download PDF",  data=pdf_data, file_name=pdf_file_name,  mime="application/pdf")
+    st.download_button(
+        "📥 Download PDF",
+        data=pdf_bytes,
+        file_name=pdf_file_name or "document.pdf",
+        mime="application/pdf",
+    )
 def _go_to_page(val):
     try:
         p = max(1, int(val))
