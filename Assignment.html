@@ -1,238 +1,98 @@
-import pandas as pd
 import streamlit as st
-import base64
-import io
-import csv
-import os
-import time
-from datetime import datetime
-from compliance import apply_compliance_to_df, parse_date, merge_dob, apply_ncqa_compliance_checks
-from utils.spec_modal_utils import load_measure_spec, render_spec_modal
-from itertools import zip_longest
+from typing import Union
 import json
+import base64
 import logging
-import ast
+from snowflake.snowpark.context import get_active_session
+from snowflake.snowpark.session import Session
+# from dbk_hedis_openai import get_bot_response
+from pdf2image import convert_from_bytes
+import time
 
-# PDF rendering: use PyMuPDF (fitz) — pure-Python, no system Poppler dependency.
-# This avoids the "PDFInfoNotInstalledError / poppler not installed" issue that
-# pdf2image hits on Databricks Apps (no shell access to install poppler-utils).
-import fitz  # PyMuPDF
+SCRIPT = 'SUMMARIZATION.py'
+logging.basicConfig(level=logging.INFO)
 
-from databricks import sql
-from databricks.sdk.core import Config
+# ── Snowflake session ──────────────────────────────────────────────────────────
+session = Session.builder.getOrCreate()
 
-# =====================================================================
-# DATABRICKS CONNECTION
-# Drop-in replacement for `get_active_session()`.
-#
-# Required env vars (auto-set inside a Databricks App):
-#   DATABRICKS_HOST          -> workspace hostname
-#   DATABRICKS_WAREHOUSE_ID  -> SQL warehouse id  (or set DATABRICKS_HTTP_PATH directly)
-# =====================================================================
-_cfg = Config()
 
-def _get_http_path():
-    http_path = os.getenv("DATABRICKS_HTTP_PATH")
-    if http_path:
-        return http_path
-    warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
-    if not warehouse_id:
-        try:
-            warehouse_id = st.secrets["databricks"]["warehouse_id"]
-        except Exception:
-            warehouse_id = None
-    if warehouse_id:
-        return f"/sql/1.0/warehouses/{warehouse_id}"
-    raise RuntimeError(
-        "Set DATABRICKS_HTTP_PATH or DATABRICKS_WAREHOUSE_ID for the SQL warehouse."
-    )
+DB_NAME     = "HEDISABSTRACTOR"
+SCHEMA_NAME = "AGENTICAIDEMO"
 
-@st.cache_resource(ttl=3600, show_spinner=False)
-def get_connection():
-    return sql.connect(
-        server_hostname=_cfg.host,
-        http_path=_get_http_path(),
-        credentials_provider=lambda: _cfg.authenticate,
-    )
 
-def _run(query, params=None):
-    """Execute a statement that returns no rows (DDL/UPDATE/INSERT).
-    `params` is a sequence/dict for parameterized queries (recommended)."""
-    conn = get_connection()
-    with conn.cursor() as cursor:
-        if params is None:
-            cursor.execute(query)
-        else:
-            cursor.execute(query, params)
+SCRIPT="bot_respose"
+llm_model="claude-sonnet-4-5"
+bot_prompt="""
+            Answer the Question using the EMR mentioned below.
 
-# =====================================================================
-# CATALOG / SCHEMA
-# Snowflake DB/SCHEMA -> Databricks CATALOG/SCHEMA
-# =====================================================================
-CATALOG_NAME = "HEDISABSTRACTOR"
-SCHEMA_NAME  = "AGENTICAIDEMO"
+            KEEP THE ANSWER SUMMARIZED, CONSISE AND SHORT.
+
+            ***Question:***
+               {}
+
+             ***EMR***
+                {}
+"""
+
+chat_prompt_general="""
+                    You are an expert assistant specialized in healthcare, insurance, and related domains.
+
+                    Task:
+                    1. Read the user's question.
+                    2. Determine whether the question is related to any of the following areas:
+                       - Healthcare (medical conditions, treatment, hospitals, doctors, diagnostics, medicines, wellness, public health)
+                       - Health insurance (policies, claims, coverage, premiums, deductibles, reimbursement)
+                       - Medical billing, coding, or healthcare operations
+                       - Healthcare regulations or compliance
+                    
+                    Rules:
+                    - If the question IS related to healthcare or insurance:
+                      - Answer the question clearly and accurately.
+                    - If the question is NOT related to healthcare or insurance:
+                      - Respond ONLY with:
+                        "The question is not related to healthcare."
+                    
+                    User Question:
+                    
+"""
 
 def fq(table_name):
-    return f"{CATALOG_NAME}.{SCHEMA_NAME}.{table_name.upper()}"
+    return f"{DB_NAME}.{SCHEMA_NAME}.{table_name.upper()}"
 
 def to_df(query):
-    """Drop-in replacement for `session.sql(query).to_pandas()`."""
-    conn = get_connection()
-    with conn.cursor() as cursor:
-        cursor.execute(query)
-        try:
-            df = cursor.fetchall_arrow().to_pandas()
-        except Exception:
-            rows = cursor.fetchall()
-            cols = [d[0] for d in cursor.description] if cursor.description else []
-            df = pd.DataFrame(rows, columns=cols)
+    df = session.sql(query).to_pandas()
     df.columns = df.columns.str.upper()
     return df
 
-# ----------------------------------------------------------------------
-# Compatibility shim so existing `session.sql(...).to_pandas()` and
-# `session.sql(...).collect()` call sites keep working without logic edits.
-# ----------------------------------------------------------------------
-class _SessionShim:
-    class _Query:
-        def __init__(self, q):
-            self._q = q
-        def to_pandas(self):
-            return to_df(self._q)
-        def collect(self):
-            _run(self._q)
-            return []
-    def sql(self, q):
-        return _SessionShim._Query(q)
-    # For `session.create_dataframe(data, schema).write.mode(...).saveAsTable(table)`
-    def create_dataframe(self, data, schema=None):
-        # Convert rows to a pandas DataFrame; schema is informational here.
-        if schema is not None and hasattr(schema, "fields"):
-            cols = [f.name for f in schema.fields]
-            df = pd.DataFrame(data, columns=cols)
-        else:
-            df = pd.DataFrame(data)
-        return _PandasWriter(df)
+# ── Table names ────────────────────────────────────────────────────────────────
+summary_table_name    = 'SUMMARY_DATA_TABLE'
+pdf_binary_table_name = 'PDF_BINARY_TABLE'
 
-class _PandasWriter:
-    """Mimics Snowpark's df.write.mode('append').saveAsTable(table) using
-    parameterized inserts on the Databricks SQL connector."""
-    def __init__(self, df):
-        self._df  = df
-        self._mode = "append"
-    @property
-    def write(self):
-        return self
-    def mode(self, m):
-        self._mode = m
-        return self
-    def saveAsTable(self, table):
-        if self._df.empty:
-            return
-        cols = list(self._df.columns)
-        placeholders = ", ".join(["?"] * len(cols))
-        col_list = ", ".join(cols)
-        sql_text = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"
-        conn = get_connection()
-        with conn.cursor() as cursor:
-            for _, r in self._df.iterrows():
-                values = [None if pd.isna(v) else v for v in r.tolist()]
-                cursor.execute(sql_text, values)
-
-session = _SessionShim()
-
-# Minimal stand-ins for Snowpark types so the rest of the code still imports them.
-# (They are only used to label columns for create_dataframe; the writer above
-# only needs the column names.)
-class _Field:
-    def __init__(self, name, _type=None):
-        self.name = name
-        self.type = _type
-class _Schema:
-    def __init__(self, fields):
-        self.fields = fields
-def StructType(fields):    return _Schema(fields)
-def StructField(name, t=None): return _Field(name, t)
-def StringType():    return "string"
-def BinaryType():    return "binary"
-def IntegerType():   return "integer"
-def FloatType():     return "float"
-def DecimalType(p=10, s=2): return f"decimal({p},{s})"
-
-# =====================================================================
-# Below this line, the logic and UI are kept IDENTICAL to the original.
-# =====================================================================
-
-SCRIPT             = 'ReviewMember'
-confidence_table   = 'CONFIDENCE_SCORE'
-file_info_table    = 'FILE_INFO'
-member_info_table  = 'MEMBERINFO'
-pdf_binary_table   = 'PDF_BINARY_TABLE'
-accuracy_table  = 'accuracy'
-
-all_measures = ["BCS", "CBP", "BPD","GSD", "EED", "CCS", "COL"]
-TAB_DISPLAY_NAMES = {
-    "HBD": "GSD",
-    "GSD":"GSD",
-    "BCS": "BCS",
-    "CBP": "CBP",
-    "BPD": "BPD",
-    "EED": "EED",
-    "CCS": "CCS",
-    "COL": "COL",
-    "Member Info": "Member Info",
-    "ICD Codes": "ICD Codes"
-}
-
-gender_map = {
-    "M": "Male",
-    "F": "Female",
-    "Female":"Female",
-    "Male": "Male"
-}
-
-prior_year       = datetime.now().year  #datetime.now().year - 1
-MEASUREMENT_YEAR = st.session_state.get('MY', prior_year)
-CURRENT_DATE     = datetime(2025, 5, 20)
-
-changed_fields = []
-
-logging.info(SCRIPT + ": Measurement Year: %s", MEASUREMENT_YEAR)
-
-
-if 'icd_acc_score' not in st.session_state:
-    st.session_state['icd_acc_score'] = 0
-
-# Ensure the accuracy table exists. Runs once per session via the cached resource.
-@st.cache_resource(show_spinner=False)
-def _ensure_accuracy_table():
-    _run(f"""
-CREATE TABLE IF NOT EXISTS {fq(accuracy_table)} (
-  member_id INTEGER,
-  filename STRING,
-  measure STRING,
-  review_completed STRING,
-  track STRING,
-  accuracy_score DECIMAL(5,2)
-) USING DELTA
-""")
-    return True
-
-_ensure_accuracy_table()
-
+# ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(layout="wide", page_title="HEDISAbstractor.AI")
-
 if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.switch_page("streamlit_app.py")
-
 with st.sidebar:
     st.write(f"Logged in as **{st.session_state.username}**")
+
     st.markdown("<br><br><br><br><br><br><br><br><br><br>", unsafe_allow_html=True)
+
     if st.button("Logout", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.username = None
         st.switch_page("streamlit_app.py")
+        
+# ── Session state init ─────────────────────────────────────────────────────────
+for _key, _default in [
+    ('page_number', 1),
+    ('files_name', None),
+    ('uploaded_files', []),
+    ('messages', [{"role": "Hedis AI", "text": "Hello! How can I assist you?"}]),
+]:
+    if _key not in st.session_state:
+        st.session_state[_key] = _default
 
+# ── CSS — matches ReviewMember design system exactly ──────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -248,33 +108,35 @@ st.markdown("""
     --border:       #E3E6EF;
     --text:         #1A1D27;
     --muted:        #7B808F;
-    --row-hover:    #FFF8F6;
-    --row-sel:      rgba(232,65,24,0.05);
     --radius:       10px;
     --shadow-sm:    0 1px 3px rgba(0,0,0,0.07),0 1px 2px rgba(0,0,0,0.04);
 }
 
-html,body,.stApp { font-family:'Inter',sans-serif !important; background:var(--bg) !important; color:var(--text); }
+html, body, .stApp {
+    font-family: 'Inter', sans-serif !important;
+    background: var(--bg) !important;
+    color: var(--text);
+}
 
-#MainMenu,footer { visibility:hidden; }
-[data-testid="stHeader"]    { background:transparent !important; box-shadow:none !important; height:0 !important; }
-[data-testid="stDecoration"]{ display:none !important; }
+/* ── Hide chrome ── */
+#MainMenu, footer { visibility: hidden; }
+[data-testid="stHeader"]     { background: transparent !important; box-shadow: none !important; height: 0 !important; }
+[data-testid="stDecoration"] { display: none !important; }
 
-div[data-testid="stRadio"]:has(input[name="row_selector_radio"]) { display:none !important; }
-.hidden-radio { display:none !important; visibility:hidden !important; height:0 !important; overflow:hidden !important; }
+/* ── Sidebar toggle ── */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] { z-index: 99999 !important; top: 14px !important; left: 14px !important; }
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="collapsedControl"] svg { color: white !important; fill: white !important; }
+[data-testid="stSidebar"] { z-index: 99998 !important; }
 
-[data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]
-    { z-index:99999 !important; top:14px !important; left:14px !important; }
-[data-testid="stSidebarCollapsedControl"] svg,[data-testid="collapsedControl"] svg
-    { color:white !important; fill:white !important; }
-[data-testid="stSidebar"] { z-index:99998 !important; }
-
+/* ── Navbar ── */
 .navbar {
-    position:fixed; top:0; left:0; right:0; height:48px;
-    background:linear-gradient(90deg,#C0340F 0%,#E84118 45%,#fb4e0b 100%);
-    display:flex; align-items:center; justify-content:space-between;
-    padding:0 20px 0 56px; z-index:9999;
-    box-shadow:0 2px 8px rgba(200,50,10,0.28);
+    position: fixed; top: 0; left: 0; right: 0; height: 48px;
+    background: linear-gradient(90deg, #C0340F 0%, #E84118 45%, #fb4e0b 100%);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px 0 56px; z-index: 9999;
+    box-shadow: 0 2px 8px rgba(200,50,10,0.28);
 }
 .navbar-brand {
     position: absolute;
@@ -286,175 +148,222 @@ div[data-testid="stRadio"]:has(input[name="row_selector_radio"]) { display:none 
     right: 20px;
 }
 
-.navbar-brand { font-size:17px; font-weight:700; color:white; letter-spacing:0.3px; font-family:'Inter',sans-serif; }
+.navbar-brand {
+    font-size: 17px; font-weight: 700; color: white;
+    letter-spacing: 0.3px; font-family: 'Inter', sans-serif;
+}
 .navbar-tag {
-    font-size:11px; font-weight:600; color:rgba(255,255,255,0.9);
-    background:rgba(255,255,255,0.15); padding:3px 12px; border-radius:20px;
-    border:1px solid rgba(255,255,255,0.25); letter-spacing:0.5px; text-transform:uppercase;
+    font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.9);
+    background: rgba(255,255,255,0.15); padding: 3px 12px; border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.25); letter-spacing: 0.5px; text-transform: uppercase;
 }
 
+/* ── Main container ── */
 .main .block-container {
-    padding-top:56px !important; padding-bottom:16px !important;
-    padding-left:16px !important; padding-right:16px !important;
-    max-width:100% !important;
+    padding-top: 64px !important; padding-bottom: 16px !important;
+    padding-left: 16px !important; padding-right: 16px !important;
+    max-width: 100% !important;
 }
 
-.result-table-wrap {
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius); box-shadow:var(--shadow-sm);
-    overflow:hidden; margin-bottom:10px;
-}
-.result-table { width:100%; border-collapse:collapse; font-size:13px; font-family:'Inter',sans-serif; }
-.result-table thead tr { background:var(--brand-dim); border-bottom:2px solid var(--brand-border); }
-.result-table thead th {
-    padding:9px 14px; text-align:left; font-weight:700;
-    font-size:10.5px; text-transform:uppercase; letter-spacing:0.7px; color:var(--brand); white-space:nowrap;
-}
-.result-table thead th.col-sel { width:44px; text-align:center; }
-.result-table tbody tr { border-bottom:1px solid var(--border); transition:background 0.12s; cursor:pointer; }
-.result-table tbody tr:last-child { border-bottom:none; }
-.result-table tbody tr:hover { background:var(--row-hover); }
-.result-table tbody tr.row-sel { background:var(--row-sel); box-shadow:inset 3px 0 0 var(--brand); }
-.result-table tbody td { padding:9px 14px; color:var(--text); font-size:13px; }
-.result-table tbody td.col-sel { text-align:center; padding:9px 8px; }
-
-.row-radio {
-    appearance:none; -webkit-appearance:none;
-    width:16px; height:16px; border:2px solid #CBD0DC; border-radius:50%;
-    cursor:pointer; position:relative; transition:border-color 0.15s,background 0.15s,box-shadow 0.15s;
-    vertical-align:middle; display:inline-block; margin:0;
-}
-.row-radio:hover { border-color:var(--brand); }
-.row-radio:checked {
-    border-color:var(--brand); background:var(--brand);
-    box-shadow:0 0 0 3px rgba(232,65,24,0.14);
-}
-.row-radio:checked::after {
-    content:''; position:absolute; top:50%; left:50%;
-    transform:translate(-50%,-50%); width:5px; height:5px;
-    border-radius:50%; background:white;
-}
-
-.action-bar {
-    display:flex; align-items:center; justify-content:flex-end;
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius); padding:7px 14px; margin-bottom:10px;
-    box-shadow:var(--shadow-sm);
-}
-
-div[data-testid="stTextInput"] label  { font-size:12px !important; font-weight:600 !important; color:var(--text) !important; margin-bottom:2px !important; font-family:'Inter',sans-serif !important; }
-div[data-testid="stTextInput"] input  { font-family:'Inter',sans-serif !important; font-size:12px !important; border:1px solid var(--border) !important; border-radius:7px !important; padding:6px 10px !important; background:#FAFBFD !important; color:var(--text) !important; transition:border-color 0.15s,box-shadow 0.15s; }
-div[data-testid="stTextInput"] input:focus { border-color:var(--brand) !important; box-shadow:0 0 0 3px rgba(232,65,24,0.1) !important; background:white !important; }
-
-div[data-testid="stRadio"] label { font-size:12px !important; font-weight:600 !important; color:var(--text) !important; font-family:'Inter',sans-serif !important; }
-
-div[data-testid="stTabs"] { border-bottom:2px solid var(--border); }
-div[data-testid="stTabs"] button { font-family:'Inter',sans-serif !important; font-weight:600 !important; font-size:13px !important; color:var(--muted) !important; padding:8px 14px !important; border-radius:0 !important; border-bottom:2px solid transparent !important; margin-bottom:-2px; transition:color 0.15s,border-color 0.15s; }
-div[data-testid="stTabs"] button[aria-selected="true"] { color:var(--brand) !important; border-bottom-color:var(--brand) !important; }
-div[data-testid="stTabs"] button:hover { color:var(--brand) !important; background:var(--brand-dim) !important; }
-
-div[data-testid="stButton"]>button { font-family:'Inter',sans-serif !important; font-weight:600 !important; font-size:12px !important; border-radius:7px !important; padding:5px 14px !important; border:1px solid transparent !important; transition:all 0.15s ease; cursor:pointer; }
-div[data-testid="stButton"]>button[kind="primary"] { background:var(--brand) !important; color:white !important; border-color:var(--brand) !important; box-shadow:0 1px 4px rgba(232,65,24,0.28); }
-div[data-testid="stButton"]>button[kind="primary"]:hover { background:var(--brand-dark) !important; box-shadow:0 3px 8px rgba(232,65,24,0.35) !important; transform:translateY(-1px); }
-div[data-testid="stButton"]>button[kind="primary"]:disabled { background:#d1d5db !important; border-color:#d1d5db !important; color:#9ca3af !important; box-shadow:none !important; transform:none !important; cursor:not-allowed !important; }
-/*div[data-testid="stButton"]>button[kind="secondary"] { background:white !important; color:var(--brand) !important; border-color:var(--brand-border) !important; }*/
-/* FORCE override Streamlit download button */
-div[data-testid="stDownloadButton"] > button {
-    background: var(--brand) !important;
-    color: white !important;
-    border: 1px solid var(--brand) !important;
-}
-
-div[data-testid="stDownloadButton"] > button:hover {
-    background: var(--brand-dark) !important;
-}
-div[data-testid="stButton"]>button[kind="secondary"]:hover { background:var(--brand-dim) !important; border-color:var(--brand) !important; }
-
-.compliance-bar { display:flex; align-items:center; gap:8px; padding:7px 12px; border-radius:8px; margin:6px 0 10px; font-size:12px; font-weight:600; font-family:'Inter',sans-serif; }
-.compliance-bar.compliant     { background:#ECFDF5; border:1px solid #BBF7D0; color:#15803D; }
-.compliance-bar.non-compliant { background:#FEF2F2; border:1px solid #FECACA; color:#B91C1C; }
-.compliance-bar.exclusion     { background:#FFFBEB; border:1px solid #FDE68A; color:#92400E; }
-.compliance-bar.NA   { background:#ECFDF5; border:1px solid #BBF7D0; color:#15803D; }
-.compliance-bar .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
-.compliant .dot { background:#16A34A; } .non-compliant .dot { background:#DC2626; } .exclusion .dot { background:#D97706; }
-
-.meta-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-.meta-chip { font-size:11px; font-weight:500; color:var(--muted); background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:2px 10px; font-family:'Inter',sans-serif; }
-.meta-chip span { font-weight:700; color:var(--text); }
-
-.confirm-box { background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; padding:10px 14px; margin:8px 0; font-size:12px; font-family:'Inter',sans-serif; }
-.confirm-box .change-line { font-size:11px; color:var(--text); padding:2px 0; }
-
-div[data-testid="stAlert"] { border-radius:8px !important; font-size:12px !important; padding:8px 12px !important; font-family:'Inter',sans-serif !important; }
-
-div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:12px !important; border-color:var(--border) !important; box-shadow:var(--shadow-sm) !important; }
-
-h1 { margin:0 !important; padding:0 !important; font-size:0 !important; }
-
-.section-label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.7px; color:var(--muted); margin:8px 0 5px; font-family:'Inter',sans-serif; }
-
-.modal { display:none; position:fixed; top:20%; left:60%; background:white; border:1px solid var(--border); border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.15); z-index:10001; width:520px; min-width:300px; min-height:200px; resize:both; overflow:auto; }
-.modal-header { background:var(--bg); padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; border-radius:12px 12px 0 0; font-weight:600; font-size:13px; font-family:'Inter',sans-serif; }
-.modal-content { padding:16px; max-height:65vh; overflow-y:auto; }
-.modal.show { display:block; }
-
-div.stDownloadButton > button {
-    background: var(--brand-dim) !important;
-    color: black !important;
-    border: 1px solid var(--brand-border) !important;
-}
-
-div.stDownloadButton > button:hover {
-    background: rgba(232,65,24,0.15) !important;
-}
-/*top spacing */
-.block-container {
-    padding-top: 3rem !important;
-}
-/* Reduce space below headers */
-h1, h2, h3, h4 {
-    margin-bottom: 10px !important;
-}
-
-/* Reduce space for radio buttons */
-div[data-testid="stRadio"] {
-    margin-top: 20px;
-    margin-bottom: 20px;
-}
-
-.primary-btn {
-    display: inline-flex;              /* fix alignment */
-    justify-content: center;
-    align-items: center;
-
-    width: auto;                      /* ❗ remove full width */
-    min-width: 220px;                 /* similar size as Edit button */
-
+/* ── Section label ── */
+.section-label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.7px; color: var(--muted); margin: 8px 0 5px;
     font-family: 'Inter', sans-serif;
-    font-weight: 600;
-    font-size: 12px;
+}
 
-    padding: 8px 16px;
-    border-radius: 7px;
+/* ── Card / surface panels ── */
+.card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-sm);
+    padding: 14px 16px; margin-bottom: 12px;
+}
 
-    background: var(--brand);
-    color: white !important;          /* ❗ fix blue text */
-    border: 1px solid var(--brand);
+/* ── Selectbox ── */
+div[data-testid="stSelectbox"] label {
+    font-size: 12px !important; font-weight: 600 !important;
+    color: var(--text) !important; font-family: 'Inter', sans-serif !important;
+}
+div[data-testid="stSelectbox"] > div > div {
+    font-family: 'Inter', sans-serif !important; font-size: 12px !important;
+    border: 1px solid var(--border) !important; border-radius: 7px !important;
+    background: #FAFBFD !important; color: var(--text) !important;
+}
+div[data-testid="stSelectbox"] > div > div:focus-within {
+    border-color: var(--brand) !important;
+    box-shadow: 0 0 0 3px rgba(232,65,24,0.1) !important;
+}
 
-    text-decoration: none !important; /* ❗ remove underline */
+/* ── Text input ── */
+div[data-testid="stTextInput"] label {
+    font-size: 12px !important; font-weight: 600 !important;
+    color: var(--text) !important; font-family: 'Inter', sans-serif !important;
+}
+div[data-testid="stTextInput"] input {
+    font-family: 'Inter', sans-serif !important; font-size: 12px !important;
+    border: 1px solid var(--border) !important; border-radius: 7px !important;
+    padding: 6px 10px !important; background: #FAFBFD !important;
+    color: var(--text) !important; transition: border-color 0.15s, box-shadow 0.15s;
+}
+div[data-testid="stTextInput"] input:focus {
+    border-color: var(--brand) !important;
+    box-shadow: 0 0 0 3px rgba(232,65,24,0.1) !important;
+    background: white !important;
+}
+
+/* ── Tabs ── */
+div[data-testid="stTabs"] { border-bottom: 2px solid var(--border); }
+div[data-testid="stTabs"] button {
+    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
+    font-size: 13px !important; color: var(--muted) !important;
+    padding: 8px 14px !important; border-radius: 0 !important;
+    border-bottom: 2px solid transparent !important;
+    margin-bottom: -2px; transition: color 0.15s, border-color 0.15s;
+}
+div[data-testid="stTabs"] button[aria-selected="true"] {
+    color: var(--brand) !important; border-bottom-color: var(--brand) !important;
+}
+div[data-testid="stTabs"] button:hover {
+    color: var(--brand) !important; background: var(--brand-dim) !important;
+}
+
+/* ── Buttons ── */
+div[data-testid="stButton"] > button {
+    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
+    font-size: 12px !important; border-radius: 7px !important;
+    padding: 5px 14px !important; border: 1px solid transparent !important;
+    transition: all 0.15s ease; cursor: pointer;
+}
+div[data-testid="stButton"] > button[kind="primary"] {
+    background: var(--brand) !important; color: white !important;
+    border-color: var(--brand) !important; box-shadow: 0 1px 4px rgba(232,65,24,0.28);
+}
+div[data-testid="stButton"] > button[kind="primary"]:hover {
+    background: var(--brand-dark) !important;
+    box-shadow: 0 3px 8px rgba(232,65,24,0.35) !important;
+    transform: translateY(-1px);
+}
+div[data-testid="stButton"] > button[kind="secondary"] {
+    background: white !important; color: var(--brand) !important;
+    border-color: var(--brand-border) !important;
+}
+div[data-testid="stButton"] > button[kind="secondary"]:hover {
+    background: var(--brand-dim) !important; border-color: var(--brand) !important;
+}
+
+/* ── Form submit button ── */
+div[data-testid="stFormSubmitButton"] > button {
+    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
+    font-size: 12px !important; border-radius: 7px !important;
+    background: var(--brand) !important; color: white !important;
+    border-color: var(--brand) !important; padding: 5px 16px !important;
+    box-shadow: 0 1px 4px rgba(232,65,24,0.28);
     transition: all 0.15s ease;
 }
-
-.primary-btn:hover {
-    background: var(--brand-dark);
-    color: white !important;
+div[data-testid="stFormSubmitButton"] > button:hover {
+    background: var(--brand-dark) !important;
+    box-shadow: 0 3px 8px rgba(232,65,24,0.35) !important;
     transform: translateY(-1px);
-    box-shadow: 0 3px 8px rgba(232,65,24,0.35);
+}
+
+/* ── Alerts ── */
+div[data-testid="stAlert"] {
+    border-radius: 8px !important; font-size: 12px !important;
+    padding: 8px 12px !important; font-family: 'Inter', sans-serif !important;
+}
+
+/* ── Panels ── */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 12px !important; border-color: var(--border) !important;
+    box-shadow: var(--shadow-sm) !important;
+}
+
+/* ── Expander — clean brand style ── */
+div[data-testid="stExpander"] {
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    box-shadow: var(--shadow-sm) !important;
+    overflow: hidden; margin-bottom: 10px;
+}
+div[data-testid="stExpander"] summary {
+    background: var(--brand-dim) !important;
+    border-bottom: 1px solid var(--brand-border) !important;
+    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
+    font-size: 13px !important; color: var(--brand) !important;
+    padding: 9px 14px !important;
+}
+div[data-testid="stExpander"] summary:hover {
+    background: rgba(232,65,24,0.12) !important;
+}
+div[data-testid="stExpander"] summary svg { color: var(--brand) !important; }
+
+/* ── Summary content ── */
+.summary-section-header {
+    font-size: 13px; font-weight: 700; color: var(--brand);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 6px 0 4px; border-bottom: 1px solid var(--brand-border);
+    margin: 10px 0 6px; font-family: 'Inter', sans-serif;
+    display: flex; align-items: center; gap: 6px;
+}
+.summary-kv {
+    display: flex; gap: 6px; padding: 3px 0;
+    font-family: 'Inter', sans-serif; font-size: 12.5px;
+    border-bottom: 1px solid #f0f2f5;
+}
+.summary-kv .key {
+    font-weight: 600; color: var(--text); min-width: 160px; flex-shrink: 0;
+}
+.summary-kv .val { color: var(--muted); }
+.summary-list-item {
+    font-size: 12.5px; color: var(--text); padding: 2px 0 2px 14px;
+    font-family: 'Inter', sans-serif; position: relative;
+}
+.summary-list-item::before {
+    content: '•'; color: var(--brand); position: absolute;
+    left: 4px; font-weight: 700;
+}
+
+/* ── Chat messages ── */
+.chat-wrap {
+    background: var(--bg); border-radius: 8px;
+    padding: 10px 12px; max-height: 320px;
+    overflow-y: auto; margin-bottom: 10px;
+}
+.chat-msg { display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start; }
+.chat-msg.user  { flex-direction: row-reverse; }
+.chat-avatar {
+    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; font-family: 'Inter', sans-serif;
+}
+.chat-avatar.ai   { background: var(--brand); color: white; }
+.chat-avatar.user { background: #E3E6EF; color: var(--text); }
+.chat-bubble {
+    max-width: 80%; padding: 7px 11px; border-radius: 10px;
+    font-size: 12.5px; line-height: 1.5; font-family: 'Inter', sans-serif;
+}
+.chat-bubble.ai   { background: white; border: 1px solid var(--border); color: var(--text); }
+.chat-bubble.user { background: var(--brand); color: white; }
+
+/* ── PDF container ── */
+.pdf-wrap {
+    border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.07);
+    background: white;
+}
+
+/* Suppress blank h1 */
+h1 { margin: 0 !important; padding: 0 !important; font-size: 0 !important; }
+/*top spacing */
+.block-container {
+    padding-top: 1rem !important;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
+# ── Navbar — identical to ReviewMember ────────────────────────────────────────
 st.markdown("""
     <div class="navbar">
         <div class="navbar-brand">HEDISAbstractor.AI</div>
@@ -462,1572 +371,380 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-DATE_COLUMNS = {
-    "memberinfo": ["DOB"],
-    "bcs": ["DateofService","DateofScreening","Mammogram DOS","Bilateral Mastectomy DOS","Unilateral Mastectomy R DOS","Unilateral Mastectomy L DOS"],
-    "cbp": ["BP DOS"],
-    "gsd": ["DateofService","DateofScreening"],
-    "bpd": ["DateofService","DateofScreening"],
-    "eed": ["DateofService","DateofScreening"],
-    "ccs": ["DateofService","DateofScreening"],
-    "col": ["DateofService","DateofScreening"],
-}
-VALUE_COLUMNS = {
-    "cbp": ["BP"],
-    "bpd": ["BP"],
-    "bcs": ["Result","Mammogram","Bilateral Mastectomy","Unilateral Mastectomy R","Unilateral Mastectomy L"],
-    "gsd": ["HbA1c"],
-    "eed": ["EyeExamResult"],
-    "ccs": ["ScreeningResult"],
-    "col": ["ScreeningResult"],
-}
-MEASURE_CONFIG = {
-    "memberinfo": {"date_cols":["DOB"],"value_cols":[]},
-    "bcs":        {"date_cols":["DateofService","DateofScreening","Mammogram DOS","Bilateral Mastectomy DOS","Unilateral Mastectomy R DOS","Unilateral Mastectomy L DOS"],
-                   "value_cols":["Result","Mammogram","Bilateral Mastectomy","Unilateral Mastectomy R","Unilateral Mastectomy L"]},
-    "cbp":        {"date_cols":["BP DOS"],"value_cols":["BP"]},
-    "gsd":        {"date_cols":["DateofService","DateofScreening"],"value_cols":["HbA1c"]},
-    "bpd":        {"date_cols":["DateofService","DateofScreening"],"value_cols":["BP"]},
-    "eed":        {"date_cols":["DateofService","DateofScreening"],"value_cols":["EyeExamResult"]},
-    "ccs":        {"date_cols":["DateofService","DateofScreening"],"value_cols":["ScreeningResult"]},
-    "col":        {"date_cols":["DateofService","DateofScreening"],"value_cols":["ScreeningResult"]},
-}
+st.title(' ')
 
-def get_confidence_score(measure, filename):
+
+# ── Data functions ─────────────────────────────────────────────────────────────
+
+def get_summary(file_name):
     try:
-        df = to_df(f"SELECT MEASURE, SCORE FROM {fq(confidence_table)} WHERE UPPER(MEASURE)=UPPER('{measure}') AND FILENAME='{filename}'")
-        return {} if df.empty else dict(zip(df['MEASURE'], df['SCORE']))
-    except Exception:
+        query = f"SELECT * FROM {fq(summary_table_name)} WHERE FILENAME = '{file_name}'"
+        df = to_df(query)
+        if df.empty:
+            return {}
+        filtered_df  = df[df['FILENAME'] == file_name]
+        content      = filtered_df['CONTENT'].to_list()
+        summary_data = json.dumps(content)
+        summary_data = (summary_data.strip('[').strip(']')
+                        .replace("```", '').replace('json', '')
+                        .strip("'").strip('"')
+                        .replace("\\n", '').replace("\\", '').replace('""','"'))
+        return json.loads(summary_data)
+    except Exception as e:
+        st.error(f"Error loading summary for {file_name}: {e}", icon="🚨")
         return {}
 
-#-------------PC----------------#
-def get_member_avg_accuracy(member_id):
+
+def get_summary_files_list():
     try:
-        df = session.sql(f"""
-            SELECT AVG(ACCURACY_SCORE) AS AVG_SCORE
-            FROM {fq(accuracy_table)}
-            WHERE MEMBER_ID = {member_id}
-        """).to_pandas()
-
-        df.columns = df.columns.str.upper()
-
-        if df.empty or pd.isna(df.loc[0, 'AVG_SCORE']):
-            return ""
-
-        return f"{float(df.loc[0, 'AVG_SCORE']):.2f}%"
-
-    except Exception:
-        return ""
-#-------------------------PC-----------------------#
-
-
-
-def  get_accuracy_score_v2(member_id,measure):
-
-    try:
-        df2 = to_df(f"SELECT ACCURACY_SCORE FROM {fq(accuracy_table)} WHERE UPPER(MEASURE)=UPPER('{measure}') AND member_id={member_id} and UPPER(REVIEW_COMPLETED) ='YES'")
-
-        acc_score = df2.loc[0, 'ACCURACY_SCORE']
-        acc_score=f"{acc_score:.2f}%"
-        return acc_score
-
+        df = to_df(f"SELECT DISTINCT FILENAME FROM {fq(summary_table_name)}")
+        files_list=df['FILENAME'].tolist() if not df.empty else []
+        return ['Select a file']+files_list
     except Exception as e:
-        st.write(e)
-        return '#'
+        st.error(f"Error fetching summary files list: {e}", icon="🚨")
+        return []
 
-def get_review_status_value(member_id,measure):
-    df2 = to_df(f"SELECT REVIEW_COMPLETED FROM {fq(accuracy_table)} WHERE UPPER(MEASURE)=UPPER('{measure}') AND member_id={member_id}")
-    if not df2.empty:
-        review_value = df2.loc[0, 'REVIEW_COMPLETED']
-        review_value=review_value.strip(' ').upper()
-        return review_value
-    else:
-        return 'NO'
-
-
-
-def get_accuracy_score(member_id,measure,measure_columns):
-    try:
-        df = to_df(f"SELECT REVIEW_COMPLETED FROM {fq(accuracy_table)} WHERE UPPER(MEASURE)=UPPER('{measure}') AND member_id={member_id}")
-
-        if df.empty:
-            return '-'
-        elif df['REVIEW_COMPLETED'].fillna('').str.strip().str.upper().eq('YES').all() :
-            return '100%'
-        else: # calulate accuracy for REVIEW_COMPLETED == 'NO'
-            df2 = to_df(f"SELECT TRACK FROM {fq(accuracy_table)} WHERE UPPER(MEASURE)=UPPER('{measure}') AND member_id={member_id}")
-            track = ast.literal_eval(df2.loc[0, 'TRACK'])
-            number_of_columns_reviewed=len(track)
-
-            # measure_columns_df=to_df(f"""SELECT count(COLUMN_NAME) as TOTAL_COLUMNS
-            #                                 FROM {CATALOG_NAME}.INFORMATION_SCHEMA.COLUMNS
-            #                                 WHERE TABLE_SCHEMA = '{SCHEMA_NAME}'
-            #                                   AND TABLE_NAME = '{measure}';"""
-            #                            )
-            # total_measure_columns=measure_columns_df.loc[0, 'TOTAL_COLUMNS']
-            total_measure_columns_filtered=[i for i in measure_columns if i.strip().upper() != 'REVIEW_COMPLETED']
-            total_measure_columns=len(total_measure_columns_filtered)
-            score=(number_of_columns_reviewed/total_measure_columns)*100
-            score=f"{score:.2f}%"
-
-            return score
-
-
-    except Exception as e:
-        st.write(e)
-        return '#'
-
-def get_member_id_via_pdf(file_name):
-    file_name = file_name.strip()
-    if not file_name.endswith('.pdf'): file_name += '.pdf'
-    try:
-        df = to_df(f"SELECT FILEID FROM {fq(file_info_table)} WHERE PDF_FILENAME='{file_name}' AND IS_ACTIVE=TRUE")
-        return '-9' if df.empty else str(df.iloc[0]['FILEID'])
-    except Exception as e:
-        st.error(f"Error getting member ID: {e}", icon="🚨"); return '-9'
-
-def extract_member_id(filename):
-    digits = ''.join(filter(str.isdigit, filename.replace(".pdf","")))
-    return digits[-4:] if len(digits) >= 4 else 0
-
-def getdata(member_id, table):
-    member_id = str(member_id).strip() or '-9'
-    try:
-        if table.upper() == 'MEMBERINFO':
-            a = member_id.split('.')[0].split('_')[-1] if '_' in member_id else extract_member_id(member_id)
-            query = f"SELECT * FROM {fq(table)} WHERE MEMBER_ID={a} AND IS_ACTIVE=TRUE"
-            df = to_df(query)
-            df['GENDER']=df['GENDER'].map(gender_map)
-
-        else:
-            query = f"SELECT * FROM {fq(table)} WHERE FILEID='{member_id}' AND IS_ACTIVE=TRUE"
-            df = to_df(query)
-        # df = to_df(query)
-        if not df.empty and 'MEMBER_ID' in df.columns: df['MEMBER_ID'] = df['MEMBER_ID'].astype(str)
-        df = df.replace('NF', 'Not Found')
-        return df
-    except Exception as e:
-        st.error(f"Error querying {table}: {e}", icon="🚨"); return pd.DataFrame()
-
-def getdata3(search_value, table, search_type='MEMBER_ID'):
-    if not search_value.strip():
-        st.warning(f"Please enter a value to search by {search_type}"); return pd.DataFrame()
-    try:
-        # NOTE: Databricks uses backticks for identifiers with spaces, not double-quotes
-        # in identifier position. But aliasing with AS "File Name" works because the parser
-        # accepts double-quoted identifiers in alias position. We keep the original syntax.
-        query = f"""
-            WITH cte AS (
-                SELECT f.FILEID AS MEMBER_ID, f.PDF_FILENAME AS `File Name`, m.NAME, m.GENDER, m.DOB,
-                       ROW_NUMBER() OVER (PARTITION BY f.FILEID, f.PDF_FILENAME ORDER BY f.FILEID) AS rn
-                FROM {fq(file_info_table)} f
-                RIGHT JOIN {fq(member_info_table)} m ON CAST(f.FILEID AS INT)=CAST(m.MEMBER_ID AS INT)
-                WHERE f.FILEID='{search_value}' AND m.IS_ACTIVE=TRUE AND f.IS_ACTIVE=TRUE
-            )
-            SELECT MEMBER_ID, `File Name`, NAME, GENDER, DOB FROM cte WHERE rn=1"""
-        df = session.sql(query).to_pandas()
-        df.columns = [c.upper() if c.lower() != 'file name' else 'File Name' for c in df.columns]
-        if not df.empty: df['MEMBER_ID'] = df['MEMBER_ID'].astype(str)
-        return df
-    except Exception as e:
-        st.error(f"Search error: {e}", icon="🚨"); return pd.DataFrame()
-
-def _sql_quote(v):
-    """Escape a single value for safe inline use in SQL (only for legacy paths
-    that need string interpolation). Prefer parameterized calls when possible."""
-    if v is None:
-        return "NULL"
-    s = str(v).replace("'", "''")
-    return f"'{s}'"
-
-def update_multiple_columns(table, member_id, updates):
-    updates = {k:v for k,v in updates.items() if k.upper() != 'UPDATED_DATE'}
-    if not updates:
-        return
-    # Use parameterized query — same logic as before but injection-safe and
-    # correctly handles values that contain single quotes.
-    set_clause = ", ".join([f"{k}=?" for k in updates.keys()]) + ", UPDATED_DATE=current_timestamp()"
-    params = list(updates.values())
-    params.append(str(member_id))
-    try:
-        _run(
-            f"UPDATE {fq(table)} SET {set_clause} WHERE FILEID=? AND IS_ACTIVE=TRUE",
-            params
-        )
-    except Exception as e:
-        st.error(f"Error updating {table}: {e}", icon="🚨")
-
-def update_remark(table, member_id, remark_col, remark_value):
-    try:
-        _run(
-            f"UPDATE {fq(table)} SET {remark_col}=?, UPDATED_DATE=current_timestamp() WHERE MEMBER_ID=? AND IS_ACTIVE=TRUE",
-            [remark_value, str(member_id)]
-        )
-    except Exception as e:
-        st.error(f"Error updating compliance remark: {e}", icon="🚨")
-
-def update_icd_code(member_id, old_row, new_row):
-    try:
-        _run(
-            f"""
-            UPDATE {fq('ICD_CODES')}
-            SET DIAGNOSIS_DATE=?,
-                ICD_CODE=?,
-                DISEASE=?
-            WHERE MEMBER_ID=?
-              AND ICD_CODE=?
-            """,
-            [new_row['DIAGNOSIS_DATE'], new_row['ICD_CODE'], new_row['DISEASE'],
-             str(member_id), old_row['ICD_CODE']]
-        )
-    except Exception as e:
-        st.error(f"Error updating ICD code: {e}", icon="🚨")
 
 def get_pdf_binary_data(file_name):
     try:
         query = f"""
             SELECT FILENAME, CONTENT
-            FROM {fq(pdf_binary_table)}
+            FROM {fq(pdf_binary_table_name)}
             WHERE FILENAME = '{file_name}'
         """
         df = session.sql(query).to_pandas()
         df.columns = df.columns.str.upper()
+
         if df.empty:
             st.warning(f"File not found: {file_name}")
             return None
-        return df.iloc[0]['CONTENT']
+
+        return df.iloc[0]['CONTENT']   # ✅ return raw bytes
+
     except Exception as e:
         st.warning(f"File not found or error reading PDF: {file_name} — {e}")
         return None
 
-def get_icd_codes(member_id):
-    try:
-        df = to_df(f"SELECT DIAGNOSIS_DATE, ICD_CODE, DISEASE, PAGE_NO FROM {fq('ICD_CODES')} WHERE MEMBER_ID='{member_id}'")
-        return df
-    except Exception as e:
-        st.error(f"Error fetching ICD codes: {e}", icon="🚨")
-        return pd.DataFrame()
 
-def generate_member_csv(member_id, filename):
-    mi_df = getdata(filename, "memberinfo")
-    icd_df = get_icd_codes(member_id)
-    if mi_df.empty:
-        return None
+# ── PDF display ────────────────────────────────────────────────────────────────
 
-    row = {}
-
-    mi_display = create_new_dataframe_meminfo(mi_df)
-    if not mi_display.empty:
-        for col in mi_display.columns:
-            row[col] = str(mi_display.at[0, col]) if pd.notna(mi_display.at[0, col]) else ""
-
-    if not icd_df.empty:
-        icd_list = []
-        for _, r in icd_df.iterrows():
-            icd_list.append({
-                "diagnosis_date": str(r.get('DIAGNOSIS_DATE', '')),
-                "icd_code": str(r.get('ICD_CODE', '')),
-                "disease": str(r.get('DISEASE', ''))
-            })
-        row["ICD_Codes"] = json.dumps(icd_list)
-    else:
-        row["ICD_Codes"] = "[]"
-
-    for measure in all_measures:
-        m_df = getdata(filename, measure.lower())
-        if not m_df.empty:
-            m_display = create_new_dataframe(m_df, measure)
-            if not m_display.empty:
-                cs = get_confidence_score(measure, filename).get(measure.upper(), '89.26%')
-                try:
-                    value = float(str(cs).strip().rstrip('%'))
-                    if value <= 1:
-                        value *= 100
-                    cs = f"{value:.2f}%"
-                except:
-                    cs = str(cs)
-                remark = check_compliance(member_id, measure, m_display.iloc[0].to_dict(), mi_df)
-                measure_data = {
-                    "confidence": cs,
-                    "year": str(MEASUREMENT_YEAR),
-                    "disposition": remark or "N/A",
-                    "fields": {}
-                }
-                for col in m_display.columns:
-                    measure_data["fields"][col] = str(m_display.at[0, col]) if pd.notna(m_display.at[0, col]) else ""
-                row[measure] = json.dumps(measure_data)
-            else:
-                row[measure] = json.dumps({"confidence": "", "year": str(MEASUREMENT_YEAR), "disposition": "No data", "fields": {}})
-        else:
-            row[measure] = json.dumps({"confidence": "", "year": str(MEASUREMENT_YEAR), "disposition": "No data", "fields": {}})
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=row.keys())
-    writer.writeheader()
-    writer.writerow(row)
-    return output.getvalue()
-
-def _coerce_to_pdf_bytes(blob):
-    """
-    PDF binary stored in a BINARY column can come back in several shapes
-    depending on the driver / Arrow path. Normalize to raw bytes that start
-    with the %PDF- header.
-
-    Handles:
-      - already raw bytes / bytearray / memoryview
-      - hex string with or without 0x / \\x prefix (e.g. '25504446...')
-      - base64 string (e.g. 'JVBERi0x...')
-    Returns: bytes starting with b'%PDF-' (or raises ValueError).
-    """
-    import binascii
-
-    # 1. Already bytes-like
-    if isinstance(blob, (bytes, bytearray, memoryview)):
-        b = bytes(blob)
-        if b.startswith(b"%PDF"):
-            return b
-        # Some drivers wrap bytes inside bytes (e.g. b"\\x2550..."); strip the literal escape.
-        try:
-            s = b.decode("ascii", errors="ignore").strip()
-            return _coerce_to_pdf_bytes(s)
-        except Exception:
-            pass
-        raise ValueError(f"Binary doesn't start with %PDF header. First 8 bytes: {b[:8]!r}")
-
-    # 2. String — figure out the encoding
-    if isinstance(blob, str):
-        s = blob.strip()
-
-        # Strip common prefixes
-        if s.lower().startswith("0x"):
-            s = s[2:]
-        if s.startswith("\\x"):
-            s = s.replace("\\x", "")
-
-        # Try hex first (PDFs are commonly stored hex-encoded)
-        compact = "".join(s.split())
-        if len(compact) >= 8 and all(c in "0123456789abcdefABCDEF" for c in compact):
-            try:
-                b = binascii.unhexlify(compact)
-                if b.startswith(b"%PDF"):
-                    return b
-            except Exception:
-                pass
-
-        # Try base64
-        try:
-            import base64 as _b64
-            b = _b64.b64decode(s, validate=False)
-            if b.startswith(b"%PDF"):
-                return b
-        except Exception:
-            pass
-
-        # Last resort: maybe it's already the raw byte-string in text form
-        b = s.encode("latin-1", errors="ignore")
-        if b.startswith(b"%PDF"):
-            return b
-
-        raise ValueError(f"Could not decode PDF string. First 60 chars: {s[:60]!r}")
-
-    raise ValueError(f"Unsupported PDF content type: {type(blob).__name__}")
-
-
-def display_pdf(pdf_data, pdf_file_name=None):
+def display_pdf(pdf_data):
     if not pdf_data:
         st.error("No PDF data available")
         return
 
-    if 'pdf_page_number' not in st.session_state:
-        st.session_state['pdf_page_number'] = int(st.session_state.get('page_number', 1))
-
-    new_page = st.number_input(
-        "Page",
-        min_value=1,
-        step=1,
-        key="pdf_page_number"
-    )
-
-    current_page = int(st.session_state['pdf_page_number'])
-
-    if new_page != st.session_state.get('page_number', 1):
-        st.session_state['page_number'] = current_page
-        st.rerun()
-
-    # Normalize whatever the SQL driver gave us into real PDF bytes (once),
-    # so both the renderer and the download button use the same clean bytes.
     try:
-        pdf_bytes = _coerce_to_pdf_bytes(pdf_data)
-    except ValueError as ve:
-        st.error(
-            f"PDF data from database isn't a valid PDF byte stream. "
-            f"This usually means the CONTENT column is stored as text/hex/base64 "
-            f"rather than BINARY. Details: {ve}"
+        # ✅ Use SAME page number from session
+        page_number = st.session_state.get('page_number', 1)
+
+        images = convert_from_bytes(
+            pdf_data,
+            first_page=page_number,
+            last_page=page_number
         )
-        return
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        try:
-            total_pages = doc.page_count
-            if current_page > total_pages:
-                st.warning(f"Page {current_page} is out of range (document has {total_pages} pages).")
-            else:
-                # zoom factor 2.0 ≈ 144 DPI — readable but not huge.
-                page = doc.load_page(current_page - 1)  # 0-indexed
-                pix  = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
-                img_bytes = pix.tobytes("png")
-                st.image(img_bytes, use_container_width=True)
-                st.caption(f"Page {current_page} of {total_pages}")
-        finally:
-            doc.close()
+        st.image(images[0], use_container_width=True)
+        st.caption(f"Page {page_number}")
+
     except Exception as e:
-        st.error(f"Error rendering PDF page {current_page}: {e}")
+        st.error(f"Error rendering PDF: {e}")
 
     st.download_button(
         "📥 Download PDF",
-        data=pdf_bytes,
-        file_name=pdf_file_name or "document.pdf",
-        mime="application/pdf",
+        data=pdf_data,
+        file_name="document.pdf",
+        mime="application/pdf"
     )
-def _go_to_page(val):
-    try:
-        p = max(1, int(val))
-    except (TypeError, ValueError):
-        p = 1
-    st.session_state['page_number'] = p
-    st.session_state['pdf_page_number'] = p
-    st.rerun()
 
-def has_valid_page(val):
-    try:
-        if val is None:
-            return False
+# ── Content renderers ──────────────────────────────────────────────────────────
 
-        val_str = str(val).strip()
-
-        if val_str == "" or val_str.lower() in ["none", "nan", "not found", "nf"]:
-            return False
-
-        page_no = int(float(val_str))
-        return page_no > 0
-
-    except Exception:
-        return False
-
-def create_new_dataframe(input_df, measure):
-    non_page = [c for c in input_df.columns if 'PAGE' not in c.upper()]
-    remove   = {"NAME","MEMBER_ID","FILEID","IS_ACTIVE","REMARK","UPDATED_DATE","INSERT_DATE","PROCESS","CONFIDENCE_SCORE"}
-    disp     = [c for c in non_page if c.upper() not in remove]
-    filt     = [c for c in disp if 'REMARK' not in c.upper() and 'UPDATED_DATE' not in c.upper()]
-    if not filt: st.warning(f"No displayable columns for {measure}."); return pd.DataFrame()
-    return input_df[filt]
-
-def create_new_dataframe_meminfo(df):
-    excl = {"MEMBER_ID","FILEID","IS_ACTIVE","REMARK","UPDATED_DATE","INSERT_DATE","PROCESS","CONFIDENCE_SCORE"}
-    cols = [c for c in df.columns if 'PAGE' not in c.upper() and c.upper() not in excl]
-    return df[cols]
-
-def page_df(input_df):
-    pc = [c for c in input_df.columns if 'PAGE' in c.upper()]
-    return input_df[pc].iloc[0].tolist() if pc and not input_df.empty else []
-
-def validate_and_parse_date(value, table, column, member_info_df=None):
-    tbl = table.lower()
-    if tbl in DATE_COLUMNS and column in DATE_COLUMNS[tbl]:
-        if not value or str(value).strip() == "": return None, "Missing date value"
-        try:
-            parsed_date = parse_date(value)
-            if parsed_date is None: return None, "Invalid date format. Use MM/DD/YYYY or YYYY-MM-DD."
-            if parsed_date.year != MEASUREMENT_YEAR and column not in [
-                    "Mammogram DOS","Bilateral Mastectomy DOS","Unilateral Mastectomy R DOS","Unilateral Mastectomy L DOS"]:
-                return None, f"Date must be within the measurement year ({MEASUREMENT_YEAR})."
-            if tbl == "bcs":
-                if column == "Mammogram DOS":
-                    if parsed_date.year > MEASUREMENT_YEAR: return None, "Invalid date."
-                    if not (MEASUREMENT_YEAR-2 <= parsed_date.year <= MEASUREMENT_YEAR):
-                        return None, f"Date must be within two years of {MEASUREMENT_YEAR}."
-                if column in ["Bilateral Mastectomy DOS","Unilateral Mastectomy R DOS","Unilateral Mastectomy L DOS"]:
-                    if parsed_date > CURRENT_DATE: return None, "Invalid date."
-            return parsed_date.strftime('%Y-%m-%d'), None
-        except (ValueError, TypeError) as e:
-            return None, f"Invalid date format: {str(e)}."
-    return value, None
-
-def validate_value(value, table, column, original_value=None):
-    tbl = table.lower()
-    if tbl in VALUE_COLUMNS and column in VALUE_COLUMNS[tbl]:
-        if not value or str(value).strip() == "":
-            if column == "Mammogram": return None, "For compliant, Mammogram must be Yes."
-            if column in ["Bilateral Mastectomy","Unilateral Mastectomy R","Unilateral Mastectomy L"] \
-                    and original_value and original_value.lower() == "yes":
-                return None, "This may change member status from Exclusion."
-            return None, "Missing value"
-        if column == "BP":
-            try: s,d = map(int,value.split('/')); return f"{s}/{d}", None
-            except: return None, "Invalid BP format. Use XXX/YY (e.g., 120/80)."
-        elif column in ["Result","HbA1c","EyeExamResult","ScreeningResult"]:
-            try: float(value); return value, None
-            except: return None, f"Invalid {column} format. Must be numeric."
-        elif column == "Mammogram":
-            if value.lower() not in ["yes","no"]: return None, "Invalid value. Use Yes/No."
-            return value, ("For compliant, Mammogram must be Yes." if value.lower()=="no" else None)
-        elif column in ["Bilateral Mastectomy","Unilateral Mastectomy R","Unilateral Mastectomy L"]:
-            if value.lower() not in ["yes","no"]: return None, "Invalid value. Use Yes/No."
-            if value.lower()=="no" and original_value and original_value.lower()=="yes":
-                return value, "This may change member status from Exclusion."
-            return value, None
-    return value, None
-
-def get_compliance_css(remark):
-    if "Non-compliant" in remark: return "non-compliant"
-    if "Exclusion"     in remark: return "exclusion"
-    if "Compliant"     in remark: return "compliant"
-    return "NA"
-
-def check_compliance(member_id, measure, updated_data, member_info_df, focus_field=None):
-    df = pd.DataFrame([updated_data]); df['MEMBER_ID'] = member_id
-    field_remarks = {}; overall_remark = None; final_remark = None
-    try:
-        for col in MEASURE_CONFIG.get(measure.lower(),{}).get('value_cols',[]):
-            if col in updated_data:
-                orig  = st.session_state['original_data'].get(measure,{}).get(col,'')
-                value, error = validate_value(updated_data[col], measure.lower(), col, orig)
-                if error and error not in ["For compliant, Mammogram must be Yes.","This may change member status from Exclusion."]:
-                    field_remarks[col] = f"Non-compliant: {col} - {error}"
-                    if focus_field == col: final_remark = field_remarks[col]; break
-                else:
-                    if col == "BP":
-                        try: s,d=value.split('/'); df['BP_SYSTOLIC']=s; df['BP_DIASTOLIC']=d; df['BP']=value
-                        except: df['BP']=value
-                    else: df[col]=value
-                    if measure.lower()=='cbp' and value: df['BP_PRESENT']=True
-        if final_remark: return final_remark
-        for col in MEASURE_CONFIG.get(measure.lower(),{}).get('date_cols',[]):
-            if col in updated_data:
-                mapped_col = 'BP_DOS' if col=='BP DOS' else col
-                parsed_date, error = validate_and_parse_date(updated_data.get(col), measure.lower(), col, member_info_df)
-                if error:
-                    field_remarks[col] = f"Non-compliant: {col} - {error}"
-                    if focus_field==col: final_remark=field_remarks[col]; break
-                else: df[mapped_col]=parsed_date
-        if final_remark: return final_remark
-        if measure.lower()=='cbp':
-            if 'BP_PRESENT' not in df or not df['BP_PRESENT'].iloc[0]:
-                field_remarks['BP']="Non-compliant: No recent BP"
-                if focus_field=='BP': final_remark=field_remarks['BP']
-            if 'BP_DOS' not in df or not df['BP_DOS'].iloc[0] or pd.isna(df['BP_DOS'].iloc[0]):
-                field_remarks['BP DOS']="Non-compliant: BP present but missing Date of Service"
-                if focus_field=='BP DOS': final_remark=field_remarks['BP DOS']
-        if final_remark: return final_remark
-        merged_df = merge_dob(df, member_info_df)
-        if 'DOB' in merged_df.columns and pd.notna(merged_df['DOB'].iloc[0]):
-            dob = parse_date(merged_df['DOB'].iloc[0])
-            if dob: merged_df['AGE'] = int(MEASUREMENT_YEAR)-dob.year
+def render_section(data: Union[dict, list, str], level=0):
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                st.markdown(f'<div class="summary-section-header">🔘 {key}</div>', unsafe_allow_html=True)
+                render_section(value, level + 1)
             else:
-                overall_remark = "Non-compliant: Invalid DOB for age calculation"
-                if focus_field: final_remark=overall_remark
-        else:
-            overall_remark = "Non-compliant: Missing DOB for age calculation"
-            if focus_field: final_remark=overall_remark
-        if final_remark: return final_remark
-        merged_df.columns=merged_df.columns.str.upper()
-        result_df  = apply_ncqa_compliance_checks(merged_df, measure)
-        result_df.columns=result_df.columns.str.upper()
-        remark_col = f'REMARK_{measure.upper()}'
-        overall_remark = (result_df[remark_col].iloc[0]
-                          if remark_col in result_df.columns and not result_df[remark_col].isna().iloc[0]
-                          else overall_remark or "Non-compliant: No compliance remark available")
-    except Exception as e:
-        return f"Non-compliant: Error in compliance check - {str(e)}"
-    if focus_field:
-        if any("Non-compliant" in r for r in field_remarks.values()):
-            return list(field_remarks.values())[0] if field_remarks else f"Non-compliant: Check with {focus_field}"
-        return f"Compliant:{measure}" if overall_remark and "Compliant" in overall_remark else f"Non-compliant: Check with {focus_field}"
-    return overall_remark
-
-def check_field_compliance(member_id, measure, updated_data, member_info_df, field):
-    remark = check_compliance(member_id, measure, updated_data, member_info_df, focus_field=field)
-    if 'field_compliance' not in st.session_state: st.session_state['field_compliance'] = {}
-    st.session_state['field_compliance'][f"{field}_{measure}"] = remark
-    return remark
-
-def on_field_change(member_id, measure, updated_data, member_info_df, field):
-    check_field_compliance(member_id, measure, updated_data, member_info_df, field)
-    if measure == "BCS":
-        orig = st.session_state['original_data'].get(measure,{}).get(field,'')
-        if field in updated_data:
-            v = updated_data[field]
-            if field in ["Mammogram","Bilateral Mastectomy","Unilateral Mastectomy R","Unilateral Mastectomy L"]:
-                _, tt = validate_value(v, measure.lower(), field, orig)
-                st.session_state['field_compliance'][f"tooltip_{field}_{measure}"] = tt or ""
-            elif field in ["Mammogram DOS","Bilateral Mastectomy DOS","Unilateral Mastectomy R DOS","Unilateral Mastectomy L DOS"]:
-                _, tt = validate_and_parse_date(v, measure.lower(), field, member_info_df)
-                st.session_state['field_compliance'][f"tooltip_{field}_{measure}"] = tt or ""
-    st.session_state['has_changes'] = True
-
-def add_compliance_status(member_id, measure, updated_data, member_info_df):
-    # st.dataframe(updated_data)
-    # st.dataframe(member_info_df)
-
-    remark = check_compliance(member_id, measure, updated_data, member_info_df)
-    # st.write(remark)
-    if not remark: return
-    css  = get_compliance_css(remark)
-    icon = {"compliant":"✓","non-compliant":"✕","exclusion":"⚠","NA":"✓"}.get(css,"✕")
-    st.markdown(f'<div class="compliance-bar {css}"><div class="dot"></div><span>{icon} Disposition: {remark}</span></div>',
-                unsafe_allow_html=True)
-
-def get_changed_fields(original_data, updated_data):
-    changed = []
-    for key in updated_data:
-        orig = str(original_data.get(key,'') or '')
-        upd  = str(updated_data.get(key,'') or '')
-        if orig != upd: changed.append(f"<b>{key}</b>: {orig} → {upd}")
-    return changed
-
-def get_changed_json(original_data, updated_data):
-    changed = {}
-    for key in updated_data:
-        orig = str(original_data.get(key,'') or '')
-        upd  = str(updated_data.get(key,'') or '')
-        if orig != upd:
-            changed[key]= {'OLD':orig, 'NEW':upd}
-    return changed
-
-def reset_session_state(search_value):
-    if search_value != st.session_state.get('last_search'):
-        st.session_state.pop('edit_index', None)
-        st.session_state.pop('file_id', None)
-        st.session_state['last_search']      = search_value
-        st.session_state['selected_row_key'] = None
-        st.session_state['icd_original'] = []
-        st.session_state['icd_edited'] = []
-        st.session_state['icd_show_confirmation'] = False
-        st.session_state['_icd_needs_refresh'] = True
-
-def set_accuracy_score(org_session_state, pending_session_state, session_state_key, measure, df,changed_fields=[]) :
-
-    review_completed_status= get_review_status_value(member_id,measure)
-
-    if review_completed_status == 'YES':
-        accuracy=get_accuracy_score_v2(member_id,measure)
-        return accuracy
-
-    if measure=='ICD_Codes':
-
-        no_of_correct_column = len(df) -  len(changed_fields)
-        accuracy= no_of_correct_column/len(df)
-        accuracy= '-' if no_of_correct_column==len(df) else accuracy  # for label at initial stage when no chnages are done
-        return accuracy
-
-    # for member info and remaining measures
-    chgs_acc = get_changed_fields(
-        st.session_state[org_session_state].get(session_state_key, {}),
-        st.session_state[pending_session_state].get(session_state_key, {})
-    )
-
-    #We don't need to consider REVIEW_COMPLETED widget for accuracy
-    chgs_acc=[i for i in chgs_acc if 'REVIEW_COMPLETED' not in i.strip().upper()]
-    total_cols=[i for i in df.columns if 'REVIEW_COMPLETED' not in i.strip().upper()]
-
-    no_of_correct_column = len(total_cols) -  len(chgs_acc)
-    accuracy= no_of_correct_column/len(total_cols)  #(1-((len(chgs_acc)/len(data1_mi.columns))))*100
-    accuracy= '-' if no_of_correct_column==len(total_cols) else accuracy  # for label at initial stage when no chnages are done
-
-    return accuracy
-
-def insert_data_into_accuracy_table(measure, filename, member_id, review_value,track,accuracy_score):
-
-    # accuracy_score=str(accuracy_score).strip('').strip('%')
-    accuracy_score= 0.0 if  accuracy_score =='-' else accuracy_score*100
-
-    # st.write(f"Log3 {accuracy_score}")
-
-    schema = StructType([
-        StructField("member_id", IntegerType()),
-        StructField("filename", StringType()),
-        StructField("measure", StringType()),
-        StructField("review_completed", StringType()),
-        StructField("track", StringType()),
-        StructField("accuracy_score", DecimalType(5, 2))
-
-    ])
-
-    #update the existing track
-    df = to_df(f"SELECT TRACK FROM {fq(accuracy_table)} WHERE UPPER(MEASURE)=UPPER('{measure}') AND member_id={member_id}")
-    if not df.empty:
-        # st.write(f"Log4 {accuracy_score}")
-        existing_track = ast.literal_eval(df.loc[0, 'TRACK'])
-        existing_track.update(track)
-        updated_track=existing_track.copy()
-        # Use parameterized updates so embedded quotes in track JSON don't break SQL.
-        _run(
-            f"UPDATE {fq(accuracy_table)} SET TRACK=? WHERE UPPER(MEASURE)=UPPER(?) AND member_id=?",
-            [str(updated_track), measure, int(member_id)]
-        )
-        _run(
-            f"UPDATE {fq(accuracy_table)} SET REVIEW_COMPLETED=? WHERE UPPER(MEASURE)=UPPER(?) AND member_id=?",
-            [review_value, measure, int(member_id)]
-        )
-        _run(
-            f"UPDATE {fq(accuracy_table)} SET ACCURACY_SCORE=? WHERE UPPER(MEASURE)=UPPER(?) AND member_id=?",
-            [float(accuracy_score), measure, int(member_id)]
-        )
-
+                st.markdown(f"""
+                <div class="summary-kv">
+                    <span class="key">{key}</span>
+                    <span class="val">{value}</span>
+                </div>""", unsafe_allow_html=True)
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                render_section(item, level + 1)
+            else:
+                st.markdown(f'<div class="summary-list-item">{item}</div>', unsafe_allow_html=True)
     else:
-        data=[(int(member_id), filename, measure, review_value,str(track),float(accuracy_score))]
-        # st.write(data)
-
-        final_df = session.create_dataframe(data,schema)
-        # st.write(f"Log5 {accuracy_score}")
-        final_df.write.mode("append").saveAsTable(fq(accuracy_table))
-
-for _key, _default in [
-    ('member_id',None),('edit_index',None),('page_number',1),
-    ('updated_data',{}),('compliance_status',{}),('reset_values',{}),
-    ('reset_measure',None),('field_compliance',{}),('original_data',{}),
-    ('show_confirmation',{}),('pending_updates',{}),('pending_measure',None),
-    ('has_changes',False),('show_modal',False),('current_measure',None),
-    ('selected_row_key',None),('selected_row_data',{}),
-    ('_force_pdf_page_refresh', False),
-    ('icd_original',[]),('icd_edited',[]),
-    ('icd_show_confirmation',False),('_icd_needs_refresh',True),
-]:
-    if _key not in st.session_state: st.session_state[_key] = _default
-
-st.title(' ')
+        st.markdown(f'<div class="summary-list-item">{data}</div>', unsafe_allow_html=True)
 
 
+def load_content(selected_file):
+    summary = get_summary(selected_file)
+    if not summary:
+        st.warning("No summary available for this file.")
+        return
+    for section, content in summary.items():
+        if section == 'Conclusion' or 'Page' in section:
+            continue
+        st.markdown(f'<div class="summary-section-header">🔹 {section}</div>', unsafe_allow_html=True)
+        render_section(content)
 
-col1, col2, col3 = st.columns([0.18, 0.30, 0.52])
-with col1:
-    search_option = st.radio('**Search by**', ('Member_id','File Name'), index=0, horizontal=True)
-    field_value   = (st.session_state.get('member_id','') if search_option=='Member_id'
-                     else st.session_state.get('edit_index','')) or ''
-with col2:
-    search_value = st.text_input(f'**{search_option}**', placeholder=f"Enter {search_option}…", value=str(field_value))
 
-with col3:
-    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-    if st.button("🔄", key="refresh_member"):
-            keys_to_clear = [k for k in st.session_state.keys()
-                             if k.startswith(("edit_", "tooltip_", "page_"))]
-            for k in keys_to_clear:
-                del st.session_state[k]
-            for sk in ['original_data', 'updated_data', 'show_confirmation',
-                        'pending_updates', 'field_compliance', 'reset_values',
-                        'icd_original', 'icd_edited', 'icd_show_confirmation',
-                        '_icd_needs_refresh']:
-                if sk in st.session_state:
-                    del st.session_state[sk]
-            st.session_state.update({
-                'reset_measure': None,
-                'has_changes': False,
-                'pending_measure': None,
-            })
-            st.cache_data.clear()
+def load_conclusion_content(file_name):
+    summary = get_summary(file_name)
+    if not summary:
+        st.warning("No summary available for this file.")
+        return
+    if 'Conclusion' in summary:
+        st.markdown('<div class="summary-section-header">🔹 Conclusion</div>', unsafe_allow_html=True)
+        render_section([summary['Conclusion']])
+    else:
+        st.info("Conclusion not present.")
+
+
+#def load_pages_summary_content(file_name):
+#    page_num     = st.session_state['page_number']
+#    json_page_key = f"Page{page_num}"
+#    summary = get_summary(file_name)
+#    if not summary:
+#        st.warning("No summary available for this file.")
+#        return
+#
+#    # Page number input — clean, compact
+#    pg_col, _ = st.columns([0.25, 0.75])
+#    with pg_col:
+#        new_page = st.number_input(
+#            "**Page**", min_value=1, value=page_num,
+#            step=1, key="page_input")
+#        if new_page != page_num:
+#            st.session_state['page_number'] = new_page
+#            st.rerun()
+#
+#    if json_page_key in summary:
+#        st.markdown(f'<div class="summary-section-header">🔹 {json_page_key}</div>', unsafe_allow_html=True)
+#        render_section([summary[json_page_key]])
+#    else:
+#        st.info(f"No summary available for page {page_num}.")
+def load_pages_summary_content(file_name):
+    page_num = st.session_state['page_number']
+    json_page_key = f"Page{page_num}"
+    summary = get_summary(file_name)
+
+    if not summary:
+        st.warning("No summary available for this file.")
+        return
+
+    # ── CONTENT FIRST ──
+    if json_page_key in summary:
+        st.markdown(
+            f'<div class="summary-section-header">🔹 Page {page_num}</div>',
+            unsafe_allow_html=True
+        )
+        render_section([summary[json_page_key]])
+    else:
+        st.info(f"No summary available for page {page_num}.")
+
+    # ── PAGE CONTROL AT BOTTOM ──
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([0.3, 0.4, 0.3])
+
+    with col2:
+        new_page = st.number_input(
+            "Page",
+            min_value=1,
+            value=page_num,
+            step=1,
+            label_visibility="collapsed"
+        )
+
+        if new_page != page_num:
+            st.session_state['page_number'] = new_page
             st.rerun()
 
-reset_session_state(search_value)
-
-if search_value:
-    if search_option == 'File Name':
-        member_id = get_member_id_via_pdf(search_value)
-        data      = getdata3(member_id, "memberinfo", search_type=search_option)
-    else:
-        member_id = search_value
-        data      = getdata3(member_id, "memberinfo")
-
-    if data.empty:
-        st.warning(f"No records found for **{search_value}**", icon="🚨")
-    else:
-        rows = []
-        for i, row in data.iterrows():
-
-             #Normalize the gender
-            row["GENDER"] = gender_map.get(row["GENDER"], row["GENDER"])
-
-            file_col = row.get('File Name', row.get('FILE NAME','N/A'))
-            row_key  = str(file_col or row.get('MEMBER_ID', i))
-            rows.append({
-                'key':          row_key,
-                'member_id':    row.get('MEMBER_ID','N/A'),
-                'file_display': str(file_col).replace('.pdf','') if file_col else 'N/A',
-                'file_col':     file_col,
-                'name':         str(row.get('NAME','N/A')).replace('.pdf',''),
-                'gender':       row.get('GENDER','N/A'),
-                'dob':          row.get('DOB','N/A'),
-                'accuracy':     get_member_avg_accuracy(row.get('MEMBER_ID','N/A')),
-            })
-
-        row_keys = [r['key'] for r in rows]
-        qp_key   = st.query_params.get('sel_row', None)
-        if qp_key and qp_key in row_keys:
-            st.session_state['selected_row_key'] = qp_key
-        elif st.session_state['selected_row_key'] not in row_keys:
-            st.session_state['selected_row_key'] = row_keys[0]
-
-        st.session_state['selected_row_data'] = next(
-            r for r in rows if r['key'] == st.session_state['selected_row_key'])
-
-        st.markdown('<div class="section-label">Search Results</div>', unsafe_allow_html=True)
-        tbody = ""
-        for r in rows:
-            is_sel  = (st.session_state['selected_row_key'] == r['key'])
-            sel_cls = "row-sel" if is_sel else ""
-            checked = "checked" if is_sel else ""
-            safe_key = r['key'].replace("'", "\\'")
-            tbody += f"""
-            <tr class="{sel_cls}" onclick="selectRow('{safe_key}')">
-                <td class="col-sel">
-                    <input class="row-radio" type="radio" name="member_row"
-                           value="{r['key']}" {checked} onclick="event.stopPropagation();selectRow('{safe_key}')">
-                </td>
-                <td>{r['member_id']}</td>
-                <td>{r['file_display']}</td>
-                <td>{r['name']}</td>
-                <td>{r['gender']}</td>
-                <td>{r['dob']}</td>
-                <td>{r['accuracy']}</td>
-            </tr>"""
-
-        st.markdown(f"""
-        <div class="result-table-wrap">
-          <table class="result-table" id="member-table">
-           <thead><tr>
-        <th class="col-sel">Select</th>
-  <th>Member ID</th><th>File Name</th><th>Name</th><th>Gender</th><th>DOB</th><th>Overall Accuracy Score</th>
-        </tr></thead>
-            <tbody>{tbody}</tbody>
-          </table>
-        </div>
-        <script>
-        function selectRow(key) {{
-            document.querySelectorAll('#member-table tbody tr').forEach(function(tr) {{
-                tr.classList.remove('row-sel');
-                var radio = tr.querySelector('input[type=radio]');
-                if (radio) radio.checked = false;
-            }});
-            document.querySelectorAll('#member-table tbody tr').forEach(function(tr) {{
-                var radio = tr.querySelector('input[type=radio]');
-                if (radio && radio.value === key) {{
-                    tr.classList.add('row-sel');
-                    radio.checked = true;
-                }}
-            }});
-            var url = new URL(window.parent.location.href);
-            url.searchParams.set('sel_row', key);
-            window.parent.history.replaceState(null, '', url.toString());
-            window.parent.postMessage({{type: 'streamlit:rerun'}}, '*');
-            setTimeout(function() {{
-                window.parent.location.href = url.toString();
-            }}, 80);
-        }}
-        </script>
-        """, unsafe_allow_html=True)
-
-        sel = st.session_state['selected_row_data']
-        #_, btn_col, dl_col = st.columns([0.56, 0.22, 0.22])
-        spacer, btn_col, dl_col = st.columns([0.40, 0.30, 0.30])
-        #left_spacer, btn_col, dl_col, right_spacer = st.columns([[0.35, 0.25, 0.25, 0.35]])
-        with btn_col:
-            if st.button("✎ Edit Selected", type="primary", use_container_width=True):
-            #if st.button("✎  Edit Selected", use_container_width=True):
-                fc = sel['file_col']
-                st.session_state['edit_index']        = fc
-                st.session_state['Member_id']         = sel['member_id']
-                st.session_state['pdf_file_name']     = fc
-                st.session_state['updated_data']      = {}
-                st.session_state['original_data']     = {}
-                st.session_state['compliance_status'] = {}
-                st.session_state['field_compliance']  = {}
-                st.session_state['show_confirmation'] = {}
-                st.session_state['pending_updates']   = {}
-                st.session_state['pending_measure']   = None
-                st.session_state['has_changes']       = False
-                st.session_state['page_number']       = 1
-                st.session_state['_force_pdf_page_refresh'] = True
-                st.session_state['icd_original'] = []
-                st.session_state['icd_edited'] = []
-                st.session_state['icd_show_confirmation'] = False
-                st.session_state['_icd_needs_refresh'] = True
-
-        #with dl_col:
-        #    report_data = generate_member_csv(sel['member_id'], sel['file_col'])
-        #    if report_data:
-        #        st.download_button(
-        #            "📥 Download Detailed Report",
-        #            data=report_data,
-        #            file_name=f"member_{sel['member_id']}_report.csv",
-        #            mime="text/csv",
-        #            use_container_width=True,
-        #            key="download_member_report"
-        #        )
-        with dl_col:
-            report_data = generate_member_csv(sel['member_id'], sel['file_col'])
-
-            if report_data:
-                import base64
-                b64 = base64.b64encode(report_data.encode()).decode()
-    #download="member_{sel['member_id']}_report.csv"
-                st.markdown(
-            f"""
-            <a href="data:file/csv;base64,{b64}"
-               download="{sel['file_col']}.csv"
-               style="
-                   display:flex;
-                   align-items:center;
-                   justify-content:center;
-                   height:40px;              /* 🔥 match Streamlit button */
-                   padding:8px 16px;           /* remove vertical padding */
-                   border-radius:7px;
-                   font-family:Inter, sans-serif;
-                   font-weight:600;
-                   font-size:12px;
-                   background:#E84118;
-                   color:white;
-                   text-decoration:none;
-                   border:1px solid #E84118;
-                   white-space:nowrap;
-               ">
-               📥 Download Detailed Report
-            </a>
-            """,
-            unsafe_allow_html=True
-)
-    if st.session_state.get('edit_index'):
-        left_column, right_column = st.columns([0.5, 0.5], gap="medium")
-        pdf_file_name = st.session_state.get('pdf_file_name')
-        filename      = st.session_state.get('edit_index','')
-        member_id     = st.session_state.get('Member_id','')
-
-        with left_column:
-            with st.container(height=775, border=True):
-                measures_available = {
-                    "ICD Codes":  get_icd_codes(member_id),
-                    "Member Info": getdata(filename,"memberinfo"),
-                    "BCS":        getdata(filename,"bcs"),
-                    "CBP":        getdata(filename,"cbp"),
-                    "GSD":        getdata(filename,"gsd"),
-                    "BPD":        getdata(filename,"bpd"),
-                    "EED":        getdata(filename,"eed"),
-                    "CCS":        getdata(filename,"ccs"),
-                    "COL":        getdata(filename,"col"),
-                }
-                for measure, df in measures_available.items():
-                    if not df.empty and measure != "ICD Codes":
-                        d1 = create_new_dataframe_meminfo(df) if measure=="Member Info" else create_new_dataframe(df,measure)
-                        if not d1.empty: st.session_state['original_data'][measure] = d1.iloc[0].to_dict()
-
-                available_tabs = ["Member Info"] + (["ICD Codes"] if not measures_available["ICD Codes"].empty else []) + [m for m in all_measures if not measures_available[m].empty]
-                # st.write(available_tabs)
-                tab_labels = [TAB_DISPLAY_NAMES.get(t, t) for t in available_tabs]
-                tabs = st.tabs(tab_labels)
-                member_info_df = measures_available["Member Info"]
-
-                if "ICD Codes" in available_tabs:
-                    with tabs[available_tabs.index("ICD Codes")]:
-                        icd_df = measures_available["ICD Codes"]
-                        if not icd_df.empty:
-                            icd_records = []
-                            for _, r in icd_df.iterrows():
-                                icd_records.append({
-                                    'DIAGNOSIS_DATE': str(r.get('DIAGNOSIS_DATE', '')),
-                                    'ICD_CODE': str(r.get('ICD_CODE', '')),
-                                    'DISEASE': str(r.get('DISEASE', '')),
-                                    'PAGE_NO': str(r.get('PAGE_NO', ''))
-                                })
-                            if not st.session_state.get('icd_original') or st.session_state.get('_icd_needs_refresh', True):
-                                st.session_state['icd_original'] = [row.copy() for row in icd_records]
-                                st.session_state['icd_edited'] = [row.copy() for row in icd_records]
-                                st.session_state['_icd_needs_refresh'] = False
-
-
-
-                            # st.write(cols_needed_for_accuracy)
-                            # ICD_Codes is measure name in accuracy table
-                            #Ak_commented
-                            # accuracy=get_accuracy_score(member_id,"ICD_Codes", measure_columns=cols_needed_for_accuracy)
-
-                            #========================================================================================================
-                            if st.session_state.get('icd_show_confirmation', False):
-
-                                track={}
-                                for i, row in enumerate(st.session_state['icd_edited']):
-                                    if i < len(st.session_state['icd_original']):
-                                        orig = st.session_state['icd_original'][i]
-                                        for field in ['DIAGNOSIS_DATE', 'ICD_CODE', 'DISEASE', 'PAGE_NO']:
-                                            if row[field] != orig[field]:
-                                                changed_fields.append(f"<b>{field}</b> (Row {i+1}): {orig[field]} → {row[field]}")
-
-                            cols_needed_for_accuracy=[i for i in icd_df.columns if i.strip()!='PAGE_NO'] # we need only Diagnosis_date, ICD_COde and COmment column, as we are only displaying these 3 cols only
-                            total_icd_fields= len(cols_needed_for_accuracy) * len(icd_df)
-                            if len(cols_needed_for_accuracy) < total_icd_fields:
-                                cols_needed_for_accuracy.extend([""] * (total_icd_fields - len(cols_needed_for_accuracy)))
-
-                            # no_of_correct_column = len(total_fields_columns) - len(changed_fields)
-
-                            accuracy=set_accuracy_score(org_session_state='icd_original', pending_session_state='icd_edited',
-                                                session_state_key= 'ICD_Codes', measure='ICD_Codes', df=cols_needed_for_accuracy, changed_fields=changed_fields)
-                            #===========================================================================================================
-
-                            fields_reviewed=''
-                            st.markdown(
-                                        f'<div class="meta-row">'
-                                        f'<div class="meta-chip">Records&nbsp;<span>{len(st.session_state["icd_edited"])}</span></div>'
-                                        f'<div class="meta-chip">Total Fields&nbsp;<span>{len(cols_needed_for_accuracy)}</span></div>'
-                                        f'<div class="meta-chip">Accuracy&nbsp;<span>{accuracy}</span></div>'
-                                        f'<div class="meta-chip">Year&nbsp;<span>{MEASUREMENT_YEAR}</span></div>'
-                                        f'</div>',
-                                        unsafe_allow_html=True
-                                        )
-
-                            icd_codes_review_completed = get_review_status_value(member_id, measure='ICD_Codes') == 'YES'
-                            if icd_codes_review_completed:
-                                #make the text inside the text boxes visible after disabling them
-                                st.markdown("""
-                                <style>
-                                input:disabled {
-                                color: #000000 !important;
-                                -webkit-text-fill-color: #000000 !important;
-                                opacity: 1 !important;
-                                }
-                                </style>
-                                """, unsafe_allow_html=True)
-                            else:
-                                pass
-
-                            for i, row in enumerate(st.session_state['icd_edited']):
-                                c1, c2, c3, c4 = st.columns([0.26, 0.26, 0.38, 0.10])
-                                with c1:
-                                    new_date = st.text_input(
-                                        "**Diagnosis Date**", disabled=icd_codes_review_completed, value=row['DIAGNOSIS_DATE'],
-                                        key=f"icd_date_{i}", placeholder="MM/DD/YYYY")
-                                    st.session_state['icd_edited'][i]['DIAGNOSIS_DATE'] = new_date
-                                with c2:
-                                    new_code = st.text_input(
-                                        "**ICD Code**", disabled=icd_codes_review_completed, value=row['ICD_CODE'], key=f"icd_code_{i}")
-                                    st.session_state['icd_edited'][i]['ICD_CODE'] = new_code
-                                with c3:
-                                    new_disease = st.text_input("**Comment**", disabled=icd_codes_review_completed, value=row['DISEASE'], key=f"icd_disease_{i}")
-                                    st.session_state['icd_edited'][i]['DISEASE'] = new_disease
-                                with c4:
-                                    page_val = row.get('PAGE_NO', '')
-                                    page_available = has_valid_page(page_val)
-                                    btn_help = f"Go to page {page_val}" if page_available else "Page not available"
-                                    if st.button(
-                                        "📃",
-                                        key=f"page_icd_{i}",
-                                        help=btn_help,
-                                        disabled=not page_available
-                                    ):
-                                        _go_to_page(page_val)
-
-                            st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-                            _,_,cbtn3 = st.columns([0.30,0.32,0.38])
-                            with cbtn3:
-                                review_completed = get_review_status_value(member_id, measure='ICD_Codes') == 'YES'
-                                tooltip= 'Review Already Completed' if review_completed else ''
-                                if st.button("Submit ICD Codes", type='primary', key="icd_submit",disabled=review_completed, help=tooltip):
-                                    has_edits = False
-                                    for i, row in enumerate(st.session_state['icd_edited']):
-                                        if i < len(st.session_state['icd_original']) and row != st.session_state['icd_original'][i]:
-                                            has_edits = True; break
-                                    if has_edits:
-                                        st.session_state['icd_show_confirmation'] = True
-                                    else:
-                                        st.info("No changes detected.", icon="ℹ️")
-
-                            if st.session_state.get('icd_show_confirmation', False):
-                                changes = []
-                                track={}
-                                for i, row in enumerate(st.session_state['icd_edited']):
-                                    if i < len(st.session_state['icd_original']):
-                                        orig = st.session_state['icd_original'][i]
-                                        for field in ['DIAGNOSIS_DATE', 'ICD_CODE', 'DISEASE', 'PAGE_NO']:
-                                            if row[field] != orig[field]:
-                                                changes.append(f"<b>{field}</b> (Row {i+1}): {orig[field]} → {row[field]}")
-                                                track[f"Row_{i+1}"]= {'OLD':orig[field], 'NEW':row[field]}
-
-                                st.markdown(f'<div class="confirm-box">⚠️ Confirm changes:{"".join(f"<div class=change-line>{c}</div>" for c in changes)}</div>', unsafe_allow_html=True)
-                                cy, cn = st.columns(2)
-                                with cy:
-                                    if st.button("✓ Confirm", type='primary', key="confirm_yes_icd"):
-                                        for i, row in enumerate(st.session_state['icd_edited']):
-                                            if i < len(st.session_state['icd_original']):
-                                                orig = st.session_state['icd_original'][i]
-                                                if row != orig:
-                                                    update_icd_code(member_id, orig, row)
-
-                                        review_value = 'Yes'
-                                        # st.write(track)
-
-                                        # track = get_changed_json(
-                                        #     st.session_state['icd_original'].get("ICD_Codes", {}),
-                                        #     st.session_state['icd_edited'].get("ICD_Codes", {})
-                                        # )
-
-                                        insert_data_into_accuracy_table('ICD_Codes', filename, member_id, review_value, track,accuracy)
-
-                                        #Ak_commented
-                                        # #get updated accuracy score after inserting the latest track
-                                        # accuracy_score_upd=get_accuracy_score(member_id,"ICD_Codes", measure_columns=cols_needed_for_accuracy)
-                                        # accuracy_score_upd = (
-                                        #                         float(accuracy_score_upd.strip().rstrip('%'))
-                                        #                         if isinstance(accuracy_score_upd, str)
-                                        #                         else int(accuracy_score_upd)
-                                        #                     )
-                                        # #keep ACCURACY_SCORE in a table updated
-                                        # session.sql(f"UPDATE {fq(accuracy_table)} SET ACCURACY_SCORE={accuracy_score_upd} WHERE UPPER(MEASURE)=UPPER('ICD_Codes') AND member_id={member_id}").collect()
-
-                                        st.session_state['icd_show_confirmation'] = False
-                                        st.session_state['_icd_needs_refresh'] = True
-
-                                        success_box = st.empty()
-                                        success_box.success("Saved successfully", icon="✅")
-                                        time.sleep(2)
-                                        success_box.empty()
-                                        st.rerun()
-                                with cn:
-                                    if st.button("✕ Cancel", key="confirm_no_icd"):
-                                        st.session_state['icd_edited'] = [r.copy() for r in st.session_state['icd_original']]
-                                        st.session_state['icd_show_confirmation'] = False
-                                        st.info("Cancelled.", icon="ℹ️")
-                        else:
-                            st.warning("No ICD codes available for this member.")
-
-                mi_idx = available_tabs.index("Member Info")
-                with tabs[mi_idx]:
-                    data_mi       = measures_available["Member Info"]
-                    data1_mi      = create_new_dataframe_meminfo(data_mi)
-                    #filter_col_mi = [c.replace('_',' ') for c in data1_mi.columns]
-                    filter_col_mi = ["WEIGHT LBS" if c.upper() == "WEIGHT_KG" else c.replace('_',' ')
-                    for c in data1_mi.columns
-                    ]
-                    pagedf_mi     = page_df(data_mi)
-
-                    if not data1_mi.empty:
-                        cs = get_confidence_score('generic', filename).get('GENERIC','89.2%')
-                        # Member_Info is measure name in accuracy table
-                        #AK_commented accuracy=get_accuracy_score(member_id,"Member_Info", measure_columns=data1_mi.columns)
-
-
-                        accuracy=set_accuracy_score(org_session_state='original_data', pending_session_state='pending_updates', session_state_key= 'Member Info', measure='Member_Info', df=data1_mi)
-
-
-                        try:   cs = f"{float(str(cs).rstrip('%')):.2f}%"
-                        except: cs = str(cs)
-                        # st.markdown(f'<div class="meta-row"><div class="meta-chip">Confidence&nbsp;<span>{cs}</span></div><div class="meta-chip">Year&nbsp;<span>{MEASUREMENT_YEAR}</span></div></div>', unsafe_allow_html=True)
-                        fields_reviewed=''
-                        st.markdown(
-                                    f'<div class="meta-row">'
-                                    f'<div class="meta-chip">Confidence&nbsp;<span>{cs}</span></div>'
-                                    f'<div class="meta-chip">Total Fields&nbsp;<span>{len(data1_mi.columns)}</span></div>'
-                                    f'<div class="meta-chip">Accuracy&nbsp;<span>{accuracy}</span></div>'
-                                    f'<div class="meta-chip">Year&nbsp;<span>{MEASUREMENT_YEAR}</span></div>'
-                                    f'</div>',
-                                    unsafe_allow_html=True
-                                )
-                        updated_membinfo = st.session_state['updated_data'].setdefault("Member Info",{})
-                        padded           = pagedf_mi + [None]*(len(data1_mi.columns)-len(pagedf_mi))
-
-                        for idx,(fc,col,val) in enumerate(zip(filter_col_mi, data1_mi.columns, padded)):
-                            c0,c1 = st.columns([0.88,0.12])
-                            with c0:
-                                fkey  = f"{col}_Member Info"
-                                cmsg  = st.session_state['field_compliance'].get(fkey,"")
-                                nc    = cmsg.startswith("Non-compliant")
-                                ht    = (f"Required: {cmsg.replace('Non-compliant: ','')}" if nc else ("MM/DD/YYYY" if col=="DOB" else ""))
-                                #cv    = str(data1_mi.at[0,col]) if pd.notna(data1_mi.at[0,col]) else ""
-                                cv = str(data1_mi.at[0, col]) if pd.notna(data1_mi.at[0, col]) else ""
-
-                                # Convert KG to LBS (value only)
-                                # if col.upper() == "WEIGHT_KG" and cv:
-                                #     try:
-                                #         cv = str(round(float(cv) * 2.20462, 2))
-                                #     except:
-                                #         pass
-
-                                member_info_review_completed = get_review_status_value(member_id, measure='Member_Info') == 'YES'
-                                if member_info_review_completed:
-                                    #make the text inside the text boxes visible after disabling them
-                                    st.markdown("""
-                                                    <style>
-                                                    input:disabled {
-                                                        color: #000000 !important;
-                                                        -webkit-text-fill-color: #000000 !important;
-                                                        opacity: 1 !important;
-                                                    }
-                                                    </style>
-                                                """, unsafe_allow_html=True)
-                                else:
-                                    pass
-
-                                updated_membinfo[col] = st.text_input(f"**{fc}**",disabled=member_info_review_completed, value=cv, key=f"edit_{col}_meminfo",
-                                    placeholder="MM/DD/YYYY" if col=="DOB" else "", help=ht, on_change=on_field_change,
-                                    args=(filename,"Member Info",updated_membinfo,member_info_df,col))
-
-
-                            with c1:
-                                page_val = val
-                                page_available = has_valid_page(page_val)
-                                btn_help = f"Go to page {page_val}" if page_available else "Page not available"
-                                if st.button(
-                                    "📃",
-                                    key=f"page_{col}_meminfo_{idx}",
-                                    help=btn_help,
-                                    disabled=not page_available
-                                ):
-                                    _go_to_page(page_val)
-
-                        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-
-                        # Confirmation box ABOVE Submit General button
-                        if st.session_state.get('show_confirmation', {}).get("Member Info", False):
-                            chgs = get_changed_fields(
-                                st.session_state['original_data'].get("Member Info", {}),
-                                st.session_state['pending_updates'].get("Member Info", {})
-                            )
-
-                            st.markdown(
-                                f'<div class="confirm-box">⚠️ Confirm changes:'
-                                f'{"".join(f"<div class=change-line>{c}</div>" for c in chgs)}'
-                                f'</div>',
-                                unsafe_allow_html=True
-                            )
-
-                            cy, cn = st.columns(2)
-                            with cy:
-                                if st.button("✓ Yes, Save", type='primary', key="confirm_yes_meminfo"):
-                                    update_multiple_columns("memberinfo", filename, st.session_state['pending_updates']['Member Info'])
-
-                                    review_value = 'Yes'  # after submitting changes we treat that measure is reviewed, if only one filed is changed.
-                                    track = get_changed_json(
-                                        st.session_state['original_data'].get("Member Info", {}),
-                                        st.session_state['pending_updates'].get("Member Info", {})
-                                    )
-                                    # st.write(f"Log2 {accuracy}")
-                                    insert_data_into_accuracy_table('Member_Info', filename, member_id, review_value, track,accuracy)
-
-                                    #get updated accuracy score after inserting the latest track
-
-                                    #AK_Commented
-
-                                    # accuracy_score_upd=   get_accuracy_score(member_id,"Member_Info", measure_columns=data1_mi.columns)
-                                    # accuracy_score_upd = (
-                                    #                         float(accuracy_score_upd.strip().rstrip('%'))
-                                    #                         if isinstance(accuracy_score_upd, str)
-                                    #                         else int(accuracy_score_upd)
-                                    #                     )
-                                    # #keep ACCURACY_SCORE in a table updated
-                                    # session.sql(f"UPDATE {fq(accuracy_table)} SET ACCURACY_SCORE={accuracy_score_upd} WHERE UPPER(MEASURE)=UPPER('Member_Info') AND member_id={member_id}").collect()
-
-
-                                    st.session_state['original_data']['Member Info'] = st.session_state['pending_updates']['Member Info'].copy()
-                                    for k in ['updated_data', 'field_compliance', 'pending_updates']:
-                                        st.session_state[k]["Member Info"] = {}
-
-                                    st.session_state['show_confirmation']['Member Info'] = False
-                                    st.session_state.update({'pending_measure': None, 'has_changes': False, 'reset_measure': None})
-
-                                    success_box = st.empty()
-                                    success_box.success("Saved successfully", icon="✅")
-                                    time.sleep(2)
-                                    success_box.empty()
-                                    st.rerun()
-
-                            with cn:
-                                if st.button("✕ No, Cancel", key="confirm_no_meminfo"):
-                                    # for col in updated_membinfo.keys():
-                                    #     st.session_state[f"edit_{col}_meminfo"] = st.session_state['original_data']['Member Info'].get(col, '')
-                                    for k in ['updated_data', 'pending_updates']:
-                                        st.session_state[k]["Member Info"] = {}
-                                    st.session_state['field_compliance'] = {}
-                                    st.session_state['show_confirmation']['Member Info'] = False
-                                    st.session_state.update({'pending_measure': None, 'has_changes': False})
-                                    st.rerun()
-
-
-
-                        _, cbtn = st.columns([0.62, 0.38])
-                        with cbtn:
-                            review_completed = get_review_status_value(member_id, measure='Member_Info') == 'YES'
-                            tooltip= 'Review Already Completed' if review_completed else ''
-                            if st.button("Submit General", type='primary', disabled=review_completed,help=tooltip):
-                                changed = get_changed_fields(st.session_state['original_data'].get("Member Info", {}), updated_membinfo)
-                                if changed:
-                                    st.session_state['show_confirmation']['Member Info'] = True
-                                    st.session_state['pending_updates']['Member Info'] = updated_membinfo.copy()
-                                    st.session_state['pending_measure'] = "Member Info"
-                                    st.rerun()
-                                else:
-                                    msg = st.empty()
-                                    msg.info("No changes detected.", icon="ℹ️")
-                                    time.sleep(2)
-                                    msg.empty()
-
-                measure_tabs = [t for t in available_tabs if t not in ("ICD Codes", "Member Info")]
-                for measure in measure_tabs:
-
-                    data_m       = measures_available[measure]
-                    data1_m      = create_new_dataframe(data_m, measure)
-                    filter_col_m = [c.replace('_',' ') for c in data1_m.columns]
-                    pagedf_m     = page_df(data_m)
-
-                    cs = get_confidence_score(measure, filename).get(measure.upper(),'89.26%')
-                    #Ak_commented
-                    # accuracy=get_accuracy_score(member_id,measure, measure_columns=data1_m.columns)
-                    accuracy=set_accuracy_score(org_session_state='original_data', pending_session_state='pending_updates',
-                                                session_state_key= measure, measure=measure, df=data1_m)
-                    try:
-                        value = float(str(cs).strip().rstrip('%'))
-                        if value <= 1:
-                            value *= 100
-                        cs= f"{value:.2f}%"
-                    except:
-                        cs = str(cs)
-
-                    with tabs[available_tabs.index(measure)]:
-                        c0,c1 = st.columns([0.88,0.12])
-                        with c0:
-                                # df2 = to_df(f"SELECT TRACK FROM {fq(accuracy_table)} WHERE UPPER(MEASURE)=UPPER('{measure}') AND member_id={member_id}")
-                                # st.dataframe(df2)
-                                # track = ast.literal_eval(df2.loc[0, 'TRACK'])
-                                # fields_reviewed=', '.join(list(track.keys()))
-                                fields_reviewed=''
-                                st.markdown(
-                                    f'<div class="meta-row">'
-                                    f'<div class="meta-chip">Confidence&nbsp;<span>{cs}</span></div>'
-                                    f'<div class="meta-chip">Total Fields&nbsp;<span>{len(data1_m.columns)-1}</span></div>' # We are doing -1 because, REVIEW_COMPLETED is also in the list, We have to exclude that.
-                                    f'<div class="meta-chip" title="Fields reviewed {fields_reviewed}">Accuracy&nbsp;<span>{accuracy}</span></div>'
-                                    f'<div class="meta-chip">Year&nbsp;<span>{MEASUREMENT_YEAR}</span></div>'
-                                    f'</div>',
-                                    unsafe_allow_html=True
-                                )
-
-                        with c1:
-                            # measure='GSD' if measure.strip('').upper() == 'HBD'  else measure
-                            if st.button("ℹ️", key=f"info_{measure}", help=f"View {measure} specifications"):
-                                if st.session_state['current_measure']==measure and st.session_state['show_modal']:
-                                    st.session_state['show_modal']=False; st.session_state['current_measure']=None
-                                else:
-                                    st.session_state['show_modal']=True; st.session_state['current_measure']=measure
-
-                        if st.session_state.get('current_measure')==measure and st.session_state['show_modal']:
-                            st.session_state['MY'] = MEASUREMENT_YEAR
-                            render_spec_modal(measure, load_measure_spec(st.session_state['MY'], measure))
-
-
-
-                        if not data1_m.empty:
-                            original_data = st.session_state['original_data'].get(measure,{})
-                            updated_data  = st.session_state['updated_data'].setdefault(measure, original_data.copy())
-                            if measure not in st.session_state['reset_values']:
-                                st.session_state['reset_values'][measure] = original_data.copy()
-
-                            add_compliance_status(member_id, measure, updated_data, member_info_df)
-
-                            for idx, (fc, col, val) in enumerate(zip_longest(filter_col_m, data1_m.columns, pagedf_m)):
-                                c0, c1 = st.columns([0.90, 0.10], gap="small")
-
-                                measure_review_completed = get_review_status_value(member_id, measure=measure) == 'YES'
-                                if measure_review_completed:
-                                    #make the text inside the text boxes visible after disabling them
-                                    st.markdown("""
-                                    <style>
-                                    input:disabled {
-                                    color: #000000 !important;
-                                    -webkit-text-fill-color: #000000 !important;
-                                    opacity: 1 !important;
-                                    }
-                                    </style>
-                                    """, unsafe_allow_html=True)
-                                else:
-                                    pass
-
-                                with c0:
-                                    if col in ["DateofService", "DateofScreening", "Mammogram DOS",
-                                               "Bilateral Mastectomy DOS", "Unilateral Mastectomy R DOS", "Unilateral Mastectomy L DOS"]:
-                                        placeholder = "MM/DD/YYYY"
-                                    elif col == "BP":
-                                        placeholder = "XXX/YY (e.g. 120/80)"
-                                    elif col in ["Mammogram", "Bilateral Mastectomy", "Unilateral Mastectomy R", "Unilateral Mastectomy L"]:
-                                        placeholder = "Yes / No"
-                                    else:
-                                        placeholder = ""
-
-                                    fkey = f"{col}_{measure}"
-                                    tkey = f"tooltip_{col}_{measure}"
-                                    nc = st.session_state['field_compliance'].get(fkey, "").startswith("Non-compliant")
-                                    label = ('Diabetes' if 'POSG' in str(fc or col).upper() and measure == 'GSD' else (fc or col))
-                                    skey = f"edit_{col}_{measure.lower()}"
-
-                                    if st.session_state['reset_measure'] == measure and col in st.session_state['reset_values'].get(measure, {}):
-                                        rv = st.session_state['reset_values'][measure][col]
-                                        cv = str(rv) if pd.notna(rv) else ""
-                                    elif skey in st.session_state:
-                                        cv = st.session_state[skey]
-                                    else:
-                                        cv = str(data1_m.at[0, col]) if pd.notna(data1_m.at[0, col]) else ""
-
-                                    ht = (
-                                        f"Required: {st.session_state['field_compliance'].get(fkey, '').replace('Non-compliant: ', '')}"
-                                        if nc else st.session_state['field_compliance'].get(tkey, "") or
-                                        ("MM/DD/YYYY" if str(col).lower().endswith("dos") else "")
-                                    )
-
-                                    if "review" in str(col).lower() and "completed" in str(col).lower():
-                                        st.markdown(
-                                            "<div style='margin-bottom:-10px;'><b>Review Completed</b></div>",
-                                            unsafe_allow_html=True
-                                        )
-
-                                        options = ["Yes", "No"]
-                                        current_val = str(cv).strip().capitalize()
-                                        if current_val not in options:
-                                            current_val = "No"
-
-                                        selected = st.radio(
-                                            "",
-                                            options=options,
-                                            index=options.index(current_val),
-                                            horizontal=True,
-                                            label_visibility="collapsed",
-                                            key=skey,
-                                            disabled=measure_review_completed
-                                        )
-
-                                        updated_data[col] = selected
-                                    else:
-                                        updated_data[col] = st.text_input(
-                                            f"**{label}**",
-                                            value=cv,
-                                            key=skey,
-                                            placeholder=placeholder,
-                                            on_change=on_field_change,
-                                            args=(member_id, measure, updated_data, member_info_df, col),
-                                            disabled=measure_review_completed
-                                        )
-
-                                with c1:
-                                    col_name = str(col).upper()
-
-                                    # Do not show page icon for Review Completed Yes/No field.
-                                    # For other fields, keep icon beside the textbox.
-                                    if col_name not in ("REVIEW_FLAG", "REVIEW_COMPLETED"):
-                                        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-
-                                        page_val = val
-                                        page_available = has_valid_page(page_val)
-                                        btn_help = f"Go to page {page_val}" if page_available else "Page not available"
-
-                                        if st.button(
-                                            "📃",
-                                            key=f"page_{col}_{measure.lower()}_{idx}",
-                                            help=btn_help,
-                                            disabled=not page_available
-                                        ):
-                                            _go_to_page(page_val)
-
-                            # Confirmation box ABOVE Submit button
-                            if st.session_state.get('show_confirmation', {}).get(measure, False):
-                                chgs = get_changed_fields(
-                                    st.session_state['original_data'].get(measure, {}),
-                                    st.session_state['pending_updates'].get(measure, {})
-                                )
-
-                                st.markdown(
-                                    f'<div class="confirm-box">⚠️ Confirm changes:'
-                                    f'{"".join(f"<div class=change-line>{c}</div>" for c in chgs)}'
-                                    f'</div>',
-                                    unsafe_allow_html=True
-                                )
-
-                                cy, cn = st.columns(2)
-                                with cy:
-                                    if st.button("✓ Yes, Save", type='primary', key=f"confirm_yes_{measure}"):
-                                        update_multiple_columns(measure.lower(), filename, st.session_state['pending_updates'][measure])
-                                        overall_remark = check_compliance(member_id, measure, st.session_state['pending_updates'][measure], member_info_df)
-                                        update_remark(measure.lower(), member_id, f"REMARK_{measure.upper()}", overall_remark)
-
-                                        review_value = st.session_state['pending_updates'][measure].get('REVIEW_COMPLETED', '')
-                                        track = get_changed_json(
-                                            st.session_state['original_data'].get(measure, {}),
-                                            st.session_state['pending_updates'].get(measure, {})
-                                        )
-                                        # st.write(f"BEFORE: {accuracy}")
-                                        review_value='Yes'
-
-                                        # If track contains only REVIEW_COMPLETED, accuracy is 100, means all fields are correct
-                                        track_keys = list(track.keys()) if isinstance(track, dict) else []
-                                        if track_keys == ['REVIEW_COMPLETED']:
-                                            accuracy = 1.00
-                                        else:
-                                            accuracy = accuracy  # keep the calculated accuracy as-is
-
-                                        insert_data_into_accuracy_table(measure, filename, member_id, review_value, track,accuracy)
-
-                                        #Ak_commented
-                                        # #get updated accuracy score after inserting the latest track
-                                        # accuracy_score_upd=get_accuracy_score(member_id,measure, measure_columns=data1_m.columns)
-                                        # accuracy_score_upd = (
-                                        #                         float(accuracy_score_upd.strip().rstrip('%'))
-                                        #                         if isinstance(accuracy_score_upd, str)
-                                        #                         else int(accuracy_score_upd)
-                                        #                     )
-                                        # #keep ACCURACY_SCORE in a table updated
-                                        # session.sql(f"UPDATE {fq(accuracy_table)} SET ACCURACY_SCORE={accuracy_score_upd} WHERE UPPER(MEASURE)=UPPER('{measure}') AND member_id={member_id}").collect()
-
-
-                                        st.session_state['original_data'][measure] = st.session_state['pending_updates'][measure].copy()
-                                        for col in updated_data:
-                                            sk = f"edit_{col}_{measure.lower()}"
-                                            if sk in st.session_state:
-                                                del st.session_state[sk]
-
-                                        # st.session_state['updated_data'][measure] = {}
-                                        st.session_state['show_confirmation'][measure] = False
-                                        st.session_state['pending_updates'][measure] = {}
-                                        st.session_state.update({'pending_measure': None, 'has_changes': False, 'reset_measure': None})
-
-                                        success_box = st.empty()
-                                        success_box.success("Saved successfully", icon="✅")
-                                        time.sleep(2)
-                                        success_box.empty()
-                                        st.rerun()
-
-                                with cn:
-                                    if st.button("✕ No, Cancel", key=f"confirm_no_{measure}"):
-                                        st.session_state['updated_data'][measure] = st.session_state['original_data'][measure].copy()
-                                        st.session_state['show_confirmation'][measure] = False
-                                        st.session_state['pending_updates'][measure] = {}
-                                        st.session_state.update({'reset_measure': measure, 'pending_measure': None, 'has_changes': False})
-                                        st.rerun()
-
-                            _, _, cbtn3 = st.columns([0.30, 0.32, 0.38])
-                            with cbtn3:
-                                review_completed = get_review_status_value(member_id, measure) == 'YES'
-                                tooltip= 'Review Already Completed' if review_completed else ''
-                                if st.button(f"Submit {measure}", type='primary', disabled=review_completed, help =tooltip):
-                                    changed = get_changed_fields(original_data, updated_data)
-                                    if changed:
-                                        st.session_state['show_confirmation'][measure] = True
-                                        st.session_state['pending_updates'][measure] = updated_data.copy()
-                                        st.session_state['pending_measure'] = measure
-                                        st.rerun()
-                                    else:
-                                        msg = st.empty()
-                                        msg.info("No changes detected.", icon="ℹ️")
-                                        time.sleep(2)
-                                        msg.empty()
-                        else:
-                            st.warning(f"No data available for {measure}.")
-
-        if st.session_state.get('edit_index'):
-            pdf_binary_data = get_pdf_binary_data(pdf_file_name) if pdf_file_name else None
-            with right_column:
-                with st.container(height=775, border=True):
-                    #if pdf_binary_data: display_pdf(pdf_binary_data)
-                    if pdf_binary_data: display_pdf(pdf_binary_data, pdf_file_name)
-                    else: st.warning("PDF file not found or inaccessible.", icon="⚠️")
+# ── AI Bot ─────────────────────────────────────────────────────────────────────
+
+session = Session.builder.getOrCreate()
+
+def chat_completion(prompt):
+    session=get_active_session()
+    result = session.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS response", params=[llm_model, prompt]).collect()
+    response =result[0]['RESPONSE']
+
+    # print("response TEXT -chat_completion " + response)
+    avg_confidence_score=0
+    
+    return response, avg_confidence_score
+
+def get_patients_data(file_name):
+    session=get_active_session()
+
+   
+    query=f"select raw_text from {DB_NAME}.{SCHEMA_NAME}.{summary_table_name} where filename = '{file_name}'"
+    result = session.sql(query).collect()
+    response =result[0]['RAW_TEXT']
+
+    if not  response:
+        return f"No raw text available for {file_name}"
+        
+    return response
+
+def get_bot_response(question, file_name):
+   
+    emr_text=get_patients_data(file_name)
+             
+    print(SCRIPT+": %r", f"\nBot response from CORTEX LLM...")
+
+    chat_prompt = bot_prompt.format(question,emr_text)
+
+    bot_response, confidence_score = chat_completion(chat_prompt)
+    print(SCRIPT+"- get_bot_response(): %r", f"RESPONSE: {bot_response}")
+
+    # extracted_details = safe_json_loads(extracted_text)
+    return bot_response, confidence_score
+
+def get_bot_response_general(question):
+
+    final_prompt=chat_prompt_general + question
+
+    bot_response, confidence_score = chat_completion(final_prompt)
+    # extracted_details = safe_json_loads(extracted_text)
+    return bot_response, confidence_score
+
+def show_bot(file_name):
+    with st.expander("💬 HEDIS AI Bot", expanded=False):
+        # Chat history display
+        msgs_html = ""
+        for msg in st.session_state.messages:
+            is_ai    = msg["role"] == "Hedis AI"
+            cls      = "ai" if is_ai else "user"
+            avatar   = "AI" if is_ai else "You"
+            msgs_html += f"""
+            <div class="chat-msg {cls}">
+                <div class="chat-avatar {cls}">{avatar}</div>
+                <div class="chat-bubble {cls}">{msg['text']}</div>
+            </div>"""
+
+        st.markdown(f'<div class="chat-wrap">{msgs_html}</div>', unsafe_allow_html=True)
+
+        # Input form
+        with st.form(key="chat_form", clear_on_submit=True):
+            inp_col, btn_col = st.columns([0.82, 0.18])
+            with inp_col:
+                user_question = st.text_input(
+                    "Question", placeholder="Ask about this document…",
+                    label_visibility="collapsed")
+            with btn_col:
+                submitted = st.form_submit_button("Send", type="primary", use_container_width=True)
+
+        if submitted and user_question and len(user_question.strip()) >= 5:
+            st.session_state.messages.append({"role": "user", "text": user_question})
+            with st.spinner("Thinking…"):
+                try:
+                    if file_name.strip().lower() == 'select a file':  #default one
+                        bot_response, _ =get_bot_response_general(user_question)
+                    else:
+                        bot_response, _ = get_bot_response(user_question, file_name)
+                    
+                    
+                    st.session_state.messages.append({"role": "Hedis AI", "text": bot_response})
+                except Exception as e:
+                    logging.info(SCRIPT + " %r", f"ERROR: {e}")
+                    st.session_state.messages.append({"role": "Hedis AI", "text": f"Try again later. — {e}"})
+            st.rerun()
+        elif submitted and len(str(user_question).strip()) < 5:
+            st.warning("Please type a question (at least 5 characters) and press Send.")
+
+        if not file_name or file_name == 'None':
+            st.info("Please select a file above to use the HEDIS AI bot.")
+
+
+# ── Main layout ────────────────────────────────────────────────────────────────
+
+def handle_exceptions(error_message, file_type=''):
+    if 'ConnectionResetError'              in str(error_message): st.error("Connection Error: An existing connection was forcibly closed.")
+    if 'AuthenticationError: No API key'  in str(error_message): st.error("AuthenticationError: No API key provided.")
+    if 'RateLimitError'                   in str(error_message): st.error("RateLimitError: You exceeded your current quota.")
+    if 'FileNotFoundError'                in str(error_message): st.error(f"{file_type} not available. Please generate the summarization.")
+
+# # st.write("LOG 1")
+# if st.button("🔄", key="refresh_review_member"):
+#     # st.write("LOG 2")
+#     st.session_state['files_name']= None
+#     st.rerun()
+#     # st.write("LOG 3")
+
+# else:
+#     pass
+
+    # ── File selector ──────────────────────────────────────────────────────────────
+# st.write(st.session_state['files_name'])
+files = ([st.session_state['files_name']]
+         if st.session_state['files_name']
+         else get_summary_files_list())
+
+    
+
+# sel_col, _ = st.columns([0.35, 0.65])
+# with sel_col:
+#     st.markdown('<div class="section-label">Select File</div>', unsafe_allow_html=True)
+#     pdf_filename = st.selectbox(
+#         'Select Summary file',
+#         files,
+#         label_visibility="collapsed",
+#         help="Choose a summary file to view.")
+
+# st.write(f"pdf_filename: {pdf_filename}")
+
+
+sel_col, refresh_col, _ = st.columns([0.30, 0.05, 0.65])
+with sel_col:
+    st.markdown('<div class="section-label">Select File</div>', unsafe_allow_html=True)
+    pdf_filename = st.selectbox(
+        'Select Summary file',
+        files,
+        label_visibility="collapsed",
+        help="Choose a summary file to view.",
+        key="pdf_file_select")
+    
+with refresh_col:
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    if st.button("🔄", key="refresh_files"):
+        st.session_state['files_name'] = None
+        st.rerun()
+
+
+# ── Bot ────────────────────────────────────────────────────────────────────────
+show_bot(pdf_filename)
+
+# ── Main two-column layout ─────────────────────────────────────────────────────
+left_col, right_col = st.columns([0.5, 0.5], gap="medium")
+
+with left_col:
+    with st.container(height=840, border=True):
+        if pdf_filename:
+            try:
+                tabs = st.tabs(['📄 Page Wise Summary', '📋 Segmented Summary', '✅ Conclusion'])
+                with tabs[0]:
+                    load_pages_summary_content(pdf_filename)
+                with tabs[1]:
+                    load_content(pdf_filename)
+                with tabs[2]:
+                    load_conclusion_content(pdf_filename)
+            except Exception as e:
+                handle_exceptions(str(e), file_type='Summarization')
+        else:
+            st.info("Please select a file to view the summary.", icon="ℹ️")
+
+with right_col:
+    with st.container(height=840, border=True):
+        if pdf_filename:
+            pdf_binary_data = get_pdf_binary_data(pdf_filename)
+            if pdf_binary_data:
+                display_pdf(pdf_binary_data)
+            else:
+                st.warning(f"PDF not found: {pdf_filename}", icon="⚠️")
+        else:
+            st.warning("No file selected.", icon="⚠️")
