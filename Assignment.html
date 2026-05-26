@@ -3,8 +3,10 @@ from typing import Union
 import json
 import base64
 import logging
-from snowflake.snowpark.context import get_active_session
-from snowflake.snowpark.session import Session
+# ── Databricks imports (replaces snowflake.snowpark) ───────────────────────────
+from pyspark.sql import SparkSession
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 # from dbk_hedis_openai import get_bot_response
 from pdf2image import convert_from_bytes
 import time
@@ -12,17 +14,34 @@ import time
 SCRIPT = 'SUMMARIZATION.py'
 logging.basicConfig(level=logging.INFO)
 
-# ── Snowflake session ──────────────────────────────────────────────────────────
-session = Session.builder.getOrCreate()
+# ── Databricks Spark session (replaces Snowflake session) ─────────────────────
+# In a Databricks notebook / Databricks Apps, `spark` is already available.
+# getActiveSession() works inside Databricks runtime; fall back to builder otherwise.
+try:
+    spark = SparkSession.getActiveSession() or SparkSession.builder.getOrCreate()
+except Exception:
+    spark = SparkSession.builder.getOrCreate()
+
+# Databricks SDK client — used to call Foundation Model serving endpoints
+# (this replaces SNOWFLAKE.CORTEX.COMPLETE)
+w = WorkspaceClient()
 
 
-DB_NAME     = "HEDISABSTRACTOR"
-SCHEMA_NAME = "AGENTICAIDEMO"
+# ── Catalog / schema config (Databricks uses catalog.schema.table) ────────────
+CATALOG_NAME = "HEDISABSTRACTOR"      # was DB_NAME in Snowflake
+SCHEMA_NAME  = "AGENTICAIDEMO"
 
 
-SCRIPT="bot_respose"
-llm_model="claude-sonnet-4-5"
-bot_prompt="""
+SCRIPT = "bot_respose"
+# Databricks Foundation Model endpoint name.
+# Use any served model — examples:
+#   "databricks-claude-sonnet-4"
+#   "databricks-claude-3-7-sonnet"
+#   "databricks-meta-llama-3-3-70b-instruct"
+# Change this to whichever endpoint your workspace has provisioned.
+llm_model = "databricks-claude-sonnet-4"
+
+bot_prompt = """
             Answer the Question using the EMR mentioned below.
 
             KEEP THE ANSWER SUMMARIZED, CONSISE AND SHORT.
@@ -34,7 +53,7 @@ bot_prompt="""
                 {}
 """
 
-chat_prompt_general="""
+chat_prompt_general = """
                     You are an expert assistant specialized in healthcare, insurance, and related domains.
 
                     Task:
@@ -44,23 +63,25 @@ chat_prompt_general="""
                        - Health insurance (policies, claims, coverage, premiums, deductibles, reimbursement)
                        - Medical billing, coding, or healthcare operations
                        - Healthcare regulations or compliance
-                    
+
                     Rules:
                     - If the question IS related to healthcare or insurance:
                       - Answer the question clearly and accurately.
                     - If the question is NOT related to healthcare or insurance:
                       - Respond ONLY with:
                         "The question is not related to healthcare."
-                    
+
                     User Question:
-                    
+
 """
 
 def fq(table_name):
-    return f"{DB_NAME}.{SCHEMA_NAME}.{table_name.upper()}"
+    # Databricks uses catalog.schema.table (three-level namespace) — same shape
+    return f"{CATALOG_NAME}.{SCHEMA_NAME}.{table_name.upper()}"
 
 def to_df(query):
-    df = session.sql(query).to_pandas()
+    # Spark SQL -> pandas (replaces snowpark session.sql().to_pandas())
+    df = spark.sql(query).toPandas()
     df.columns = df.columns.str.upper()
     return df
 
@@ -81,7 +102,7 @@ with st.sidebar:
         st.session_state.logged_in = False
         st.session_state.username = None
         st.switch_page("streamlit_app.py")
-        
+
 # ── Session state init ─────────────────────────────────────────────────────────
 for _key, _default in [
     ('page_number', 1),
@@ -398,8 +419,8 @@ def get_summary(file_name):
 def get_summary_files_list():
     try:
         df = to_df(f"SELECT DISTINCT FILENAME FROM {fq(summary_table_name)}")
-        files_list=df['FILENAME'].tolist() if not df.empty else []
-        return ['Select a file']+files_list
+        files_list = df['FILENAME'].tolist() if not df.empty else []
+        return ['Select a file'] + files_list
     except Exception as e:
         st.error(f"Error fetching summary files list: {e}", icon="🚨")
         return []
@@ -412,7 +433,7 @@ def get_pdf_binary_data(file_name):
             FROM {fq(pdf_binary_table_name)}
             WHERE FILENAME = '{file_name}'
         """
-        df = session.sql(query).to_pandas()
+        df = spark.sql(query).toPandas()
         df.columns = df.columns.str.upper()
 
         if df.empty:
@@ -504,29 +525,6 @@ def load_conclusion_content(file_name):
         st.info("Conclusion not present.")
 
 
-#def load_pages_summary_content(file_name):
-#    page_num     = st.session_state['page_number']
-#    json_page_key = f"Page{page_num}"
-#    summary = get_summary(file_name)
-#    if not summary:
-#        st.warning("No summary available for this file.")
-#        return
-#
-#    # Page number input — clean, compact
-#    pg_col, _ = st.columns([0.25, 0.75])
-#    with pg_col:
-#        new_page = st.number_input(
-#            "**Page**", min_value=1, value=page_num,
-#            step=1, key="page_input")
-#        if new_page != page_num:
-#            st.session_state['page_number'] = new_page
-#            st.rerun()
-#
-#    if json_page_key in summary:
-#        st.markdown(f'<div class="summary-section-header">🔹 {json_page_key}</div>', unsafe_allow_html=True)
-#        render_section([summary[json_page_key]])
-#    else:
-#        st.info(f"No summary available for page {page_num}.")
 def load_pages_summary_content(file_name):
     page_num = st.session_state['page_number']
     json_page_key = f"Page{page_num}"
@@ -564,50 +562,84 @@ def load_pages_summary_content(file_name):
             st.session_state['page_number'] = new_page
             st.rerun()
 
-# ── AI Bot ─────────────────────────────────────────────────────────────────────
-
-session = Session.builder.getOrCreate()
+# ══════════════════════════════════════════════════════════════════════════════
+# ── AI Bot ─ DATABRICKS VERSION ───────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# The ONLY logical change vs the Snowflake original is here:
+# `SNOWFLAKE.CORTEX.COMPLETE(model, prompt)` is replaced with a call to a
+# Databricks Foundation Model Serving endpoint via the Databricks SDK
+# (`w.serving_endpoints.query(...)`). The chatbot UI, prompt templates, and
+# control flow are unchanged.
+# ══════════════════════════════════════════════════════════════════════════════
 
 def chat_completion(prompt):
-    session=get_active_session()
-    result = session.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS response", params=[llm_model, prompt]).collect()
-    response =result[0]['RESPONSE']
+    """
+    Databricks equivalent of SNOWFLAKE.CORTEX.COMPLETE.
 
-    # print("response TEXT -chat_completion " + response)
-    avg_confidence_score=0
-    
+    Calls a Databricks Model Serving endpoint (Foundation Model API) using
+    the Databricks SDK. The endpoint name is set in `llm_model` above.
+    """
+    try:
+        response_obj = w.serving_endpoints.query(
+            name=llm_model,
+            messages=[
+                ChatMessage(role=ChatMessageRole.USER, content=prompt)
+            ],
+            max_tokens=1024,
+            temperature=0.0,
+        )
+        # Extract the assistant text from the response choices
+        response = response_obj.choices[0].message.content
+    except Exception as e:
+        logging.error(SCRIPT + f" chat_completion error: {e}")
+        response = f"Error calling Databricks LLM endpoint: {e}"
+
+    avg_confidence_score = 0
     return response, avg_confidence_score
 
+
+# ── Alternative implementation using SQL ai_query() (kept for reference) ──────
+# If you prefer to call the LLM through Databricks SQL (so it runs on a
+# SQL warehouse), replace the body of chat_completion(prompt) with:
+#
+#   safe_prompt = prompt.replace("'", "''")
+#   query = f"SELECT ai_query('{llm_model}', '{safe_prompt}') AS response"
+#   result = spark.sql(query).collect()
+#   response = result[0]['response']
+#   return response, 0
+#
+# `ai_query` is Databricks' SQL-side equivalent of SNOWFLAKE.CORTEX.COMPLETE.
+
+
 def get_patients_data(file_name):
-    session=get_active_session()
-
-   
-    query=f"select raw_text from {DB_NAME}.{SCHEMA_NAME}.{summary_table_name} where filename = '{file_name}'"
-    result = session.sql(query).collect()
-    response =result[0]['RAW_TEXT']
-
-    if not  response:
+    query = f"select raw_text from {CATALOG_NAME}.{SCHEMA_NAME}.{summary_table_name} where filename = '{file_name}'"
+    result = spark.sql(query).collect()
+    if not result:
         return f"No raw text available for {file_name}"
-        
+    response = result[0]['raw_text'] if 'raw_text' in result[0].asDict() else result[0]['RAW_TEXT']
+
+    if not response:
+        return f"No raw text available for {file_name}"
+
     return response
 
 def get_bot_response(question, file_name):
-   
-    emr_text=get_patients_data(file_name)
-             
-    print(SCRIPT+": %r", f"\nBot response from CORTEX LLM...")
 
-    chat_prompt = bot_prompt.format(question,emr_text)
+    emr_text = get_patients_data(file_name)
+
+    print(SCRIPT + ": %r", f"\nBot response from Databricks LLM...")
+
+    chat_prompt = bot_prompt.format(question, emr_text)
 
     bot_response, confidence_score = chat_completion(chat_prompt)
-    print(SCRIPT+"- get_bot_response(): %r", f"RESPONSE: {bot_response}")
+    print(SCRIPT + "- get_bot_response(): %r", f"RESPONSE: {bot_response}")
 
     # extracted_details = safe_json_loads(extracted_text)
     return bot_response, confidence_score
 
 def get_bot_response_general(question):
 
-    final_prompt=chat_prompt_general + question
+    final_prompt = chat_prompt_general + question
 
     bot_response, confidence_score = chat_completion(final_prompt)
     # extracted_details = safe_json_loads(extracted_text)
@@ -643,12 +675,11 @@ def show_bot(file_name):
             st.session_state.messages.append({"role": "user", "text": user_question})
             with st.spinner("Thinking…"):
                 try:
-                    if file_name.strip().lower() == 'select a file':  #default one
-                        bot_response, _ =get_bot_response_general(user_question)
+                    if file_name.strip().lower() == 'select a file':  # default one
+                        bot_response, _ = get_bot_response_general(user_question)
                     else:
                         bot_response, _ = get_bot_response(user_question, file_name)
-                    
-                    
+
                     st.session_state.messages.append({"role": "Hedis AI", "text": bot_response})
                 except Exception as e:
                     logging.info(SCRIPT + " %r", f"ERROR: {e}")
@@ -669,34 +700,11 @@ def handle_exceptions(error_message, file_type=''):
     if 'RateLimitError'                   in str(error_message): st.error("RateLimitError: You exceeded your current quota.")
     if 'FileNotFoundError'                in str(error_message): st.error(f"{file_type} not available. Please generate the summarization.")
 
-# # st.write("LOG 1")
-# if st.button("🔄", key="refresh_review_member"):
-#     # st.write("LOG 2")
-#     st.session_state['files_name']= None
-#     st.rerun()
-#     # st.write("LOG 3")
 
-# else:
-#     pass
-
-    # ── File selector ──────────────────────────────────────────────────────────────
-# st.write(st.session_state['files_name'])
+# ── File selector ──────────────────────────────────────────────────────────────
 files = ([st.session_state['files_name']]
          if st.session_state['files_name']
          else get_summary_files_list())
-
-    
-
-# sel_col, _ = st.columns([0.35, 0.65])
-# with sel_col:
-#     st.markdown('<div class="section-label">Select File</div>', unsafe_allow_html=True)
-#     pdf_filename = st.selectbox(
-#         'Select Summary file',
-#         files,
-#         label_visibility="collapsed",
-#         help="Choose a summary file to view.")
-
-# st.write(f"pdf_filename: {pdf_filename}")
 
 
 sel_col, refresh_col, _ = st.columns([0.30, 0.05, 0.65])
@@ -708,7 +716,7 @@ with sel_col:
         label_visibility="collapsed",
         help="Choose a summary file to view.",
         key="pdf_file_select")
-    
+
 with refresh_col:
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
     if st.button("🔄", key="refresh_files"):
