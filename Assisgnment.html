@@ -1,213 +1,161 @@
-{
-  "measure": {
-    "id": "CBP",
-    "name": "Controlling High Blood Pressure",
-    "version": "MY2025",
-    "measure_type": "proportion",
-    "description": "Percentage of members 18-85 years of age who had a diagnosis of hypertension and whose blood pressure was adequately controlled (systolic < 140 mmHg AND diastolic < 90 mmHg) during the measurement period.",
-
-    "metadata": {
-      "steward": "NCQA",
-      "reference": "HEDIS MY2025 Technical Specifications",
-      "last_updated": "2025-01-01",
-      "telehealth_eligible": true,
-      "notes": "BP must be the most recent reading in the measurement period. Readings taken in inpatient or ED settings are excluded per NCQA guidance."
-    },
-
-    "measurement_period": {
-      "start": "2025-01-01",
-      "end": "2025-12-31"
-    },
-
-    "value_set_references": [
-      { "name": "Hypertension", "code_systems": ["ICD10CM"],         "note": "Essential and secondary hypertension diagnosis codes" },
-      { "name": "ESRD",         "code_systems": ["ICD10CM"],         "note": "End-stage renal disease — permanent exclusion" },
-      { "name": "Pregnancy",    "code_systems": ["ICD10CM"],         "note": "Active pregnancy during measurement period" },
-      { "name": "Hospice",      "code_systems": ["ICD10CM","HCPCS"], "note": "Hospice or palliative care enrollment" }
-    ],
-
-    "populations": {
-
-      "initial_population": {
-        "description": "Members aged 18-85 with a hypertension diagnosis in the last 24 months and 12 months continuous enrollment.",
-        "logic": {
-          "operator": "AND",
-          "criteria": [
-
-            {
-              "id": "age_eligible",
-              "description": "Age 18-85 as of measurement period end.",
-              "type": "demographic",
-              "expression": {
-                "field": "age",
-                "operator": "BETWEEN",
-                "values": [18, 85]
-              },
-              "as_of": "measurement_period.end"
-            },
-
-            {
-              "id": "hypertension_diagnosis",
-              "description": "Active hypertension diagnosis within 24 months before measurement period end.",
-              "type": "clinical_event",
-              "expression": {
-                "operator": "EXISTS",
-                "event": { "domain": "diagnoses", "value_set": "Hypertension" },
-                "count": { "operator": ">=", "value": 1 }
-              },
-              "temporal": {
-                "type": "LOOKBACK",
-                "unit": "MONTH",
-                "value": 24,
-                "anchor": "measurement_period.end"
-              }
-            },
-
-            {
-              "id": "continuous_enrollment",
-              "description": "Continuously enrolled for 12 months prior to measurement period end, up to 45 allowable gap days.",
-              "type": "enrollment",
-              "expression": {
-                "operator": "CONTINUOUS_ENROLLMENT",
-                "parameters": {
-                  "lookback_months": 12,
-                  "allowable_gap_days": 45,
-                  "anchor": "measurement_period.end"
-                }
-              }
-            }
-
-          ]
-        }
-      },
-
-      "denominator": {
-        "description": "Same as initial population.",
-        "logic": {
-          "reference_population": "initial_population"
-        }
-      },
-
-      "denominator_exclusions": {
-        "description": "Members excluded due to ESRD, active pregnancy, or hospice enrollment.",
-        "logic": {
-          "operator": "OR",
-          "criteria": [
-
-            {
-              "id": "esrd_diagnosis",
-              "description": "End-stage renal disease — permanent exclusion regardless of measurement period.",
-              "type": "clinical_event",
-              "expression": {
-                "operator": "EXISTS",
-                "event": { "domain": "diagnoses", "value_set": "ESRD" }
-              },
-              "temporal": { "type": "ANYTIME" }
-            },
-
-            {
-              "id": "pregnancy_diagnosis",
-              "description": "Active pregnancy diagnosis during the measurement period.",
-              "type": "clinical_event",
-              "expression": {
-                "operator": "EXISTS",
-                "event": { "domain": "diagnoses", "value_set": "Pregnancy" }
-              },
-              "temporal": { "type": "MEASUREMENT_PERIOD" }
-            },
-
-            {
-              "id": "hospice_diagnosis",
-              "description": "Hospice or palliative care diagnosis during the measurement period.",
-              "type": "clinical_event",
-              "expression": {
-                "operator": "EXISTS",
-                "event": { "domain": "diagnoses", "value_set": "Hospice" }
-              },
-              "temporal": { "type": "MEASUREMENT_PERIOD" }
-            },
-
-            {
-              "id": "hospice_procedure",
-              "description": "Hospice or palliative care procedure during the measurement period.",
-              "type": "clinical_event",
-              "expression": {
-                "operator": "EXISTS",
-                "event": { "domain": "procedures", "value_set": "Hospice" }
-              },
-              "temporal": { "type": "MEASUREMENT_PERIOD" }
-            }
-
-          ]
-        }
-      },
-
-      "numerator": {
-        "description": "Most recent BP reading in the measurement period shows systolic < 140 mmHg AND diastolic < 90 mmHg. Readings from inpatient or ED settings are excluded per NCQA guidance.",
-        "logic": {
-          "operator": "AND",
-          "criteria": [
-
-            {
-              "id": "systolic_controlled",
-              "description": "Most recent systolic BP reading in the measurement period is less than 140 mmHg.",
-              "type": "vital_comparison",
-              "domain": "vitals",
-              "expression": {
-                "field": "systolic",
-                "operator": "<",
-                "threshold": 140,
-                "reading": "most_recent"
-              },
-              "temporal": { "type": "MEASUREMENT_PERIOD" }
-            },
-
-            {
-              "id": "diastolic_controlled",
-              "description": "Most recent diastolic BP reading in the measurement period is less than 90 mmHg.",
-              "type": "vital_comparison",
-              "domain": "vitals",
-              "expression": {
-                "field": "diastolic",
-                "operator": "<",
-                "threshold": 90,
-                "reading": "most_recent"
-              },
-              "temporal": { "type": "MEASUREMENT_PERIOD" }
-            }
-
-          ]
-        }
-      }
-
-    },
-
-    "evaluation": {
-      "execution_order": [
-        "initial_population",
-        "denominator",
-        "denominator_exclusions",
-        "numerator"
-      ],
-      "final_status_logic": [
-        {
-          "status": "NOT_ELIGIBLE",
-          "when": { "population": "initial_population", "equals": false }
-        },
-        {
-          "status": "EXCLUDED",
-          "when": { "population": "denominator_exclusions", "equals": true }
-        },
-        {
-          "status": "COMPLIANT",
-          "when": { "population": "numerator", "equals": true }
-        },
-        {
-          "status": "NON_COMPLIANT",
-          "when": { "population": "denominator", "equals": true }
-        }
-      ]
-    }
-
-  }
-}
+Measure ID,Measure Name,Value Set Name,Value Set OID,Codes
+BCS-E,Breast Cancer Screening,Absence of Left Breast,2.16.840.1.113883.3.464.1004.1329,Z90.12
+BCS-E,Breast Cancer Screening,Absence of Right Breast,2.16.840.1.113883.3.464.1004.1330,Z90.11
+BCS-E,Breast Cancer Screening,Advanced Illness,2.16.840.1.113883.3.464.1004.1465,A81.00
+BCS-E,Breast Cancer Screening,American Indian or Alaska Native Detailed Race,2.16.840.1.113883.3.464.1004.2365,1004-1
+BCS-E,Breast Cancer Screening,Asian Detailed Race,2.16.840.1.113883.3.464.1004.2366,2029-7
+BCS-E,Breast Cancer Screening,Bilateral Mastectomy,2.16.840.1.113883.3.464.1004.1042,0HTV0ZZ
+BCS-E,Breast Cancer Screening,Black or African American Detailed Race,2.16.840.1.113883.3.464.1004.2367,2056-0
+BCS-E,Breast Cancer Screening,Clinical Unilateral Mastectomy,2.16.840.1.113883.3.464.1004.1948,5835009
+BCS-E,Breast Cancer Screening,Frailty Device,2.16.840.1.113883.3.464.1004.1530,E0100
+BCS-E,Breast Cancer Screening,Frailty Diagnosis,2.16.840.1.113883.3.464.1004.1531,L89.000
+BCS-E,Breast Cancer Screening,Frailty Encounter,2.16.840.1.113883.3.464.1004.1532,99504
+BCS-E,Breast Cancer Screening,Frailty Symptom,2.16.840.1.113883.3.464.1004.1533,R26.2
+BCS-E,Breast Cancer Screening,Gender Dysphoria,2.16.840.1.113883.3.464.1004.2454,F64.1
+BCS-E,Breast Cancer Screening,Hispanic or Latino Detailed Ethnicity,2.16.840.1.113883.3.464.1004.2368,2137-8
+BCS-E,Breast Cancer Screening,History of Bilateral Mastectomy,2.16.840.1.113883.3.464.1004.1331,Z90.13
+BCS-E,Breast Cancer Screening,Hospice Encounter,2.16.840.1.113883.3.464.1004.1761,G9473
+BCS-E,Breast Cancer Screening,Hospice Intervention,2.16.840.1.113883.3.464.1004.1762,99377
+BCS-E,Breast Cancer Screening,Mammography,2.16.840.1.113883.3.464.1004.1168,77061
+BCS-E,Breast Cancer Screening,Native Hawaiian or Other Pacific Islander Detailed Race,2.16.840.1.113883.3.464.1004.2369,2078-4
+BCS-E,Breast Cancer Screening,Palliative Care Assessment,2.16.840.1.113883.3.464.1004.2225,718890006
+BCS-E,Breast Cancer Screening,Palliative Care Encounter,2.16.840.1.113883.3.464.1004.1450,G9054
+BCS-E,Breast Cancer Screening,Palliative Care Intervention,2.16.840.1.113883.3.464.1004.2224,103735009
+BCS-E,Breast Cancer Screening,Unilateral Mastectomy,2.16.840.1.113883.3.464.1004.1256,19180
+BCS-E,Breast Cancer Screening,Unilateral Mastectomy Left,2.16.840.1.113883.3.464.1004.1334,0HTU0ZZ
+BCS-E,Breast Cancer Screening,Unilateral Mastectomy Right,2.16.840.1.113883.3.464.1004.1335,0HTT0ZZ
+BCS-E,Breast Cancer Screening,White Detailed Race,2.16.840.1.113883.3.464.1004.2370,2108-9
+CBP,Controlling High Blood Pressure,Acute Inpatient,2.16.840.1.113883.3.464.1004.1810,99221
+CBP,Controlling High Blood Pressure,Acute Inpatient POS,2.16.840.1.113883.3.464.1004.1027,21
+CBP,Controlling High Blood Pressure,Advanced Illness,2.16.840.1.113883.3.464.1004.1465,A81.00
+CBP,Controlling High Blood Pressure,American Indian or Alaska Native Detailed Race,2.16.840.1.113883.3.464.1004.2365,1004-1
+CBP,Controlling High Blood Pressure,Asian Detailed Race,2.16.840.1.113883.3.464.1004.2366,2029-7
+CBP,Controlling High Blood Pressure,Black or African American Detailed Race,2.16.840.1.113883.3.464.1004.2367,2056-0
+CBP,Controlling High Blood Pressure,CPT CAT II Modifier,2.16.840.1.113883.3.464.1004.1464,1P
+CBP,Controlling High Blood Pressure,Dialysis Procedure,2.16.840.1.113883.3.464.1004.1952,90935
+CBP,Controlling High Blood Pressure,Diastolic Blood Pressure,2.16.840.1.113883.3.464.1004.1965,3078F
+CBP,Controlling High Blood Pressure,Diastolic Less Than 90,2.16.840.1.113883.3.464.1004.2459,3078F
+CBP,Controlling High Blood Pressure,ED,2.16.840.1.113883.3.464.1004.1086,99281
+CBP,Controlling High Blood Pressure,ESRD Diagnosis,2.16.840.1.113883.3.464.1004.1747,N18.5
+CBP,Controlling High Blood Pressure,Essential Hypertension,2.16.840.1.113883.3.464.1004.1122,I10
+CBP,Controlling High Blood Pressure,Frailty Device,2.16.840.1.113883.3.464.1004.1530,E0100
+CBP,Controlling High Blood Pressure,Frailty Diagnosis,2.16.840.1.113883.3.464.1004.1531,L89.000
+CBP,Controlling High Blood Pressure,Frailty Encounter,2.16.840.1.113883.3.464.1004.1532,99504
+CBP,Controlling High Blood Pressure,Frailty Symptom,2.16.840.1.113883.3.464.1004.1533,R26.2
+CBP,Controlling High Blood Pressure,Hispanic or Latino Detailed Ethnicity,2.16.840.1.113883.3.464.1004.2368,2137-8
+CBP,Controlling High Blood Pressure,History of Nephrectomy or Kidney Transplant,2.16.840.1.113883.3.464.1004.1908,Z90.5
+CBP,Controlling High Blood Pressure,Hospice Encounter,2.16.840.1.113883.3.464.1004.1761,G9473
+CBP,Controlling High Blood Pressure,Hospice Intervention,2.16.840.1.113883.3.464.1004.1762,99377
+CBP,Controlling High Blood Pressure,Inpatient Stay,2.16.840.1.113883.3.464.1004.1395,0100
+CBP,Controlling High Blood Pressure,Kidney Transplant,2.16.840.1.113883.3.464.1004.1141,50360
+CBP,Controlling High Blood Pressure,Native Hawaiian or Other Pacific Islander Detailed Race,2.16.840.1.113883.3.464.1004.2369,2078-4
+CBP,Controlling High Blood Pressure,Nonacute Inpatient Stay,2.16.840.1.113883.3.464.1004.1398,0022
+CBP,Controlling High Blood Pressure,Outpatient and Telehealth Without UBREV,2.16.840.1.113883.3.464.1004.2470,98000
+CBP,Controlling High Blood Pressure,Palliative Care Assessment,2.16.840.1.113883.3.464.1004.2225,718890006
+CBP,Controlling High Blood Pressure,Palliative Care Encounter,2.16.840.1.113883.3.464.1004.1450,G9054
+CBP,Controlling High Blood Pressure,Palliative Care Intervention,2.16.840.1.113883.3.464.1004.2224,103735009
+CBP,Controlling High Blood Pressure,Partial Nephrectomy,2.16.840.1.113883.3.464.1004.2391,50240
+CBP,Controlling High Blood Pressure,Pregnancy,2.16.840.1.113883.3.464.1004.1219,O00.00
+CBP,Controlling High Blood Pressure,Systolic and Diastolic Result,2.16.840.1.113883.3.464.1004.2458,3074F
+CBP,Controlling High Blood Pressure,Systolic Blood Pressure,2.16.840.1.113883.3.464.1004.1964,3074F
+CBP,Controlling High Blood Pressure,Systolic Less Than 140,2.16.840.1.113883.3.464.1004.1243,3074F
+CBP,Controlling High Blood Pressure,Total Nephrectomy,2.16.840.1.113883.3.464.1004.2390,50220
+CBP,Controlling High Blood Pressure,White Detailed Race,2.16.840.1.113883.3.464.1004.2370,2108-9
+CCS-E,Cervical Cancer Screening,Absence of Cervix Diagnosis,2.16.840.1.113883.3.464.1004.1522,Q51.5
+CCS-E,Cervical Cancer Screening,American Indian or Alaska Native Detailed Race,2.16.840.1.113883.3.464.1004.2365,1004-1
+CCS-E,Cervical Cancer Screening,Asian Detailed Race,2.16.840.1.113883.3.464.1004.2366,2029-7
+CCS-E,Cervical Cancer Screening,Black or African American Detailed Race,2.16.840.1.113883.3.464.1004.2367,2056-0
+CCS-E,Cervical Cancer Screening,Cervical Cytology Lab Test,2.16.840.1.113883.3.464.1004.1525,88141
+CCS-E,Cervical Cancer Screening,Cervical Cytology Result or Finding,2.16.840.1.113883.3.464.1004.1524,168406009
+CCS-E,Cervical Cancer Screening,High Risk HPV Lab Test,2.16.840.1.113883.3.464.1004.1527,87624
+CCS-E,Cervical Cancer Screening,Hispanic or Latino Detailed Ethnicity,2.16.840.1.113883.3.464.1004.2368,2137-8
+CCS-E,Cervical Cancer Screening,Hospice Encounter,2.16.840.1.113883.3.464.1004.1761,G9473
+CCS-E,Cervical Cancer Screening,Hospice Intervention,2.16.840.1.113883.3.464.1004.1762,99377
+CCS-E,Cervical Cancer Screening,Hysterectomy With No Residual Cervix,2.16.840.1.113883.3.464.1004.1523,57530
+CCS-E,Cervical Cancer Screening,Native Hawaiian or Other Pacific Islander Detailed Race,2.16.840.1.113883.3.464.1004.2369,2078-4
+CCS-E,Cervical Cancer Screening,Palliative Care Assessment,2.16.840.1.113883.3.464.1004.2225,718890006
+CCS-E,Cervical Cancer Screening,Palliative Care Encounter,2.16.840.1.113883.3.464.1004.1450,G9054
+CCS-E,Cervical Cancer Screening,Palliative Care Intervention,2.16.840.1.113883.3.464.1004.2224,103735009
+CCS-E,Cervical Cancer Screening,White Detailed Race,2.16.840.1.113883.3.464.1004.2370,2108-9
+COA,Care for Older Adults,Acute Inpatient,2.16.840.1.113883.3.464.1004.1810,99221
+COA,Care for Older Adults,Acute Inpatient POS,2.16.840.1.113883.3.464.1004.1027,21
+COA,Care for Older Adults,CPT CAT II Modifier,2.16.840.1.113883.3.464.1004.1464,1P
+COA,Care for Older Adults,Functional Status Assessment,2.16.840.1.113883.3.464.1004.1104,99483
+COA,Care for Older Adults,Hospice Encounter,2.16.840.1.113883.3.464.1004.1761,G9473
+COA,Care for Older Adults,Hospice Intervention,2.16.840.1.113883.3.464.1004.1762,99377
+COA,Care for Older Adults,Medication List,2.16.840.1.113883.3.464.1004.1173,1159F
+COA,Care for Older Adults,Medication Review,2.16.840.1.113883.3.464.1004.1175,90863
+COA,Care for Older Adults,Transitional Care Management Services,2.16.840.1.113883.3.464.1004.1462,99495
+COL-E,Colorectal Cancer Screening,Advanced Illness,2.16.840.1.113883.3.464.1004.1465,A81.00
+COL-E,Colorectal Cancer Screening,American Indian or Alaska Native Detailed Race,2.16.840.1.113883.3.464.1004.2365,1004-1
+COL-E,Colorectal Cancer Screening,Asian Detailed Race,2.16.840.1.113883.3.464.1004.2366,2029-7
+COL-E,Colorectal Cancer Screening,Black or African American Detailed Race,2.16.840.1.113883.3.464.1004.2367,2056-0
+COL-E,Colorectal Cancer Screening,Colonoscopy,2.16.840.1.113883.3.464.1004.1064,44388
+COL-E,Colorectal Cancer Screening,Colorectal Cancer,2.16.840.1.113883.3.464.1004.1065,C18.0
+COL-E,Colorectal Cancer Screening,CT Colonography,2.16.840.1.113883.3.464.1004.1421,74261
+COL-E,Colorectal Cancer Screening,Flexible Sigmoidoscopy,2.16.840.1.113883.3.464.1004.1102,45330
+COL-E,Colorectal Cancer Screening,FOBT Lab Test,2.16.840.1.113883.3.464.1004.1959,82270
+COL-E,Colorectal Cancer Screening,FOBT Test Result or Finding,2.16.840.1.113883.3.464.1004.1960,59614000
+COL-E,Colorectal Cancer Screening,Frailty Device,2.16.840.1.113883.3.464.1004.1530,E0100
+COL-E,Colorectal Cancer Screening,Frailty Diagnosis,2.16.840.1.113883.3.464.1004.1531,L89.000
+COL-E,Colorectal Cancer Screening,Frailty Encounter,2.16.840.1.113883.3.464.1004.1532,99504
+COL-E,Colorectal Cancer Screening,Frailty Symptom,2.16.840.1.113883.3.464.1004.1533,R26.2
+COL-E,Colorectal Cancer Screening,Hispanic or Latino Detailed Ethnicity,2.16.840.1.113883.3.464.1004.2368,2137-8
+COL-E,Colorectal Cancer Screening,Hospice Encounter,2.16.840.1.113883.3.464.1004.1761,G9473
+COL-E,Colorectal Cancer Screening,Hospice Intervention,2.16.840.1.113883.3.464.1004.1762,99377
+COL-E,Colorectal Cancer Screening,Native Hawaiian or Other Pacific Islander Detailed Race,2.16.840.1.113883.3.464.1004.2369,2078-4
+COL-E,Colorectal Cancer Screening,Palliative Care Assessment,2.16.840.1.113883.3.464.1004.2225,718890006
+COL-E,Colorectal Cancer Screening,Palliative Care Encounter,2.16.840.1.113883.3.464.1004.1450,G9054
+COL-E,Colorectal Cancer Screening,Palliative Care Intervention,2.16.840.1.113883.3.464.1004.2224,103735009
+COL-E,Colorectal Cancer Screening,sDNA FIT Lab Test,2.16.840.1.113883.3.464.1004.1749,81528
+COL-E,Colorectal Cancer Screening,Total Colectomy,2.16.840.1.113883.3.464.1004.1250,44150
+COL-E,Colorectal Cancer Screening,White Detailed Race,2.16.840.1.113883.3.464.1004.2370,2108-9
+EED,Eye Exam for Patients With Diabetes,Advanced Illness,2.16.840.1.113883.3.464.1004.1465,A81.00
+EED,Eye Exam for Patients With Diabetes,American Indian or Alaska Native Detailed Race,2.16.840.1.113883.3.464.1004.2365,1004-1
+EED,Eye Exam for Patients With Diabetes,Asian Detailed Race,2.16.840.1.113883.3.464.1004.2366,2029-7
+EED,Eye Exam for Patients With Diabetes,Autonomous Eye Exam Result or Finding,2.16.840.1.113883.3.464.1004.2616,LA34398-0
+EED,Eye Exam for Patients With Diabetes,Black or African American Detailed Race,2.16.840.1.113883.3.464.1004.2367,2056-0
+EED,Eye Exam for Patients With Diabetes,CPT CAT II Modifier,2.16.840.1.113883.3.464.1004.1464,1P
+EED,Eye Exam for Patients With Diabetes,Diabetes,2.16.840.1.113883.3.464.1004.1077,E10.10
+EED,Eye Exam for Patients With Diabetes,Diabetes Mellitus Without Complications,2.16.840.1.113883.3.464.1004.1407,E10.9
+EED,Eye Exam for Patients With Diabetes,Diabetic Retinopathy Severity Level,2.16.840.1.113883.3.464.1004.2555,LA18643-9
+EED,Eye Exam for Patients With Diabetes,Eye Exam With Evidence of Retinopathy,2.16.840.1.113883.3.464.1004.2229,2022F
+EED,Eye Exam for Patients With Diabetes,Eye Exam Without Evidence of Retinopathy,2.16.840.1.113883.3.464.1004.2230,2023F
+EED,Eye Exam for Patients With Diabetes,Frailty Device,2.16.840.1.113883.3.464.1004.1530,E0100
+EED,Eye Exam for Patients With Diabetes,Frailty Diagnosis,2.16.840.1.113883.3.464.1004.1531,L89.000
+EED,Eye Exam for Patients With Diabetes,Frailty Encounter,2.16.840.1.113883.3.464.1004.1532,99504
+EED,Eye Exam for Patients With Diabetes,Frailty Symptom,2.16.840.1.113883.3.464.1004.1533,R26.2
+EED,Eye Exam for Patients With Diabetes,Hispanic or Latino Detailed Ethnicity,2.16.840.1.113883.3.464.1004.2368,2137-8
+EED,Eye Exam for Patients With Diabetes,Hospice Encounter,2.16.840.1.113883.3.464.1004.1761,G9473
+EED,Eye Exam for Patients With Diabetes,Hospice Intervention,2.16.840.1.113883.3.464.1004.1762,99377
+EED,Eye Exam for Patients With Diabetes,Native Hawaiian or Other Pacific Islander Detailed Race,2.16.840.1.113883.3.464.1004.2369,2078-4
+EED,Eye Exam for Patients With Diabetes,Palliative Care Assessment,2.16.840.1.113883.3.464.1004.2225,718890006
+EED,Eye Exam for Patients With Diabetes,Palliative Care Encounter,2.16.840.1.113883.3.464.1004.1450,G9054
+EED,Eye Exam for Patients With Diabetes,Palliative Care Intervention,2.16.840.1.113883.3.464.1004.2224,103735009
+EED,Eye Exam for Patients With Diabetes,Retinal Eye Exams,2.16.840.1.113883.3.464.1004.2550,92002
+EED,Eye Exam for Patients With Diabetes,Retinal Imaging,2.16.840.1.113883.3.464.1004.2584,92137
+EED,Eye Exam for Patients With Diabetes,Unilateral Eye Enucleation,2.16.840.1.113883.3.464.1004.1454,65091
+EED,Eye Exam for Patients With Diabetes,White Detailed Race,2.16.840.1.113883.3.464.1004.2370,2108-9
+KED,Kidney Health Evaluation for Patients With Diabetes,Advanced Illness,2.16.840.1.113883.3.464.1004.1465,A81.00
+KED,Kidney Health Evaluation for Patients With Diabetes,American Indian or Alaska Native Detailed Race,2.16.840.1.113883.3.464.1004.2365,1004-1
+KED,Kidney Health Evaluation for Patients With Diabetes,Asian Detailed Race,2.16.840.1.113883.3.464.1004.2366,2029-7
+KED,Kidney Health Evaluation for Patients With Diabetes,Black or African American Detailed Race,2.16.840.1.113883.3.464.1004.2367,2056-0
+KED,Kidney Health Evaluation for Patients With Diabetes,Diabetes,2.16.840.1.113883.3.464.1004.1077,E10.10
+KED,Kidney Health Evaluation for Patients With Diabetes,Dialysis Procedure,2.16.840.1.113883.3.464.1004.1952,90935
+KED,Kidney Health Evaluation for Patients With Diabetes,ESRD Diagnosis,2.16.840.1.113883.3.464.1004.1747,N18.5
+KED,Kidney Health Evaluation for Patients With Diabetes,Estimated Glomerular Filtration Rate Lab Test,2.16.840.1.113883.3.464.1004.2208,80047
+KED,Kidney Health Evaluation for Patients With Diabetes,Frailty Device,2.16.840.1.113883.3.464.1004.1530,E0100
+KED,Kidney Health Evaluation for Patients With Diabetes,Frailty Diagnosis,2.16.840.1.113883.3.464.1004.1531,L89.000
+KED,Kidney Health Evaluation for Patients With Diabetes,Frailty Encounter,2.16.840.1.113883.3.464.1004.1532,99504
+KED,Kidney Health Evaluation for Patients With Diabetes,Frailty Symptom,2.16.840.1.113883.3.464.1004.1533,R26.2
+KED,Kidney Health Evaluation for Patients With Diabetes,Hispanic or Latino Detailed Ethnicity,2.16.840.1.113883.3.464.1004.2368,2137-8
+KED,Kidney Health Evaluation for Patients With Diabetes,Hospice Encounter,2.16.840.1.113883.3.464.1004.1761,G9473
+KED,Kidney Health Evaluation for Patients With Diabetes,Hospice Intervention,2.16.840.1.113883.3.464.1004.1762,99377
+KED,Kidney Health Evaluation for Patients With Diabetes,Native Hawaiian or Other Pacific Islander Detailed Race,2.16.840.1.113883.3.464.1004.2369,2078-4
+KED,Kidney Health Evaluation for Patients With Diabetes,Palliative Care Assessment,2.16.840.1.113883.3.464.1004.2225,718890006
+KED,Kidney Health Evaluation for Patients With Diabetes,Palliative Care Encounter,2.16.840.1.113883.3.464.1004.1450,G9054
+KED,Kidney Health Evaluation for Patients With Diabetes,Palliative Care Intervention,2.16.840.1.113883.3.464.1004.2224,103735009
+KED,Kidney Health Evaluation for Patients With Diabetes,Quantitative Urine Albumin Lab Test,2.16.840.1.113883.3.464.1004.2206,82043
+KED,Kidney Health Evaluation for Patients With Diabetes,Urine Albumin Creatinine Ratio Lab Test,2.16.840.1.113883.3.464.1004.2234,13705-9
+KED,Kidney Health Evaluation for Patients With Diabetes,Urine Creatinine Lab Test,2.16.840.1.113883.3.464.1004.2207,82570
+KED,Kidney Health Evaluation for Patients With Diabetes,White Detailed Race,2.16.840.1.113883.3.464.1004.2370,2108-9
