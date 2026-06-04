@@ -1,81 +1,94 @@
- The Problem
-"NCQA requires health plans to review patient records — called EMRs — across HEDIS measures. Each measure has complex rules that need clinical expertise to apply.
-These records come in all formats — digital, handwritten, unstructured. Reading them manually is slow and error prone.
-And it's not just about finding a procedure name. A Mammogram mentioned in a record doesn't mean it was performed. Clinical staff have to confirm it actually happened.
-On top of that — the same record gets reviewed multiple times for different measures. Today, this entire process is done manually — it's time consuming, costly, and inconsistent."
-________________________________________
- The Solution
-"We built an AI pipeline .
-Where  NLP and LLM work together. Tool extracts the clinical data and reasons over it — understanding context, applying NCQA rules, and making the right abstraction decision. Not just finding keywords — understanding what happened.
-After that there is  a Human-in-the-Loop to  review to make sure the quality of extraction 
-And finally — a Summarization Chatbot. Anyone can ask a question in plain English and get an instant answer from the document. 
-No more manual searching."
-________________________________________
- Value to Business
-Accuracy goes up — from around 75% manually to 90-95% with AI. That means fewer errors, less rework, and cleaner submissions.
-Speed doubles — 50% faster turnaround. Records that took 20 minutes now take approx.  7-8 min which means More volume, same time.
-The chatbot saves 60-70% of document search time — what took 30 minutes now takes seconds.
-And for leadership — instead of waiting days for reports,  get real-time dashboards. Close gaps faster. Improve HEDIS scores by 3-5 points
-
-Demo
-
-
-
-Now let me show you how it works
- Data Repository
-"Once an EMR is processed, all extracted information is automatically ingested into our database — nothing manual, nothing missed.
-This is the first screen — the Data Repository. Every processed EMR, organized by member. At a glance — who has been processed, what's available, and what's ready for review.
-This is our single source of truth for all member data."
-________________________________________
- Review Page — Member Selection
-"Now I'm switching to the Review Page — this is where the AI extraction and human-in-the-loop capability come to life.
-First step — I select a member. The system instantly loads everything the AI has extracted from their EMR — all clinical data points, mapped to applicable HEDIS measures, pulled directly from our database."
-________________________________________
- Review Page — Layout & Segments
-"Notice the layout. On the left — all extracted information. On the right — the original EMR PDF, side by side.
-The extracted data is organized into three clear segments — Member Info, ICD Codes, and Measure Information.
-In Member Info — general patient details. Name, age, demographics — all pulled automatically.
-In the ICD tab — this is where it gets powerful. ICD codes are identified directly from the raw EMR text. No manual coding. No lookup tables. The AI picks them up from the document and maps them to the relevant HEDIS measures automatically."
-________________________________________
- Measure Information — BCS
-"Now let's look at Measure Information — specifically Breast Cancer Screening.
-The tool has reviewed the EMR and abstracted all relevant data for this measure. Let me show you two features that make this fully transparent and auditable."
-Specifications Button
-"Click Specifications — and you see exactly which NCQA rule was applied to make this abstraction decision. Full transparency. Every decision mapped directly back to the HEDIS specification. Critical for audits — every call is traceable and explainable."
-Source Page Button
-"Click Source Page — and you jump directly to the exact page in the EMR where this information was found. Original text, in context, one click away. No more flipping through 50-page documents to verify a finding."
-
-Every abstraction decision comes with a confidence score — a measure of how certain the AI is about its finding which help the reviewer to make his descion 
-The confidence score is a combination of three things — how clearly the information appears in the document, how well it matches our clinical knowledge base, and how consistent the AI's reasoning is across multiple checks."
-________________________________________
- Intelligence in Action — Key Examples
-"Now let me show you what makes this truly intelligent. These are real clinical scenarios — not simple keyword matches."
-Example 1 — Tomosynthesis as Mammogram
-"This EMR never mentions the word Mammogram. It says Tomosynthesis — a type of 3D mammogram. A keyword search would miss this entirely. Our AI recognizes Tomosynthesis as clinically equivalent to a Mammogram and correctly abstracts it as compliant. That's the difference between keyword matching and true clinical intelligence."
-Example 2 — Bilateral Mastectomy
-"The EMR mentions a Bilateral Mastectomy — removal of both breasts. The tool correctly identifies this as a bilateral procedure and applies it as an exclusion for the Breast Cancer Screening measure. No manual interpretation. The AI understands the clinical implication and acts on it."
-Example 3 — Day After Memorial Day 2024
-"This one is remarkable. The EMR doesn't give a date — it says 'the day after Memorial Day 2024.' Our tool resolves this to May 28th, 2024 and uses it as the Date of Service. Natural language dates, informal references, handwritten notes — the AI handles all of it accurately."
-________________________________________
- Summarization Chatbot
-"Now — the final capability. The Summarization Chatbot.
-The chatbot page has dedicated sections — Summary, Conclusion, and more. But let me show you the live chat capability directly.
-Everything we've seen — the extraction, ICD codes, clinical decisions — is now queryable in plain English. No reports. No filters. No SQL. Just a question."
-Question 1 — Member Summary
-"I'll ask — 'Summarize this member's EMR.' Instantly — diagnoses, procedures, dates, ICD codes — presented as a clean, readable summary. What a clinician would take 15 minutes to read and synthesize — done in seconds."
-Question 2 — Measure Compliance
-"Now — 'Is this member compliant for Breast Cancer Screening?' The chatbot finds the Tomosynthesis, confirms compliance, gives the date, and cites the source page. Not a keyword search — reasoning over the document, just like a clinician."
-Question 3 — Clinical Data Point
-"Finally — 'What is the most recent HbA1c reading for this member?' Instantly — the most recent valid reading, resolved from multiple entries, missing dates inferred, source cited. No manual scanning. Just an answer."
-________________________________________
- Close
-"Think about what this means for your team.
-Clinical reviewers ask questions instead of reading entire records. Supervisors get instant status without chasing anyone. Leaders query a member's file in seconds before a call.
-The chatbot puts the full intelligence of every EMR — and everything our AI has extracted — at anyone's fingertips. In plain English. In real time.
-That is the EXL HEDIS AI solution. Faster. Smarter. More accurate. End to end."
-
-
-
-
-PHI is protected at every step — encrypted in transit and at rest, processed only within secure private environments, never used for model training, access-controlled by role, and fully audit-logged. The platform is built HIPAA-compliant from the ground up — not retrofitted."
-
+{
+  "measure_id": "BCS",
+  "measure_name": "Breast Cancer Screening",
+  "version": "MY2025",
+  "measure_type": "proportion",
+  "measurement_period": {
+    "start": "2024-01-01",
+    "end": "2025-12-31"
+  },
+  "eligibility": {
+    "operator": "AND",
+    "criteria": [
+      {
+        "op": "gender",
+        "value": "F"
+      },
+      {
+        "op": "age_in_range",
+        "min": 50,
+        "max": 74,
+        "as_of": "period_end"
+      },
+      {
+        "op": "continuous_enrollment",
+        "lookback_months": 12,
+        "allowable_gap_days": 45
+      }
+    ]
+  },
+  "exclusions": {
+    "operator": "OR",
+    "criteria": [
+      {
+        "op": "has_code",
+        "value_set": "BilateralMastectomy",
+        "domain": "procedures",
+        "window": "anytime",
+        "min_count": 1
+      },
+      {
+        "op": "has_code",
+        "value_set": "BilateralMastectomyDx",
+        "domain": "diagnoses",
+        "window": "anytime",
+        "min_count": 1
+      },
+      {
+        "operator": "AND",
+        "criteria": [
+          {
+            "op": "has_code",
+            "value_set": "UnilateralMastectomy",
+            "domain": "procedures",
+            "window": "anytime",
+            "min_count": 1
+          },
+          {
+            "op": "has_code",
+            "value_set": "UnilateralMastectomyDx",
+            "domain": "diagnoses",
+            "window": "anytime",
+            "min_count": 1
+          }
+        ]
+      },
+      {
+        "op": "has_code",
+        "value_set": "Hospice",
+        "domain": "diagnoses",
+        "window": "period",
+        "min_count": 1
+      },
+      {
+        "op": "has_code",
+        "value_set": "Hospice",
+        "domain": "procedures",
+        "window": "period",
+        "min_count": 1
+      }
+    ]
+  },
+  "numerator": {
+    "operator": "OR",
+    "criteria": [
+      {
+        "op": "has_code",
+        "value_set": "Mammogram",
+        "domain": "procedures",
+        "window": "27_months_before_period_end",
+        "min_count": 1
+      }
+    ]
+  }
+}
