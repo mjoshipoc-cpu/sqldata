@@ -1,94 +1,213 @@
 {
-  "measure_id": "BCS",
-  "measure_name": "Breast Cancer Screening",
-  "version": "MY2025",
-  "measure_type": "proportion",
-  "measurement_period": {
-    "start": "2024-01-01",
-    "end": "2025-12-31"
-  },
-  "eligibility": {
-    "operator": "AND",
-    "criteria": [
-      {
-        "op": "gender",
-        "value": "F"
+  "measure": {
+    "id": "CBP",
+    "name": "Controlling High Blood Pressure",
+    "version": "MY2025",
+    "measure_type": "proportion",
+    "description": "Percentage of members 18-85 years of age who had a diagnosis of hypertension and whose blood pressure was adequately controlled (systolic < 140 mmHg AND diastolic < 90 mmHg) during the measurement period.",
+
+    "metadata": {
+      "steward": "NCQA",
+      "reference": "HEDIS MY2025 Technical Specifications",
+      "last_updated": "2025-01-01",
+      "telehealth_eligible": true,
+      "notes": "BP must be the most recent reading in the measurement period. Readings taken in inpatient or ED settings are excluded per NCQA guidance."
+    },
+
+    "measurement_period": {
+      "start": "2025-01-01",
+      "end": "2025-12-31"
+    },
+
+    "value_set_references": [
+      { "name": "Hypertension", "code_systems": ["ICD10CM"],         "note": "Essential and secondary hypertension diagnosis codes" },
+      { "name": "ESRD",         "code_systems": ["ICD10CM"],         "note": "End-stage renal disease — permanent exclusion" },
+      { "name": "Pregnancy",    "code_systems": ["ICD10CM"],         "note": "Active pregnancy during measurement period" },
+      { "name": "Hospice",      "code_systems": ["ICD10CM","HCPCS"], "note": "Hospice or palliative care enrollment" }
+    ],
+
+    "populations": {
+
+      "initial_population": {
+        "description": "Members aged 18-85 with a hypertension diagnosis in the last 24 months and 12 months continuous enrollment.",
+        "logic": {
+          "operator": "AND",
+          "criteria": [
+
+            {
+              "id": "age_eligible",
+              "description": "Age 18-85 as of measurement period end.",
+              "type": "demographic",
+              "expression": {
+                "field": "age",
+                "operator": "BETWEEN",
+                "values": [18, 85]
+              },
+              "as_of": "measurement_period.end"
+            },
+
+            {
+              "id": "hypertension_diagnosis",
+              "description": "Active hypertension diagnosis within 24 months before measurement period end.",
+              "type": "clinical_event",
+              "expression": {
+                "operator": "EXISTS",
+                "event": { "domain": "diagnoses", "value_set": "Hypertension" },
+                "count": { "operator": ">=", "value": 1 }
+              },
+              "temporal": {
+                "type": "LOOKBACK",
+                "unit": "MONTH",
+                "value": 24,
+                "anchor": "measurement_period.end"
+              }
+            },
+
+            {
+              "id": "continuous_enrollment",
+              "description": "Continuously enrolled for 12 months prior to measurement period end, up to 45 allowable gap days.",
+              "type": "enrollment",
+              "expression": {
+                "operator": "CONTINUOUS_ENROLLMENT",
+                "parameters": {
+                  "lookback_months": 12,
+                  "allowable_gap_days": 45,
+                  "anchor": "measurement_period.end"
+                }
+              }
+            }
+
+          ]
+        }
       },
-      {
-        "op": "age_in_range",
-        "min": 50,
-        "max": 74,
-        "as_of": "period_end"
+
+      "denominator": {
+        "description": "Same as initial population.",
+        "logic": {
+          "reference_population": "initial_population"
+        }
       },
-      {
-        "op": "continuous_enrollment",
-        "lookback_months": 12,
-        "allowable_gap_days": 45
+
+      "denominator_exclusions": {
+        "description": "Members excluded due to ESRD, active pregnancy, or hospice enrollment.",
+        "logic": {
+          "operator": "OR",
+          "criteria": [
+
+            {
+              "id": "esrd_diagnosis",
+              "description": "End-stage renal disease — permanent exclusion regardless of measurement period.",
+              "type": "clinical_event",
+              "expression": {
+                "operator": "EXISTS",
+                "event": { "domain": "diagnoses", "value_set": "ESRD" }
+              },
+              "temporal": { "type": "ANYTIME" }
+            },
+
+            {
+              "id": "pregnancy_diagnosis",
+              "description": "Active pregnancy diagnosis during the measurement period.",
+              "type": "clinical_event",
+              "expression": {
+                "operator": "EXISTS",
+                "event": { "domain": "diagnoses", "value_set": "Pregnancy" }
+              },
+              "temporal": { "type": "MEASUREMENT_PERIOD" }
+            },
+
+            {
+              "id": "hospice_diagnosis",
+              "description": "Hospice or palliative care diagnosis during the measurement period.",
+              "type": "clinical_event",
+              "expression": {
+                "operator": "EXISTS",
+                "event": { "domain": "diagnoses", "value_set": "Hospice" }
+              },
+              "temporal": { "type": "MEASUREMENT_PERIOD" }
+            },
+
+            {
+              "id": "hospice_procedure",
+              "description": "Hospice or palliative care procedure during the measurement period.",
+              "type": "clinical_event",
+              "expression": {
+                "operator": "EXISTS",
+                "event": { "domain": "procedures", "value_set": "Hospice" }
+              },
+              "temporal": { "type": "MEASUREMENT_PERIOD" }
+            }
+
+          ]
+        }
+      },
+
+      "numerator": {
+        "description": "Most recent BP reading in the measurement period shows systolic < 140 mmHg AND diastolic < 90 mmHg. Readings from inpatient or ED settings are excluded per NCQA guidance.",
+        "logic": {
+          "operator": "AND",
+          "criteria": [
+
+            {
+              "id": "systolic_controlled",
+              "description": "Most recent systolic BP reading in the measurement period is less than 140 mmHg.",
+              "type": "vital_comparison",
+              "domain": "vitals",
+              "expression": {
+                "field": "systolic",
+                "operator": "<",
+                "threshold": 140,
+                "reading": "most_recent"
+              },
+              "temporal": { "type": "MEASUREMENT_PERIOD" }
+            },
+
+            {
+              "id": "diastolic_controlled",
+              "description": "Most recent diastolic BP reading in the measurement period is less than 90 mmHg.",
+              "type": "vital_comparison",
+              "domain": "vitals",
+              "expression": {
+                "field": "diastolic",
+                "operator": "<",
+                "threshold": 90,
+                "reading": "most_recent"
+              },
+              "temporal": { "type": "MEASUREMENT_PERIOD" }
+            }
+
+          ]
+        }
       }
-    ]
-  },
-  "exclusions": {
-    "operator": "OR",
-    "criteria": [
-      {
-        "op": "has_code",
-        "value_set": "BilateralMastectomy",
-        "domain": "procedures",
-        "window": "anytime",
-        "min_count": 1
-      },
-      {
-        "op": "has_code",
-        "value_set": "BilateralMastectomyDx",
-        "domain": "diagnoses",
-        "window": "anytime",
-        "min_count": 1
-      },
-      {
-        "operator": "AND",
-        "criteria": [
-          {
-            "op": "has_code",
-            "value_set": "UnilateralMastectomy",
-            "domain": "procedures",
-            "window": "anytime",
-            "min_count": 1
-          },
-          {
-            "op": "has_code",
-            "value_set": "UnilateralMastectomyDx",
-            "domain": "diagnoses",
-            "window": "anytime",
-            "min_count": 1
-          }
-        ]
-      },
-      {
-        "op": "has_code",
-        "value_set": "Hospice",
-        "domain": "diagnoses",
-        "window": "period",
-        "min_count": 1
-      },
-      {
-        "op": "has_code",
-        "value_set": "Hospice",
-        "domain": "procedures",
-        "window": "period",
-        "min_count": 1
-      }
-    ]
-  },
-  "numerator": {
-    "operator": "OR",
-    "criteria": [
-      {
-        "op": "has_code",
-        "value_set": "Mammogram",
-        "domain": "procedures",
-        "window": "27_months_before_period_end",
-        "min_count": 1
-      }
-    ]
+
+    },
+
+    "evaluation": {
+      "execution_order": [
+        "initial_population",
+        "denominator",
+        "denominator_exclusions",
+        "numerator"
+      ],
+      "final_status_logic": [
+        {
+          "status": "NOT_ELIGIBLE",
+          "when": { "population": "initial_population", "equals": false }
+        },
+        {
+          "status": "EXCLUDED",
+          "when": { "population": "denominator_exclusions", "equals": true }
+        },
+        {
+          "status": "COMPLIANT",
+          "when": { "population": "numerator", "equals": true }
+        },
+        {
+          "status": "NON_COMPLIANT",
+          "when": { "population": "denominator", "equals": true }
+        }
+      ]
+    }
+
   }
 }
