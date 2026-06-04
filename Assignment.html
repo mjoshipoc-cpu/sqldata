@@ -1,758 +1,326 @@
-import streamlit as st
-from typing import Union
-import json
-import base64
-import logging
-# ── Databricks imports (replaces snowflake.snowpark) ───────────────────────────
-from pyspark.sql import SparkSession
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
-# from dbk_hedis_openai import get_bot_response
-from pdf2image import convert_from_bytes
-import time
+{
+  "measure_id": "BCS-E",
+  "measure_name": "Breast Cancer Screening (Exchange)",
+  "version": "MY2024",
+  "source_spec": "HEDIS for QRS MY2024, BCSE_HEDIS_MY2024-3.0.0",
+  "measure_type": "proportion",
 
-SCRIPT = 'SUMMARIZATION.py'
-logging.basicConfig(level=logging.INFO)
+  "_spec_gaps": [
+    "DEATH: No 'deceased' or 'death_date' field in MemberProfile. Death-during-period exclusion is omitted. Add a 'deceased' operator to close this gap.",
+    "MODIFIERS: Engine checks (code_system, code) tuples only — no per-procedure modifier support. Bilateral mastectomy via CPT modifier 50, SNOMED modifier 51440002, or LT/RT side modifiers cannot be enforced. Partially covered by direct bilateral value sets (BilateralMastectomy, UnilateralMastectomyLeft/Right, AbsenceOf[Left|Right]Breast).",
+    "POS_81: Place-of-service filtering (exclude lab claims, POS 81) is not supported. Frailty, advanced illness, and palliative care Z51.5 criteria may incorrectly count lab-origin claims.",
+    "DIFFERENT_DATES: HEDIS requires frailty and advanced illness events on at least 2 DIFFERENT dates of service. min_count:2 counts events without date-deduplication — same-date duplicate claims could satisfy the requirement incorrectly.",
+    "ENROLLMENT_SEGMENTS: HEDIS enrollment is three-segment: (a) no gaps Oct 1–Dec 31 two years prior, (b) max 1 gap ≤45 days in prior year, (c) max 1 gap ≤45 days in measurement period. Engine supports only a single allowable_gap_days across the full lookback. Approximated as lookback_months:27 / allowable_gap_days:90.",
+    "GENDER_EXTENSIONS: Spec allows Sex Assigned at Birth F (LOINC 76689-9/LA3-6) and Sex Parameter for Clinical Use Female-typical as alternatives to administrative gender F. Engine supports administrative gender only.",
+    "SAME_PROCEDURE_MODIFIER: Unilateral mastectomy + bilateral modifier on the same claim line cannot be detected without claim-line-level modifier tracking."
+  ],
 
-# ── Databricks Spark session (replaces Snowflake session) ─────────────────────
-# In a Databricks notebook / Databricks Apps, `spark` is already available.
-# getActiveSession() works inside Databricks runtime; fall back to builder otherwise.
-try:
-    spark = SparkSession.getActiveSession() or SparkSession.builder.getOrCreate()
-except Exception:
-    spark = SparkSession.builder.getOrCreate()
+  "measurement_period": {
+    "start": "2024-01-01",
+    "end": "2024-12-31"
+  },
 
-# Databricks SDK client — used to call Foundation Model serving endpoints
-# (this replaces SNOWFLAKE.CORTEX.COMPLETE)
-w = WorkspaceClient()
+  "_participation_period_note": "Oct 1 two years prior (2022-10-01) through Dec 31 measurement period end (2024-12-31).",
 
+  "eligibility": {
+    "operator": "AND",
+    "criteria": [
+      {
+        "_note": "HEDIS initial population is 52–74 at period end. Age 52 at Dec 31 2024 ensures the member was ≥50 on Oct 1 2022 (start of the 27-month mammography lookback window).",
+        "op": "age_in_range",
+        "min": 52,
+        "max": 74,
+        "as_of": "period_end"
+      },
+      {
+        "_note": "Administrative gender Female. SPEC_GAP: Sex Assigned at Birth and Sex Parameter for Clinical Use criteria not modelled — see _spec_gaps GENDER_EXTENSIONS.",
+        "op": "gender",
+        "value": "F"
+      },
+      {
+        "_note": "HEDIS: enrolled with medical benefit Oct 1 2022–Dec 31 2024; max 1 gap ≤45 days per full calendar year (2023, 2024); no gaps Oct–Dec 2022; enrolled on Dec 31 2024. APPROXIMATION: 27-month window, combined allowable_gap_days=90 — see _spec_gaps ENROLLMENT_SEGMENTS.",
+        "op": "continuous_enrollment",
+        "lookback_months": 27,
+        "allowable_gap_days": 90
+      }
+    ]
+  },
 
-# ── Catalog / schema config (Databricks uses catalog.schema.table) ────────────
-CATALOG_NAME = "HEDISABSTRACTOR"      # was DB_NAME in Snowflake
-SCHEMA_NAME  = "AGENTICAIDEMO"
+  "exclusions": {
+    "operator": "OR",
+    "criteria": [
 
+      {
+        "_note": "Hospice: member used hospice encounter or elected hospice intervention any time during measurement period.",
+        "operator": "OR",
+        "criteria": [
+          {
+            "op": "has_code",
+            "value_set": "HospiceEncounter",
+            "domain": "procedures",
+            "window": "period",
+            "min_count": 1
+          },
+          {
+            "op": "has_code",
+            "value_set": "HospiceEncounter",
+            "domain": "diagnoses",
+            "window": "period",
+            "min_count": 1
+          },
+          {
+            "op": "has_code",
+            "value_set": "HospiceIntervention",
+            "domain": "procedures",
+            "window": "period",
+            "min_count": 1
+          }
+        ]
+      },
 
-SCRIPT = "bot_respose"
-# Databricks Foundation Model endpoint name.
-# Use any served model — examples:
-#   "databricks-claude-sonnet-4"
-#   "databricks-claude-3-7-sonnet"
-#   "databricks-meta-llama-3-3-70b-instruct"
-# Change this to whichever endpoint your workspace has provisioned.
-llm_model = "databricks-claude-sonnet-4"
+      {
+        "_note": "Bilateral mastectomy — direct bilateral procedure code (ICD-10-PCS, CPT, HCPCS) anytime in member history through period end.",
+        "op": "has_code",
+        "value_set": "BilateralMastectomy",
+        "domain": "procedures",
+        "window": "anytime",
+        "min_count": 1
+      },
 
-bot_prompt = """
-            Answer the Question using the EMR mentioned below.
+      {
+        "_note": "History of bilateral mastectomy documented as a diagnosis code anytime in member history.",
+        "op": "has_code",
+        "value_set": "HistoryOfBilateralMastectomy",
+        "domain": "diagnoses",
+        "window": "anytime",
+        "min_count": 1
+      },
 
-            KEEP THE ANSWER SUMMARIZED, CONSISE AND SHORT.
+      {
+        "_note": "Left mastectomy AND right mastectomy on same or different dates of service — satisfies bilateral exclusion via separate unilateral procedures. SPEC_GAP: LT/RT modifier variant not enforced — see _spec_gaps MODIFIERS.",
+        "operator": "AND",
+        "criteria": [
+          {
+            "_note": "Evidence of LEFT mastectomy: left-specific procedure code OR absence-of-left-breast diagnosis.",
+            "operator": "OR",
+            "criteria": [
+              {
+                "op": "has_code",
+                "value_set": "UnilateralMastectomyLeft",
+                "domain": "procedures",
+                "window": "anytime",
+                "min_count": 1
+              },
+              {
+                "op": "has_code",
+                "value_set": "AbsenceOfLeftBreast",
+                "domain": "diagnoses",
+                "window": "anytime",
+                "min_count": 1
+              }
+            ]
+          },
+          {
+            "_note": "Evidence of RIGHT mastectomy: right-specific procedure code OR absence-of-right-breast diagnosis.",
+            "operator": "OR",
+            "criteria": [
+              {
+                "op": "has_code",
+                "value_set": "UnilateralMastectomyRight",
+                "domain": "procedures",
+                "window": "anytime",
+                "min_count": 1
+              },
+              {
+                "op": "has_code",
+                "value_set": "AbsenceOfRightBreast",
+                "domain": "diagnoses",
+                "window": "anytime",
+                "min_count": 1
+              }
+            ]
+          }
+        ]
+      },
 
-            ***Question:***
-               {}
+      {
+        "_note": "Gender-affirming chest surgery (CPT 19318) WITH a gender dysphoria diagnosis — both required anytime in history through period end.",
+        "operator": "AND",
+        "criteria": [
+          {
+            "op": "has_code",
+            "value_set": "GenderAffirmingChestSurgery",
+            "domain": "procedures",
+            "window": "anytime",
+            "min_count": 1
+          },
+          {
+            "op": "has_code",
+            "value_set": "GenderDysphoria",
+            "domain": "diagnoses",
+            "window": "anytime",
+            "min_count": 1
+          }
+        ]
+      },
 
-             ***EMR***
-                {}
-"""
+      {
+        "_note": "Frailty + Advanced Illness: only applies to members ≥66 at period end. BOTH frailty AND advanced illness sub-criteria must be satisfied.",
+        "operator": "AND",
+        "criteria": [
+          {
+            "op": "age_in_range",
+            "min": 66,
+            "as_of": "period_end"
+          },
+          {
+            "_note": "FRAILTY: ≥2 frailty indications during measurement period from any of four frailty value sets across procedures or diagnoses. Three sub-cases cover all domain permutations: ≥2 in procedures, ≥2 in diagnoses, or ≥1 in each. SPEC_GAP: different-dates and POS_81 not enforced — see _spec_gaps.",
+            "operator": "OR",
+            "criteria": [
+              {
+                "_note": "Two or more frailty events on procedure claims.",
+                "op": "has_code",
+                "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
+                "domain": "procedures",
+                "window": "period",
+                "min_count": 2
+              },
+              {
+                "_note": "Two or more frailty events on diagnosis claims.",
+                "op": "has_code",
+                "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
+                "domain": "diagnoses",
+                "window": "period",
+                "min_count": 2
+              },
+              {
+                "_note": "One frailty event on procedure claims AND one on diagnosis claims — cross-domain pair satisfying the ≥2 total requirement.",
+                "operator": "AND",
+                "criteria": [
+                  {
+                    "op": "has_code",
+                    "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
+                    "domain": "procedures",
+                    "window": "period",
+                    "min_count": 1
+                  },
+                  {
+                    "op": "has_code",
+                    "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
+                    "domain": "diagnoses",
+                    "window": "period",
+                    "min_count": 1
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "_note": "ADVANCED ILLNESS: ≥2 advanced illness encounters OR a dementia medication dispensed — in measurement period or the year prior. SPEC_GAP: different-dates and POS_81 not enforced.",
+            "operator": "OR",
+            "criteria": [
+              {
+                "op": "has_code",
+                "value_set": "AdvancedIllness",
+                "domain": "diagnoses",
+                "window": "period_or_year_prior",
+                "min_count": 2
+              },
+              {
+                "op": "med_active",
+                "value_set": "DementiaMedications",
+                "window": "period_or_year_prior"
+              }
+            ]
+          }
+        ]
+      },
 
-chat_prompt_general = """
-                    You are an expert assistant specialized in healthcare, insurance, and related domains.
+      {
+        "_note": "Palliative care: assessment, encounter, or intervention value sets during measurement period, OR ICD-10-CM Z51.5 on a non-lab claim. SPEC_GAP: POS_81 not enforced for Z51.5.",
+        "operator": "OR",
+        "criteria": [
+          {
+            "op": "has_code",
+            "value_set": "PalliativeCareAssessment",
+            "domain": "procedures",
+            "window": "period",
+            "min_count": 1
+          },
+          {
+            "op": "has_code",
+            "value_set": "PalliativeCareEncounter",
+            "domain": "procedures",
+            "window": "period",
+            "min_count": 1
+          },
+          {
+            "op": "has_code",
+            "value_set": "PalliativeCareIntervention",
+            "domain": "procedures",
+            "window": "period",
+            "min_count": 1
+          },
+          {
+            "_note": "ICD-10-CM Z51.5 encounter for palliative care. SPEC_GAP: spec excludes POS 81 lab claims but engine has no place-of-service filter.",
+            "op": "has_code",
+            "value_set": "PalliativeCareZ515",
+            "domain": "diagnoses",
+            "window": "period",
+            "min_count": 1
+          }
+        ]
+      }
 
-                    Task:
-                    1. Read the user's question.
-                    2. Determine whether the question is related to any of the following areas:
-                       - Healthcare (medical conditions, treatment, hospitals, doctors, diagnostics, medicines, wellness, public health)
-                       - Health insurance (policies, claims, coverage, premiums, deductibles, reimbursement)
-                       - Medical billing, coding, or healthcare operations
-                       - Healthcare regulations or compliance
+    ]
+  },
 
-                    Rules:
-                    - If the question IS related to healthcare or insurance:
-                      - Answer the question clearly and accurately.
-                    - If the question is NOT related to healthcare or insurance:
-                      - Respond ONLY with:
-                        "The question is not related to healthcare."
+  "numerator": {
+    "_note": "One or more mammograms any time between Oct 1 2022 and Dec 31 2024. Explicit date range used for precision — the '27_months_before_period_end' window token resolves to Sep 30 2022 (one day early).",
+    "operator": "OR",
+    "criteria": [
+      {
+        "op": "has_code",
+        "value_set": "Mammography",
+        "domain": "procedures",
+        "window": {"from": "2022-10-01", "to": "2024-12-31"},
+        "min_count": 1
+      }
+    ]
+  },
 
-                    User Question:
-
-"""
-
-def fq(table_name):
-    # Databricks uses catalog.schema.table (three-level namespace) — same shape
-    return f"{CATALOG_NAME}.{SCHEMA_NAME}.{table_name.upper()}"
-
-def to_df(query):
-    # Spark SQL -> pandas (replaces snowpark session.sql().to_pandas())
-    df = spark.sql(query).toPandas()
-    df.columns = df.columns.str.upper()
-    return df
-
-# ── Table names ────────────────────────────────────────────────────────────────
-summary_table_name    = 'SUMMARY_DATA_TABLE'
-pdf_binary_table_name = 'PDF_BINARY_TABLE'
-
-# ── Page config ────────────────────────────────────────────────────────────────
-st.set_page_config(layout="wide", page_title="HEDISAbstractor.AI")
-if "logged_in" not in st.session_state or not st.session_state.logged_in:
-    st.switch_page("streamlit_app.py")
-with st.sidebar:
-    st.write(f"Logged in as **{st.session_state.username}**")
-
-    st.markdown("<br><br><br><br><br><br><br><br><br><br>", unsafe_allow_html=True)
-
-    if st.button("Logout", use_container_width=True):
-        st.session_state.logged_in = False
-        st.session_state.username = None
-        st.switch_page("streamlit_app.py")
-
-# ── Session state init ─────────────────────────────────────────────────────────
-for _key, _default in [
-    ('page_number', 1),
-    ('files_name', None),
-    ('uploaded_files', []),
-    ('messages', [{"role": "Hedis AI", "text": "Hello! How can I assist you?"}]),
-]:
-    if _key not in st.session_state:
-        st.session_state[_key] = _default
-
-# ── CSS — matches ReviewMember design system exactly ──────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-:root {
-    --brand:        #E84118;
-    --brand-dark:   #C0340F;
-    --brand-light:  #fb4e0b;
-    --brand-dim:    rgba(232,65,24,0.07);
-    --brand-border: rgba(232,65,24,0.18);
-    --surface:      #FFFFFF;
-    --bg:           #F2F4F8;
-    --border:       #E3E6EF;
-    --text:         #1A1D27;
-    --muted:        #7B808F;
-    --radius:       10px;
-    --shadow-sm:    0 1px 3px rgba(0,0,0,0.07),0 1px 2px rgba(0,0,0,0.04);
+  "_value_sets_required": {
+    "_note": "All value sets below must be populated in the value set store before this spec can run. OIDs from BCSE_HEDIS_MY2024-3.0.0 and referenced NCQA packages.",
+    "BCSE_HEDIS_MY2024-3.0.0": {
+      "Mammography":                  "2.16.840.1.113883.3.464.1004.1168",
+      "BilateralMastectomy":          "2.16.840.1.113883.3.464.1004.1042",
+      "ClinicalUnilateralMastectomy": "2.16.840.1.113883.3.464.1004.1948",
+      "HistoryOfBilateralMastectomy": "2.16.840.1.113883.3.464.1004.1331",
+      "UnilateralMastectomy":         "2.16.840.1.113883.3.464.1004.1256",
+      "UnilateralMastectomyLeft":     "2.16.840.1.113883.3.464.1004.1334",
+      "UnilateralMastectomyRight":    "2.16.840.1.113883.3.464.1004.1335",
+      "AbsenceOfLeftBreast":          "2.16.840.1.113883.3.464.1004.1329",
+      "AbsenceOfRightBreast":         "2.16.840.1.113883.3.464.1004.1330",
+      "GenderAffirmingChestSurgery":  "direct_code:CPT:19318",
+      "GenderDysphoria":              "OID_TBD — not listed in BCSE_HEDIS_MY2024 value sets; confirm with NCQA Gender Dysphoria Value Set"
+    },
+    "NCQA_AdvancedIllnessandFrailty-3.0.0": {
+      "AdvancedIllness":     "2.16.840.1.113883.3.464.1004.1465",
+      "DementiaMedications": "2.16.840.1.113883.3.464.1004.1729",
+      "FrailtyDevice":       "2.16.840.1.113883.3.464.1004.1530",
+      "FrailtyDiagnosis":    "2.16.840.1.113883.3.464.1004.1531",
+      "FrailtyEncounter":    "2.16.840.1.113883.3.464.1004.1532",
+      "FrailtySymptom":      "2.16.840.1.113883.3.464.1004.1533"
+    },
+    "NCQA_Hospice-3.0.0": {
+      "HospiceEncounter":    "2.16.840.1.113883.3.464.1004.1761",
+      "HospiceIntervention": "2.16.840.1.113883.3.464.1004.1762"
+    },
+    "NCQA_PalliativeCare-3.0.0": {
+      "PalliativeCareAssessment":   "2.16.840.1.113883.3.464.1004.2225",
+      "PalliativeCareEncounter":    "2.16.840.1.113883.3.464.1004.1450",
+      "PalliativeCareIntervention": "2.16.840.1.113883.3.464.1004.2224",
+      "PalliativeCareZ515":         "direct_code:ICD-10-CM:Z51.5"
+    }
+  }
 }
-
-html, body, .stApp {
-    font-family: 'Inter', sans-serif !important;
-    background: var(--bg) !important;
-    color: var(--text);
-}
-
-/* ── Hide chrome ── */
-#MainMenu, footer { visibility: hidden; }
-[data-testid="stHeader"]     { background: transparent !important; box-shadow: none !important; height: 0 !important; }
-[data-testid="stDecoration"] { display: none !important; }
-
-/* ── Sidebar toggle ── */
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"] { z-index: 99999 !important; top: 14px !important; left: 14px !important; }
-[data-testid="stSidebarCollapsedControl"] svg,
-[data-testid="collapsedControl"] svg { color: white !important; fill: white !important; }
-[data-testid="stSidebar"] { z-index: 99998 !important; }
-
-/* ── Navbar ── */
-.navbar {
-    position: fixed; top: 0; left: 0; right: 0; height: 48px;
-    background: linear-gradient(90deg, #C0340F 0%, #E84118 45%, #fb4e0b 100%);
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 20px 0 56px; z-index: 9999;
-    box-shadow: 0 2px 8px rgba(200,50,10,0.28);
-}
-.navbar-brand {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-}
-.navbar-tag {
-    position: absolute;
-    right: 20px;
-}
-
-.navbar-brand {
-    font-size: 17px; font-weight: 700; color: white;
-    letter-spacing: 0.3px; font-family: 'Inter', sans-serif;
-}
-.navbar-tag {
-    font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.9);
-    background: rgba(255,255,255,0.15); padding: 3px 12px; border-radius: 20px;
-    border: 1px solid rgba(255,255,255,0.25); letter-spacing: 0.5px; text-transform: uppercase;
-}
-
-/* ── Main container ── */
-.main .block-container {
-    padding-top: 64px !important; padding-bottom: 16px !important;
-    padding-left: 16px !important; padding-right: 16px !important;
-    max-width: 100% !important;
-}
-
-/* ── Section label ── */
-.section-label {
-    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.7px; color: var(--muted); margin: 8px 0 5px;
-    font-family: 'Inter', sans-serif;
-}
-
-/* ── Card / surface panels ── */
-.card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); box-shadow: var(--shadow-sm);
-    padding: 14px 16px; margin-bottom: 12px;
-}
-
-/* ── Selectbox ── */
-div[data-testid="stSelectbox"] label {
-    font-size: 12px !important; font-weight: 600 !important;
-    color: var(--text) !important; font-family: 'Inter', sans-serif !important;
-}
-div[data-testid="stSelectbox"] > div > div {
-    font-family: 'Inter', sans-serif !important; font-size: 12px !important;
-    border: 1px solid var(--border) !important; border-radius: 7px !important;
-    background: #FAFBFD !important; color: var(--text) !important;
-}
-div[data-testid="stSelectbox"] > div > div:focus-within {
-    border-color: var(--brand) !important;
-    box-shadow: 0 0 0 3px rgba(232,65,24,0.1) !important;
-}
-
-/* ── Text input ── */
-div[data-testid="stTextInput"] label {
-    font-size: 12px !important; font-weight: 600 !important;
-    color: var(--text) !important; font-family: 'Inter', sans-serif !important;
-}
-div[data-testid="stTextInput"] input {
-    font-family: 'Inter', sans-serif !important; font-size: 12px !important;
-    border: 1px solid var(--border) !important; border-radius: 7px !important;
-    padding: 6px 10px !important; background: #FAFBFD !important;
-    color: var(--text) !important; transition: border-color 0.15s, box-shadow 0.15s;
-}
-div[data-testid="stTextInput"] input:focus {
-    border-color: var(--brand) !important;
-    box-shadow: 0 0 0 3px rgba(232,65,24,0.1) !important;
-    background: white !important;
-}
-
-/* ── Tabs ── */
-div[data-testid="stTabs"] { border-bottom: 2px solid var(--border); }
-div[data-testid="stTabs"] button {
-    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
-    font-size: 13px !important; color: var(--muted) !important;
-    padding: 8px 14px !important; border-radius: 0 !important;
-    border-bottom: 2px solid transparent !important;
-    margin-bottom: -2px; transition: color 0.15s, border-color 0.15s;
-}
-div[data-testid="stTabs"] button[aria-selected="true"] {
-    color: var(--brand) !important; border-bottom-color: var(--brand) !important;
-}
-div[data-testid="stTabs"] button:hover {
-    color: var(--brand) !important; background: var(--brand-dim) !important;
-}
-
-/* ── Buttons ── */
-div[data-testid="stButton"] > button {
-    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
-    font-size: 12px !important; border-radius: 7px !important;
-    padding: 5px 14px !important; border: 1px solid transparent !important;
-    transition: all 0.15s ease; cursor: pointer;
-}
-div[data-testid="stButton"] > button[kind="primary"] {
-    background: var(--brand) !important; color: white !important;
-    border-color: var(--brand) !important; box-shadow: 0 1px 4px rgba(232,65,24,0.28);
-}
-div[data-testid="stButton"] > button[kind="primary"]:hover {
-    background: var(--brand-dark) !important;
-    box-shadow: 0 3px 8px rgba(232,65,24,0.35) !important;
-    transform: translateY(-1px);
-}
-div[data-testid="stButton"] > button[kind="secondary"] {
-    background: white !important; color: var(--brand) !important;
-    border-color: var(--brand-border) !important;
-}
-div[data-testid="stButton"] > button[kind="secondary"]:hover {
-    background: var(--brand-dim) !important; border-color: var(--brand) !important;
-}
-
-/* ── Form submit button ── */
-div[data-testid="stFormSubmitButton"] > button {
-    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
-    font-size: 12px !important; border-radius: 7px !important;
-    background: var(--brand) !important; color: white !important;
-    border-color: var(--brand) !important; padding: 5px 16px !important;
-    box-shadow: 0 1px 4px rgba(232,65,24,0.28);
-    transition: all 0.15s ease;
-}
-div[data-testid="stFormSubmitButton"] > button:hover {
-    background: var(--brand-dark) !important;
-    box-shadow: 0 3px 8px rgba(232,65,24,0.35) !important;
-    transform: translateY(-1px);
-}
-
-/* ── Alerts ── */
-div[data-testid="stAlert"] {
-    border-radius: 8px !important; font-size: 12px !important;
-    padding: 8px 12px !important; font-family: 'Inter', sans-serif !important;
-}
-
-/* ── Panels ── */
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    border-radius: 12px !important; border-color: var(--border) !important;
-    box-shadow: var(--shadow-sm) !important;
-}
-
-/* ── Expander — clean brand style ── */
-div[data-testid="stExpander"] {
-    border: 1px solid var(--border) !important;
-    border-radius: var(--radius) !important;
-    box-shadow: var(--shadow-sm) !important;
-    overflow: hidden; margin-bottom: 10px;
-}
-div[data-testid="stExpander"] summary {
-    background: var(--brand-dim) !important;
-    border-bottom: 1px solid var(--brand-border) !important;
-    font-family: 'Inter', sans-serif !important; font-weight: 600 !important;
-    font-size: 13px !important; color: var(--brand) !important;
-    padding: 9px 14px !important;
-}
-div[data-testid="stExpander"] summary:hover {
-    background: rgba(232,65,24,0.12) !important;
-}
-div[data-testid="stExpander"] summary svg { color: var(--brand) !important; }
-
-/* ── Summary content ── */
-.summary-section-header {
-    font-size: 13px; font-weight: 700; color: var(--brand);
-    text-transform: uppercase; letter-spacing: 0.5px;
-    padding: 6px 0 4px; border-bottom: 1px solid var(--brand-border);
-    margin: 10px 0 6px; font-family: 'Inter', sans-serif;
-    display: flex; align-items: center; gap: 6px;
-}
-.summary-kv {
-    display: flex; gap: 6px; padding: 3px 0;
-    font-family: 'Inter', sans-serif; font-size: 12.5px;
-    border-bottom: 1px solid #f0f2f5;
-}
-.summary-kv .key {
-    font-weight: 600; color: var(--text); min-width: 160px; flex-shrink: 0;
-}
-.summary-kv .val { color: var(--muted); }
-.summary-list-item {
-    font-size: 12.5px; color: var(--text); padding: 2px 0 2px 14px;
-    font-family: 'Inter', sans-serif; position: relative;
-}
-.summary-list-item::before {
-    content: '•'; color: var(--brand); position: absolute;
-    left: 4px; font-weight: 700;
-}
-
-/* ── Chat messages ── */
-.chat-wrap {
-    background: var(--bg); border-radius: 8px;
-    padding: 10px 12px; max-height: 320px;
-    overflow-y: auto; margin-bottom: 10px;
-}
-.chat-msg { display: flex; gap: 8px; margin-bottom: 8px; align-items: flex-start; }
-.chat-msg.user  { flex-direction: row-reverse; }
-.chat-avatar {
-    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: 700; font-family: 'Inter', sans-serif;
-}
-.chat-avatar.ai   { background: var(--brand); color: white; }
-.chat-avatar.user { background: #E3E6EF; color: var(--text); }
-.chat-bubble {
-    max-width: 80%; padding: 7px 11px; border-radius: 10px;
-    font-size: 12.5px; line-height: 1.5; font-family: 'Inter', sans-serif;
-}
-.chat-bubble.ai   { background: white; border: 1px solid var(--border); color: var(--text); }
-.chat-bubble.user { background: var(--brand); color: white; }
-
-/* ── PDF container ── */
-.pdf-wrap {
-    border-radius: 10px; overflow: hidden;
-    border: 1px solid var(--border);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.07);
-    background: white;
-}
-
-/* Suppress blank h1 */
-h1 { margin: 0 !important; padding: 0 !important; font-size: 0 !important; }
-/*top spacing */
-.block-container {
-    padding-top: 1rem !important;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ── Navbar — identical to ReviewMember ────────────────────────────────────────
-st.markdown("""
-    <div class="navbar">
-        <div class="navbar-brand">HEDISAbstractor.AI</div>
-        <div class="navbar-tag">EXL Health</div>
-    </div>
-""", unsafe_allow_html=True)
-
-st.title(' ')
-
-
-# ── Data functions ─────────────────────────────────────────────────────────────
-
-def get_summary(file_name):
-    try:
-        query = f"SELECT * FROM {fq(summary_table_name)} WHERE FILENAME = '{file_name}'"
-        df = to_df(query)
-        if df.empty:
-            return {}
-        filtered_df  = df[df['FILENAME'] == file_name]
-        content      = filtered_df['CONTENT'].to_list()
-        summary_data = json.dumps(content)
-        summary_data = (summary_data.strip('[').strip(']')
-                        .replace("```", '').replace('json', '')
-                        .strip("'").strip('"')
-                        .replace("\\n", '').replace("\\", '').replace('""','"'))
-        return json.loads(summary_data)
-    except Exception as e:
-        st.error(f"Error loading summary for {file_name}: {e}", icon="🚨")
-        return {}
-
-
-def get_summary_files_list():
-    try:
-        df = to_df(f"SELECT DISTINCT FILENAME FROM {fq(summary_table_name)}")
-        files_list = df['FILENAME'].tolist() if not df.empty else []
-        return ['Select a file'] + files_list
-    except Exception as e:
-        st.error(f"Error fetching summary files list: {e}", icon="🚨")
-        return []
-
-
-def get_pdf_binary_data(file_name):
-    try:
-        query = f"""
-            SELECT FILENAME, CONTENT
-            FROM {fq(pdf_binary_table_name)}
-            WHERE FILENAME = '{file_name}'
-        """
-        df = spark.sql(query).toPandas()
-        df.columns = df.columns.str.upper()
-
-        if df.empty:
-            st.warning(f"File not found: {file_name}")
-            return None
-
-        return df.iloc[0]['CONTENT']   # ✅ return raw bytes
-
-    except Exception as e:
-        st.warning(f"File not found or error reading PDF: {file_name} — {e}")
-        return None
-
-
-# ── PDF display ────────────────────────────────────────────────────────────────
-
-def display_pdf(pdf_data):
-    if not pdf_data:
-        st.error("No PDF data available")
-        return
-
-    try:
-        # ✅ Use SAME page number from session
-        page_number = st.session_state.get('page_number', 1)
-
-        images = convert_from_bytes(
-            pdf_data,
-            first_page=page_number,
-            last_page=page_number
-        )
-
-        st.image(images[0], use_container_width=True)
-        st.caption(f"Page {page_number}")
-
-    except Exception as e:
-        st.error(f"Error rendering PDF: {e}")
-
-    st.download_button(
-        "📥 Download PDF",
-        data=pdf_data,
-        file_name="document.pdf",
-        mime="application/pdf"
-    )
-
-# ── Content renderers ──────────────────────────────────────────────────────────
-
-def render_section(data: Union[dict, list, str], level=0):
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if isinstance(value, (dict, list)):
-                st.markdown(f'<div class="summary-section-header">🔘 {key}</div>', unsafe_allow_html=True)
-                render_section(value, level + 1)
-            else:
-                st.markdown(f"""
-                <div class="summary-kv">
-                    <span class="key">{key}</span>
-                    <span class="val">{value}</span>
-                </div>""", unsafe_allow_html=True)
-    elif isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                render_section(item, level + 1)
-            else:
-                st.markdown(f'<div class="summary-list-item">{item}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown(f'<div class="summary-list-item">{data}</div>', unsafe_allow_html=True)
-
-
-def load_content(selected_file):
-    summary = get_summary(selected_file)
-    if not summary:
-        st.warning("No summary available for this file.")
-        return
-    for section, content in summary.items():
-        if section == 'Conclusion' or 'Page' in section:
-            continue
-        st.markdown(f'<div class="summary-section-header">🔹 {section}</div>', unsafe_allow_html=True)
-        render_section(content)
-
-
-def load_conclusion_content(file_name):
-    summary = get_summary(file_name)
-    if not summary:
-        st.warning("No summary available for this file.")
-        return
-    if 'Conclusion' in summary:
-        st.markdown('<div class="summary-section-header">🔹 Conclusion</div>', unsafe_allow_html=True)
-        render_section([summary['Conclusion']])
-    else:
-        st.info("Conclusion not present.")
-
-
-def load_pages_summary_content(file_name):
-    page_num = st.session_state['page_number']
-    json_page_key = f"Page{page_num}"
-    summary = get_summary(file_name)
-
-    if not summary:
-        st.warning("No summary available for this file.")
-        return
-
-    # ── CONTENT FIRST ──
-    if json_page_key in summary:
-        st.markdown(
-            f'<div class="summary-section-header">🔹 Page {page_num}</div>',
-            unsafe_allow_html=True
-        )
-        render_section([summary[json_page_key]])
-    else:
-        st.info(f"No summary available for page {page_num}.")
-
-    # ── PAGE CONTROL AT BOTTOM ──
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns([0.3, 0.4, 0.3])
-
-    with col2:
-        new_page = st.number_input(
-            "Page",
-            min_value=1,
-            value=page_num,
-            step=1,
-            label_visibility="collapsed"
-        )
-
-        if new_page != page_num:
-            st.session_state['page_number'] = new_page
-            st.rerun()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ── AI Bot ─ DATABRICKS VERSION ───────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-# The ONLY logical change vs the Snowflake original is here:
-# `SNOWFLAKE.CORTEX.COMPLETE(model, prompt)` is replaced with a call to a
-# Databricks Foundation Model Serving endpoint via the Databricks SDK
-# (`w.serving_endpoints.query(...)`). The chatbot UI, prompt templates, and
-# control flow are unchanged.
-# ══════════════════════════════════════════════════════════════════════════════
-
-def chat_completion(prompt):
-    """
-    Databricks equivalent of SNOWFLAKE.CORTEX.COMPLETE.
-
-    Calls a Databricks Model Serving endpoint (Foundation Model API) using
-    the Databricks SDK. The endpoint name is set in `llm_model` above.
-    """
-    try:
-        response_obj = w.serving_endpoints.query(
-            name=llm_model,
-            messages=[
-                ChatMessage(role=ChatMessageRole.USER, content=prompt)
-            ],
-            max_tokens=1024,
-            temperature=0.0,
-        )
-        # Extract the assistant text from the response choices
-        response = response_obj.choices[0].message.content
-    except Exception as e:
-        logging.error(SCRIPT + f" chat_completion error: {e}")
-        response = f"Error calling Databricks LLM endpoint: {e}"
-
-    avg_confidence_score = 0
-    return response, avg_confidence_score
-
-
-# ── Alternative implementation using SQL ai_query() (kept for reference) ──────
-# If you prefer to call the LLM through Databricks SQL (so it runs on a
-# SQL warehouse), replace the body of chat_completion(prompt) with:
-#
-#   safe_prompt = prompt.replace("'", "''")
-#   query = f"SELECT ai_query('{llm_model}', '{safe_prompt}') AS response"
-#   result = spark.sql(query).collect()
-#   response = result[0]['response']
-#   return response, 0
-#
-# `ai_query` is Databricks' SQL-side equivalent of SNOWFLAKE.CORTEX.COMPLETE.
-
-
-def get_patients_data(file_name):
-    query = f"select raw_text from {CATALOG_NAME}.{SCHEMA_NAME}.{summary_table_name} where filename = '{file_name}'"
-    result = spark.sql(query).collect()
-    if not result:
-        return f"No raw text available for {file_name}"
-    response = result[0]['raw_text'] if 'raw_text' in result[0].asDict() else result[0]['RAW_TEXT']
-
-    if not response:
-        return f"No raw text available for {file_name}"
-
-    return response
-
-def get_bot_response(question, file_name):
-
-    emr_text = get_patients_data(file_name)
-
-    print(SCRIPT + ": %r", f"\nBot response from Databricks LLM...")
-
-    chat_prompt = bot_prompt.format(question, emr_text)
-
-    bot_response, confidence_score = chat_completion(chat_prompt)
-    print(SCRIPT + "- get_bot_response(): %r", f"RESPONSE: {bot_response}")
-
-    # extracted_details = safe_json_loads(extracted_text)
-    return bot_response, confidence_score
-
-def get_bot_response_general(question):
-
-    final_prompt = chat_prompt_general + question
-
-    bot_response, confidence_score = chat_completion(final_prompt)
-    # extracted_details = safe_json_loads(extracted_text)
-    return bot_response, confidence_score
-
-def show_bot(file_name):
-    with st.expander("💬 HEDIS AI Bot", expanded=False):
-        # Chat history display
-        msgs_html = ""
-        for msg in st.session_state.messages:
-            is_ai    = msg["role"] == "Hedis AI"
-            cls      = "ai" if is_ai else "user"
-            avatar   = "AI" if is_ai else "You"
-            msgs_html += f"""
-            <div class="chat-msg {cls}">
-                <div class="chat-avatar {cls}">{avatar}</div>
-                <div class="chat-bubble {cls}">{msg['text']}</div>
-            </div>"""
-
-        st.markdown(f'<div class="chat-wrap">{msgs_html}</div>', unsafe_allow_html=True)
-
-        # Input form
-        with st.form(key="chat_form", clear_on_submit=True):
-            inp_col, btn_col = st.columns([0.82, 0.18])
-            with inp_col:
-                user_question = st.text_input(
-                    "Question", placeholder="Ask about this document…",
-                    label_visibility="collapsed")
-            with btn_col:
-                submitted = st.form_submit_button("Send", type="primary", use_container_width=True)
-
-        if submitted and user_question and len(user_question.strip()) >= 5:
-            st.session_state.messages.append({"role": "user", "text": user_question})
-            with st.spinner("Thinking…"):
-                try:
-                    if file_name.strip().lower() == 'select a file':  # default one
-                        bot_response, _ = get_bot_response_general(user_question)
-                    else:
-                        bot_response, _ = get_bot_response(user_question, file_name)
-
-                    st.session_state.messages.append({"role": "Hedis AI", "text": bot_response})
-                except Exception as e:
-                    logging.info(SCRIPT + " %r", f"ERROR: {e}")
-                    st.session_state.messages.append({"role": "Hedis AI", "text": f"Try again later. — {e}"})
-            st.rerun()
-        elif submitted and len(str(user_question).strip()) < 5:
-            st.warning("Please type a question (at least 5 characters) and press Send.")
-
-        if not file_name or file_name == 'None':
-            st.info("Please select a file above to use the HEDIS AI bot.")
-
-
-# ── Main layout ────────────────────────────────────────────────────────────────
-
-def handle_exceptions(error_message, file_type=''):
-    if 'ConnectionResetError'              in str(error_message): st.error("Connection Error: An existing connection was forcibly closed.")
-    if 'AuthenticationError: No API key'  in str(error_message): st.error("AuthenticationError: No API key provided.")
-    if 'RateLimitError'                   in str(error_message): st.error("RateLimitError: You exceeded your current quota.")
-    if 'FileNotFoundError'                in str(error_message): st.error(f"{file_type} not available. Please generate the summarization.")
-
-
-# ── File selector ──────────────────────────────────────────────────────────────
-files = ([st.session_state['files_name']]
-         if st.session_state['files_name']
-         else get_summary_files_list())
-
-
-sel_col, refresh_col, _ = st.columns([0.30, 0.05, 0.65])
-with sel_col:
-    st.markdown('<div class="section-label">Select File</div>', unsafe_allow_html=True)
-    pdf_filename = st.selectbox(
-        'Select Summary file',
-        files,
-        label_visibility="collapsed",
-        help="Choose a summary file to view.",
-        key="pdf_file_select")
-
-with refresh_col:
-    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-    if st.button("🔄", key="refresh_files"):
-        st.session_state['files_name'] = None
-        st.rerun()
-
-
-# ── Bot ────────────────────────────────────────────────────────────────────────
-show_bot(pdf_filename)
-
-# ── Main two-column layout ─────────────────────────────────────────────────────
-left_col, right_col = st.columns([0.5, 0.5], gap="medium")
-
-with left_col:
-    with st.container(height=840, border=True):
-        if pdf_filename:
-            try:
-                tabs = st.tabs(['📄 Page Wise Summary', '📋 Segmented Summary', '✅ Conclusion'])
-                with tabs[0]:
-                    load_pages_summary_content(pdf_filename)
-                with tabs[1]:
-                    load_content(pdf_filename)
-                with tabs[2]:
-                    load_conclusion_content(pdf_filename)
-            except Exception as e:
-                handle_exceptions(str(e), file_type='Summarization')
-        else:
-            st.info("Please select a file to view the summary.", icon="ℹ️")
-
-with right_col:
-    with st.container(height=840, border=True):
-        if pdf_filename:
-            pdf_binary_data = get_pdf_binary_data(pdf_filename)
-            if pdf_binary_data:
-                display_pdf(pdf_binary_data)
-            else:
-                st.warning(f"PDF not found: {pdf_filename}", icon="⚠️")
-        else:
-            st.warning("No file selected.", icon="⚠️")
