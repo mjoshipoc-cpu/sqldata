@@ -1,326 +1,250 @@
-{
-  "measure_id": "BCS-E",
-  "measure_name": "Breast Cancer Screening (Exchange)",
-  "version": "MY2024",
-  "source_spec": "HEDIS for QRS MY2024, BCSE_HEDIS_MY2024-3.0.0",
-  "measure_type": "proportion",
+Composite_VBC_Score =>0.40*Chronic_Score +0.30*Preventive_Score +
+0.20*Care_Coordination_Score + 0.10*Behavioral_Score 
 
-  "_spec_gaps": [
-    "DEATH: No 'deceased' or 'death_date' field in MemberProfile. Death-during-period exclusion is omitted. Add a 'deceased' operator to close this gap.",
-    "MODIFIERS: Engine checks (code_system, code) tuples only — no per-procedure modifier support. Bilateral mastectomy via CPT modifier 50, SNOMED modifier 51440002, or LT/RT side modifiers cannot be enforced. Partially covered by direct bilateral value sets (BilateralMastectomy, UnilateralMastectomyLeft/Right, AbsenceOf[Left|Right]Breast).",
-    "POS_81: Place-of-service filtering (exclude lab claims, POS 81) is not supported. Frailty, advanced illness, and palliative care Z51.5 criteria may incorrectly count lab-origin claims.",
-    "DIFFERENT_DATES: HEDIS requires frailty and advanced illness events on at least 2 DIFFERENT dates of service. min_count:2 counts events without date-deduplication — same-date duplicate claims could satisfy the requirement incorrectly.",
-    "ENROLLMENT_SEGMENTS: HEDIS enrollment is three-segment: (a) no gaps Oct 1–Dec 31 two years prior, (b) max 1 gap ≤45 days in prior year, (c) max 1 gap ≤45 days in measurement period. Engine supports only a single allowable_gap_days across the full lookback. Approximated as lookback_months:27 / allowable_gap_days:90.",
-    "GENDER_EXTENSIONS: Spec allows Sex Assigned at Birth F (LOINC 76689-9/LA3-6) and Sex Parameter for Clinical Use Female-typical as alternatives to administrative gender F. Engine supports administrative gender only.",
-    "SAME_PROCEDURE_MODIFIER: Unilateral mastectomy + bilateral modifier on the same claim line cannot be detected without claim-line-level modifier tracking."
-  ],
+Chronic Score=> (BPD_Closure + cbp_closure + a1c_closure+ ldl_closure + COA_Closure) / 5 
+Preventive_Score=>(PPC_Closure + LSC_Closure+ WCC_Closure ) / 3 
+TRC_Closure =>Care_Coordination_Score
+Behavioral_Score => GSD_Closure
 
-  "measurement_period": {
-    "start": "2024-01-01",
-    "end": "2024-12-31"
-  },
+CBP_Closure=>(SUM(CASE WHEN CBP_Gap = 'N' THEN 1 END) * 1.0 /
+  SUM(CASE WHEN CBP_Gap IN ('Y','N') THEN 1 END),0) 
 
-  "_participation_period_note": "Oct 1 two years prior (2022-10-01) through Dec 31 measurement period end (2024-12-31).",
+Tier
+ Composite_VBC_Score >0.75 THEN 'Gold'
+ Composite_VBC_Score >0.55 and Composite_VBC_Score<=0.75  THEN 'Silver'
+  ELSE 'Bronze'
 
-  "eligibility": {
-    "operator": "AND",
-    "criteria": [
-      {
-        "_note": "HEDIS initial population is 52–74 at period end. Age 52 at Dec 31 2024 ensures the member was ≥50 on Oct 1 2022 (start of the 27-month mammography lookback window).",
-        "op": "age_in_range",
-        "min": 52,
-        "max": 74,
-        "as_of": "period_end"
-      },
-      {
-        "_note": "Administrative gender Female. SPEC_GAP: Sex Assigned at Birth and Sex Parameter for Clinical Use criteria not modelled — see _spec_gaps GENDER_EXTENSIONS.",
-        "op": "gender",
-        "value": "F"
-      },
-      {
-        "_note": "HEDIS: enrolled with medical benefit Oct 1 2022–Dec 31 2024; max 1 gap ≤45 days per full calendar year (2023, 2024); no gaps Oct–Dec 2022; enrolled on Dec 31 2024. APPROXIMATION: 27-month window, combined allowable_gap_days=90 — see _spec_gaps ENROLLMENT_SEGMENTS.",
-        "op": "continuous_enrollment",
-        "lookback_months": 27,
-        "allowable_gap_days": 90
-      }
-    ]
-  },
+Each member has its cost pmpm
 
-  "exclusions": {
-    "operator": "OR",
-    "criteria": [
 
-      {
-        "_note": "Hospice: member used hospice encounter or elected hospice intervention any time during measurement period.",
-        "operator": "OR",
-        "criteria": [
-          {
-            "op": "has_code",
-            "value_set": "HospiceEncounter",
-            "domain": "procedures",
-            "window": "period",
-            "min_count": 1
-          },
-          {
-            "op": "has_code",
-            "value_set": "HospiceEncounter",
-            "domain": "diagnoses",
-            "window": "period",
-            "min_count": 1
-          },
-          {
-            "op": "has_code",
-            "value_set": "HospiceIntervention",
-            "domain": "procedures",
-            "window": "period",
-            "min_count": 1
-          }
-        ]
-      },
 
-      {
-        "_note": "Bilateral mastectomy — direct bilateral procedure code (ICD-10-PCS, CPT, HCPCS) anytime in member history through period end.",
-        "op": "has_code",
-        "value_set": "BilateralMastectomy",
-        "domain": "procedures",
-        "window": "anytime",
-        "min_count": 1
-      },
 
-      {
-        "_note": "History of bilateral mastectomy documented as a diagnosis code anytime in member history.",
-        "op": "has_code",
-        "value_set": "HistoryOfBilateralMastectomy",
-        "domain": "diagnoses",
-        "window": "anytime",
-        "min_count": 1
-      },
 
-      {
-        "_note": "Left mastectomy AND right mastectomy on same or different dates of service — satisfies bilateral exclusion via separate unilateral procedures. SPEC_GAP: LT/RT modifier variant not enforced — see _spec_gaps MODIFIERS.",
-        "operator": "AND",
-        "criteria": [
-          {
-            "_note": "Evidence of LEFT mastectomy: left-specific procedure code OR absence-of-left-breast diagnosis.",
-            "operator": "OR",
-            "criteria": [
-              {
-                "op": "has_code",
-                "value_set": "UnilateralMastectomyLeft",
-                "domain": "procedures",
-                "window": "anytime",
-                "min_count": 1
-              },
-              {
-                "op": "has_code",
-                "value_set": "AbsenceOfLeftBreast",
-                "domain": "diagnoses",
-                "window": "anytime",
-                "min_count": 1
-              }
-            ]
-          },
-          {
-            "_note": "Evidence of RIGHT mastectomy: right-specific procedure code OR absence-of-right-breast diagnosis.",
-            "operator": "OR",
-            "criteria": [
-              {
-                "op": "has_code",
-                "value_set": "UnilateralMastectomyRight",
-                "domain": "procedures",
-                "window": "anytime",
-                "min_count": 1
-              },
-              {
-                "op": "has_code",
-                "value_set": "AbsenceOfRightBreast",
-                "domain": "diagnoses",
-                "window": "anytime",
-                "min_count": 1
-              }
-            ]
-          }
-        ]
-      },
 
-      {
-        "_note": "Gender-affirming chest surgery (CPT 19318) WITH a gender dysphoria diagnosis — both required anytime in history through period end.",
-        "operator": "AND",
-        "criteria": [
-          {
-            "op": "has_code",
-            "value_set": "GenderAffirmingChestSurgery",
-            "domain": "procedures",
-            "window": "anytime",
-            "min_count": 1
-          },
-          {
-            "op": "has_code",
-            "value_set": "GenderDysphoria",
-            "domain": "diagnoses",
-            "window": "anytime",
-            "min_count": 1
-          }
-        ]
-      },
 
-      {
-        "_note": "Frailty + Advanced Illness: only applies to members ≥66 at period end. BOTH frailty AND advanced illness sub-criteria must be satisfied.",
-        "operator": "AND",
-        "criteria": [
-          {
-            "op": "age_in_range",
-            "min": 66,
-            "as_of": "period_end"
-          },
-          {
-            "_note": "FRAILTY: ≥2 frailty indications during measurement period from any of four frailty value sets across procedures or diagnoses. Three sub-cases cover all domain permutations: ≥2 in procedures, ≥2 in diagnoses, or ≥1 in each. SPEC_GAP: different-dates and POS_81 not enforced — see _spec_gaps.",
-            "operator": "OR",
-            "criteria": [
-              {
-                "_note": "Two or more frailty events on procedure claims.",
-                "op": "has_code",
-                "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
-                "domain": "procedures",
-                "window": "period",
-                "min_count": 2
-              },
-              {
-                "_note": "Two or more frailty events on diagnosis claims.",
-                "op": "has_code",
-                "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
-                "domain": "diagnoses",
-                "window": "period",
-                "min_count": 2
-              },
-              {
-                "_note": "One frailty event on procedure claims AND one on diagnosis claims — cross-domain pair satisfying the ≥2 total requirement.",
-                "operator": "AND",
-                "criteria": [
-                  {
-                    "op": "has_code",
-                    "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
-                    "domain": "procedures",
-                    "window": "period",
-                    "min_count": 1
-                  },
-                  {
-                    "op": "has_code",
-                    "value_set": ["FrailtyDevice", "FrailtyDiagnosis", "FrailtyEncounter", "FrailtySymptom"],
-                    "domain": "diagnoses",
-                    "window": "period",
-                    "min_count": 1
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "_note": "ADVANCED ILLNESS: ≥2 advanced illness encounters OR a dementia medication dispensed — in measurement period or the year prior. SPEC_GAP: different-dates and POS_81 not enforced.",
-            "operator": "OR",
-            "criteria": [
-              {
-                "op": "has_code",
-                "value_set": "AdvancedIllness",
-                "domain": "diagnoses",
-                "window": "period_or_year_prior",
-                "min_count": 2
-              },
-              {
-                "op": "med_active",
-                "value_set": "DementiaMedications",
-                "window": "period_or_year_prior"
-              }
-            ]
-          }
-        ]
-      },
 
-      {
-        "_note": "Palliative care: assessment, encounter, or intervention value sets during measurement period, OR ICD-10-CM Z51.5 on a non-lab claim. SPEC_GAP: POS_81 not enforced for Z51.5.",
-        "operator": "OR",
-        "criteria": [
-          {
-            "op": "has_code",
-            "value_set": "PalliativeCareAssessment",
-            "domain": "procedures",
-            "window": "period",
-            "min_count": 1
-          },
-          {
-            "op": "has_code",
-            "value_set": "PalliativeCareEncounter",
-            "domain": "procedures",
-            "window": "period",
-            "min_count": 1
-          },
-          {
-            "op": "has_code",
-            "value_set": "PalliativeCareIntervention",
-            "domain": "procedures",
-            "window": "period",
-            "min_count": 1
-          },
-          {
-            "_note": "ICD-10-CM Z51.5 encounter for palliative care. SPEC_GAP: spec excludes POS 81 lab claims but engine has no place-of-service filter.",
-            "op": "has_code",
-            "value_set": "PalliativeCareZ515",
-            "domain": "diagnoses",
-            "window": "period",
-            "min_count": 1
-          }
-        ]
-      }
 
-    ]
-  },
 
-  "numerator": {
-    "_note": "One or more mammograms any time between Oct 1 2022 and Dec 31 2024. Explicit date range used for precision — the '27_months_before_period_end' window token resolves to Sep 30 2022 (one day early).",
-    "operator": "OR",
-    "criteria": [
-      {
-        "op": "has_code",
-        "value_set": "Mammography",
-        "domain": "procedures",
-        "window": {"from": "2022-10-01", "to": "2024-12-31"},
-        "min_count": 1
-      }
-    ]
-  },
 
-  "_value_sets_required": {
-    "_note": "All value sets below must be populated in the value set store before this spec can run. OIDs from BCSE_HEDIS_MY2024-3.0.0 and referenced NCQA packages.",
-    "BCSE_HEDIS_MY2024-3.0.0": {
-      "Mammography":                  "2.16.840.1.113883.3.464.1004.1168",
-      "BilateralMastectomy":          "2.16.840.1.113883.3.464.1004.1042",
-      "ClinicalUnilateralMastectomy": "2.16.840.1.113883.3.464.1004.1948",
-      "HistoryOfBilateralMastectomy": "2.16.840.1.113883.3.464.1004.1331",
-      "UnilateralMastectomy":         "2.16.840.1.113883.3.464.1004.1256",
-      "UnilateralMastectomyLeft":     "2.16.840.1.113883.3.464.1004.1334",
-      "UnilateralMastectomyRight":    "2.16.840.1.113883.3.464.1004.1335",
-      "AbsenceOfLeftBreast":          "2.16.840.1.113883.3.464.1004.1329",
-      "AbsenceOfRightBreast":         "2.16.840.1.113883.3.464.1004.1330",
-      "GenderAffirmingChestSurgery":  "direct_code:CPT:19318",
-      "GenderDysphoria":              "OID_TBD — not listed in BCSE_HEDIS_MY2024 value sets; confirm with NCQA Gender Dysphoria Value Set"
-    },
-    "NCQA_AdvancedIllnessandFrailty-3.0.0": {
-      "AdvancedIllness":     "2.16.840.1.113883.3.464.1004.1465",
-      "DementiaMedications": "2.16.840.1.113883.3.464.1004.1729",
-      "FrailtyDevice":       "2.16.840.1.113883.3.464.1004.1530",
-      "FrailtyDiagnosis":    "2.16.840.1.113883.3.464.1004.1531",
-      "FrailtyEncounter":    "2.16.840.1.113883.3.464.1004.1532",
-      "FrailtySymptom":      "2.16.840.1.113883.3.464.1004.1533"
-    },
-    "NCQA_Hospice-3.0.0": {
-      "HospiceEncounter":    "2.16.840.1.113883.3.464.1004.1761",
-      "HospiceIntervention": "2.16.840.1.113883.3.464.1004.1762"
-    },
-    "NCQA_PalliativeCare-3.0.0": {
-      "PalliativeCareAssessment":   "2.16.840.1.113883.3.464.1004.2225",
-      "PalliativeCareEncounter":    "2.16.840.1.113883.3.464.1004.1450",
-      "PalliativeCareIntervention": "2.16.840.1.113883.3.464.1004.2224",
-      "PalliativeCareZ515":         "direct_code:ICD-10-CM:Z51.5"
-    }
-  }
-}
+
+
+
+ifnull(ifnull(SUM(ER_Visits),0) / COUNT(*) * 1000,0) AS ER_Visits_per_1000,
+  ifnull(ifnull(SUM(Hospital_Admits),0) / COUNT(*) * 1000,0) AS Admit_Rate_per_1000,
+  ifnull(ifnull(SUM(Readmission_30_Day),0)*1.0/ ifnull(SUM(Hospital_Admits),0),0) AS Readmission_Rate,
+  ifnull(SUM(Hospital_Admits),0) AS Hospital_Admits,
+  ifnull(SUM(Readmission_30_Day),0)AS Readmission_30
+
+
+1-(case when Admit_Rate_per_1000<50 then 1
+when Admit_Rate_per_1000 >=50 and Admit_Rate_per_1000 <100 then 0.5 else 0 end) as Admit_Ratescore,
+1-(case when ER_Visits_per_1000<50 then 1
+when ER_Visits_per_1000 >=50 and ER_Visits_per_1000 <100 then 0.5 else 0 end )as ERscore,
+1-(case when Readmission_Rate<0.10 then 1
+when Readmission_Rate >=50 and Readmission_Rate <100 then 0.5 else 0 end )as Readmissionscore
+
+
+
+
+Round((admit_ratescore+ERscore+Readmissionscore)/3,2) as utilizationscore
+
+
+Case when utilizationscore >=0.65 then 'Bronze'
+when utilizationscore >=0.25 and utilizationscore <0.65 then 'Silver'
+else 'Gold' end as utilization_Provider_Tier 
+
+SELECT Provider_ID, year, 'BPD' as gap, BPD_NUM, BPD_DEN, BPD as value,'Chronic' as Type,
+  CASE 
+    WHEN BPD >= 0.80 THEN 5
+    WHEN BPD >= 0.70 THEN 4
+    WHEN BPD >= 0.60 THEN 3
+    WHEN BPD >= 0.50 THEN 2
+    ELSE 1
+  END as rank_type,
+  CASE
+    WHEN BPD >= 0.80 THEN 0
+    WHEN BPD >= 0.70 THEN CEIL(0.80 * BPD_DEN - BPD_NUM)
+    WHEN BPD >= 0.60 THEN CEIL(0.70 * BPD_DEN - BPD_NUM)
+    WHEN BPD >= 0.50 THEN CEIL(0.60 * BPD_DEN - BPD_NUM)
+    ELSE CEIL(0.50 * BPD_DEN - BPD_NUM)
+  END as num_to_next_rank
+
+
+
+
+
+
+
+
+
+
+utilization score = level of healthcare service usage
+It reflects how frequently patients access medical service
+
+
+Here’s a clean, structured documentation you can directly present to stakeholders or use in your dashboard/BRD.
+________________________________________
+📊 Healthcare Utilization Score – Complete Documentation
+________________________________________
+🔷 1. Objective
+The Utilization Score is a composite metric used to evaluate how efficiently healthcare services are utilized within a population.
+It combines key utilization indicators:
+•	ER Visits
+•	Hospital Admissions
+•	30-day Readmissions
+👉 Purpose:
+•	Measure cost efficiency
+•	Identify care gaps
+•	Support provider performance evaluation
+________________________________________
+🔷 2. Components of Utilization Score
+✅ 2.1 ER Visits per 1000
+📌 Definition
+Number of emergency room visits per 1,000 members.
+📌 Formula
+SUM(ER_Visits) / COUNT(*) * 1000
+📌 Business Meaning
+•	High ER visits → Possible lack of primary care / care gaps
+•	Low ER visits → Better care coordination
+________________________________________
+✅ 2.2 Admit Rate per 1000
+📌 Definition
+Number of hospital admissions per 1,000 members.
+📌 Formula
+SUM(Hospital_Admits) / COUNT(*) * 1000
+📌 Business Meaning
+•	High admissions → Higher cost, poor disease management
+•	Low admissions → Efficient healthcare utilization
+________________________________________
+✅ 2.3 Readmission Rate
+📌 Definition
+Percentage of patients readmitted within 30 days of discharge.
+📌 Formula
+SUM(Readmission_30_Day) / SUM(Hospital_Admits)
+📌 Business Meaning
+•	High readmission → Poor discharge planning / quality issues
+•	Low readmission → Better care continuity
+________________________________________
+✅ 2.4 Supporting Metrics (Volume)
+SUM(Hospital_Admits) AS Hospital_Admits
+SUM(Readmission_30_Day) AS Readmission_30
+👉 Used for:
+•	Reporting
+•	Drill-down analysis
+________________________________________
+🔷 3. Standardization (Why per 1000?)
+Metrics are calculated per 1000 members to:
+•	Normalize population differences
+•	Enable comparison across providers/regions
+•	Improve interpretability
+👉 Example:
+"100 admissions per 1000 members" is easier to interpret than raw ratios
+________________________________________
+🔷 4. Scoring Logic (Normalization to 0–1 Scale)
+Each metric is converted into a standard score.
+________________________________________
+✅ 4.1 Admit Rate Score
+1 - (
+  case 
+    when Admit_Rate_per_1000 < 50 then 1
+    when Admit_Rate_per_1000 >= 50 and < 100 then 0.5
+    else 0
+  end
+)
+📊 Thresholds
+Admit Rate	Score	Interpretation
+< 50	0	Good
+50–100	0.5	Moderate
+> 100	1	Poor
+________________________________________
+✅ 4.2 ER Score
+1 - (
+  case 
+    when ER_Visits_per_1000 < 50 then 1
+    when ER_Visits_per_1000 >= 50 and < 100 then 0.5
+    else 0
+  end
+)
+📊 Thresholds
+ER Visits	Score	Interpretation
+< 50	0	Good
+50–100	0.5	Moderate
+> 100	1	Poor
+________________________________________
+✅ 4.3 Readmission Score
+1 - (
+  case 
+    when Readmission_Rate < 0.10 then 1
+    when Readmission_Rate >= 0.10 and < 0.20 then 0.5
+    else 0
+  end
+)
+📊 Thresholds
+Readmission Rate	Score	Interpretation
+< 10%	0	Good
+10–20%	0.5	Moderate
+> 20%	1	Poor
+✅ (Corrected scale for consistency)
+________________________________________
+🔷 5. Why 1 - CASE is Used
+📌 Purpose:
+To invert scoring direction
+Before	After (Final Score)
+Good = 1	0 (Best)
+Medium = 0.5	0.5
+Poor = 0	1 (Worst)
+👉 Ensures:
+•	Lower score = better performance
+•	Higher score = worse performance
+✅ Makes aggregation and interpretation consistent
+________________________________________
+🔷 6. Final Utilization Score
+📌 Formula
+ROUND(
+  (Admit_Ratescore + ERscore + Readmissionscore) / 3, 
+2) AS UtilizationScore
+________________________________________
+✅ Interpretation
+Score Range	Meaning
+0 – 0.3	Efficient utilization ✅
+0.3 – 0.7	Moderate ⚠️
+0.7 – 1	High utilization ❌
+________________________________________
+🔷 7. End-to-End Flow
+Raw Data (Claims)
+        ↓
+Calculate Metrics
+(ER, Admit, Readmission)
+        ↓
+Standardize (per 1000)
+        ↓
+Apply Thresholds (CASE)
+        ↓
+Invert Score (1 - CASE)
+        ↓
+Average All Scores
+        ↓
+Final Utilization Score
+________________________________________
+🔷 8. Business Use Cases
+✅ Used In:
+•	Provider scorecards
+•	HEDIS reporting
+•	Population health dashboards
+•	Risk stratification models
+________________________________________
+✅ Helps Answer:
+•	Which providers have high utilization?
+•	Where are avoidable ER visits increasing?
+•	Which population has poor care management?
+________________________________________
+🔷 9. Key Insights
+✅ Low utilization score →
+•	Better care coordination
+•	Lower cost
+•	Improved outcomes
+❌ High utilization score →
+•	Overuse of services
+•	Higher cost burden
+•	Potential care gaps
+
