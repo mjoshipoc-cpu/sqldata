@@ -1,0 +1,289 @@
+
+<style>
+#erd { padding: 1rem 0; }
+#erd svg { width: 100%; }
+</style>
+<h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">Entity Relationship Diagram for Health Analytics AgenticAI Database</h2>
+<div id="erd"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  fontFamily: '"Anthropic Sans", sans-serif',
+  themeVariables: {
+    darkMode: dark,
+    fontSize: '12px',
+    fontFamily: '"Anthropic Sans", sans-serif',
+    lineColor: dark ? '#9c9a92' : '#73726c',
+    textColor: dark ? '#c2c0b6' : '#3d3d3a',
+    primaryColor: dark ? '#2a2a2a' : '#f5f5f5',
+    primaryBorderColor: dark ? '#555' : '#bbb',
+  },
+});
+
+const diagram = `erDiagram
+  MEMBERINFO {
+    number MEMBER_ID PK
+    varchar NAME
+    varchar FILEID FK
+    varchar AGE
+    varchar GENDER
+    varchar DOB
+    varchar BMI
+    varchar SMOKER
+    varchar CONFIDENCE_SCORE
+    boolean IS_ACTIVE
+    timestamp INSERT_DATE
+  }
+  FILE_INFO {
+    varchar FILEID PK
+    varchar PDF_FILENAME
+    varchar PDF_LOCATION
+    varchar MEASUREMENT_YEAR
+    varchar PROCESS
+    boolean IS_ACTIVE
+    timestamp INSERT_DATE
+  }
+  BCS {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar MAMMOGRAM
+    varchar MAMMOGRAM_DOS
+    varchar BILATERAL_MASTECTOMY
+    varchar UNILATERAL_MASTECTOMY_R
+    varchar UNILATERAL_MASTECTOMY_L
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  BPD {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar HBA1C_RESULT
+    varchar BP
+    varchar BP_DOS
+    varchar DIABETES
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  CBP {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar BP
+    varchar BP_DOS
+    varchar HYPERTENSION
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  CCS {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar HPV_TEST
+    varchar HPV_TEST_DOS
+    varchar PAP_TEST
+    varchar PAP_TEST_DOS
+    varchar HYSTERECTOMY
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  COL {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar COLONOSCOPY
+    varchar COLONOSCOPY_DOS
+    varchar CT_COLONOSCOPY
+    varchar FIT_FOBT
+    varchar STOOL_DNA
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  EED {
+    number MEMBER_ID PK
+    varchar FILEID FK
+    varchar EYE_EXAM_DATE
+    varchar RETINAL_OR_DILATED_EYE_EXAM_RESULT
+    varchar BILATERAL_EYE_ENUCLEATION
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  GSD {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar HBA1C_RESULT
+    varchar HBA1C_DOS
+    varchar POSG_DIABETES
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  HBD {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar HBA1C_RESULT
+    varchar HBA1C_DOS
+    varchar POSG_DIABETES
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  LSD {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar LEAD_SCREENING
+    varchar LEAD_SCREENING_DOS
+    varchar GENDER
+    varchar DOB
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  PPC {
+    number MEMBER_ID FK
+    varchar FILEID FK
+    varchar DID_MEMBER_HAVE_DELIVERY
+    varchar DELIVERY_DATE
+    varchar WAS_PRENATAL_CARE_PROVIDED
+    varchar WAS_POSTPARTUM_CARE_PROVIDED
+    varchar REVIEW_COMPLETED
+    varchar CONFIDENCE_SCORE
+  }
+  TBLUSER {
+    number USERID PK
+    varchar ROLE
+    varchar USERNAME
+    varchar PASSWORD
+    timestamp CREATEON
+  }
+  TBLROLE {
+    number ROLEID PK
+    varchar ROLE
+    timestamp CREATEON
+  }
+  TBLCASE_ASSIGNMENT {
+    number ID PK
+    number USERID FK
+    varchar FILEID FK
+    varchar STATUS
+    date DUEDATE
+    timestamp ASSIGNEDON
+    timestamp REVIEWSTARTON
+    timestamp REVIEWENDON
+  }
+  TBLCASEMANAGEMENT {
+    number ID PK
+    number USERID FK
+    varchar FILEID FK
+    timestamp CREATEON
+  }
+  ACCURACY {
+    number MEMBER_ID FK
+    varchar FILENAME
+    varchar MEASURE
+    varchar REVIEW_COMPLETED
+    number ACCURACY_SCORE
+  }
+  CONFIDENCE_SCORE {
+    varchar MEASURE
+    varchar SCORE
+    varchar FILENAME
+  }
+  EVIDENCE {
+    number MEMBER_ID FK
+    varchar MEASURE
+    varchar FILENAME
+    varchar EVIDENCE_MATRIX
+  }
+  ICD_CODES {
+    number MEMBER_ID FK
+    varchar ICD_CODE
+    varchar DISEASE
+    varchar DIAGNOSIS_DATE
+    number MEASUREMENT_YEAR
+    varchar FILENAME
+  }
+  STATS {
+    varchar MEASURE
+    varchar MEMBER_ID FK
+    varchar FILENAME
+    varchar START
+    varchar END
+    varchar DURATION
+    varchar ACCURACY
+  }
+  SPECIFICATIONS_DATA_TABLE {
+    varchar MEASUREMENT_YEAR
+    varchar MEASURE
+    varchar CONTENT
+  }
+  SUMMARY_DATA_TABLE {
+    varchar FILENAME
+    varchar MEASUREMENT_YEAR
+    varchar CONTENT
+    varchar RAW_TEXT
+  }
+  PDF_BINARY_STORE {
+    varchar FILE_NAME
+    binary FILE_CONTENT
+    timestamp UPLOADED_AT
+  }
+  PROCESSED_PDF_LOG {
+    varchar FILENAME
+    timestamp INSERT_DATE
+  }
+
+  MEMBERINFO ||--o| FILE_INFO : "linked via FILEID"
+  MEMBERINFO ||--o{ BCS : "MEMBER_ID"
+  MEMBERINFO ||--o{ BPD : "MEMBER_ID"
+  MEMBERINFO ||--o{ CBP : "MEMBER_ID"
+  MEMBERINFO ||--o{ CCS : "MEMBER_ID"
+  MEMBERINFO ||--o{ COL : "MEMBER_ID"
+  MEMBERINFO ||--|| EED : "MEMBER_ID"
+  MEMBERINFO ||--o{ GSD : "MEMBER_ID"
+  MEMBERINFO ||--o{ HBD : "MEMBER_ID"
+  MEMBERINFO ||--o{ LSD : "MEMBER_ID"
+  MEMBERINFO ||--o{ PPC : "MEMBER_ID"
+  MEMBERINFO ||--o{ ACCURACY : "MEMBER_ID"
+  MEMBERINFO ||--o{ EVIDENCE : "MEMBER_ID"
+  MEMBERINFO ||--o{ ICD_CODES : "MEMBER_ID"
+  FILE_INFO ||--o{ BCS : "FILEID"
+  FILE_INFO ||--o{ BPD : "FILEID"
+  FILE_INFO ||--o{ CBP : "FILEID"
+  FILE_INFO ||--o{ CCS : "FILEID"
+  FILE_INFO ||--o{ COL : "FILEID"
+  FILE_INFO ||--o{ EED : "FILEID"
+  FILE_INFO ||--o{ GSD : "FILEID"
+  FILE_INFO ||--o{ HBD : "FILEID"
+  FILE_INFO ||--o{ LSD : "FILEID"
+  FILE_INFO ||--o{ PPC : "FILEID"
+  FILE_INFO ||--o{ TBLCASE_ASSIGNMENT : "FILEID"
+  FILE_INFO ||--o{ TBLCASEMANAGEMENT : "FILEID"
+  TBLUSER ||--o{ TBLCASE_ASSIGNMENT : "USERID"
+  TBLUSER ||--o{ TBLCASEMANAGEMENT : "USERID"
+`;
+
+const { svg } = await mermaid.render('erd-svg', diagram);
+document.getElementById('erd').innerHTML = svg;
+
+document.querySelectorAll('#erd svg .node').forEach(node => {
+  const firstPath = node.querySelector('path[d]');
+  if (!firstPath) return;
+  const d = firstPath.getAttribute('d');
+  const nums = d.match(/-?[\d.]+/g)?.map(Number);
+  if (!nums || nums.length < 8) return;
+  const xs = [nums[0], nums[2], nums[4], nums[6]];
+  const ys = [nums[1], nums[3], nums[5], nums[7]];
+  const x = Math.min(...xs), y = Math.min(...ys);
+  const w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', x); rect.setAttribute('y', y);
+  rect.setAttribute('width', w); rect.setAttribute('height', h);
+  rect.setAttribute('rx', '8');
+  for (const a of ['fill', 'stroke', 'stroke-width', 'class', 'style']) {
+    if (firstPath.hasAttribute(a)) rect.setAttribute(a, firstPath.getAttribute(a));
+  }
+  firstPath.replaceWith(rect);
+});
+
+document.querySelectorAll('#erd svg .row-rect-odd path, #erd svg .row-rect-even path').forEach(p => {
+  p.setAttribute('stroke', 'none');
+});
+</script>
