@@ -129,4 +129,58 @@ Designed prompt templates to generate a short, actionable outreach summary per m
 Added a human-review step so care managers approve/edit AI-generated summaries before outreach.
 Visualized combined clinical + SDOH risk (Basic vs. Full Score) in Power BI, with drill-down by geography and measure.
 Documented data sources, prompt design, model evaluation approach, and validation methodology for reproducibility.
-That's 6 projects total (2 QRT-related, 3 Gen AI, 1 Power BI) in your priority order. If you'd rather trim to exactly 5, tell me which one to drop and I'll adjust. Also, quick reminder before you send this out: since the 3 Gen AI projects are POCs, be ready to actually walk through the logic/code if asked — want me to help you build the NL-to-SQL one for real so you have working code behind it?
+That's 6 projects total (2 QRT-related, 3 Gen AI, 1 Power BI) in your priority order. If you'd rather trim to exactly 5, tell me which one to drop and I'll adjust. Also, quick re
+
+
+
+minder before you send this out: since the 3 Gen AI projects are POCs, be ready to actually walk through the logic/code if asked — want me to help you build the NL-to-SQL one for real so you have working code behind it?
+The HEDISAbstractor.ai is an automated healthcare data processing pipeline built on Snowflake Cortex AI that analyzes Electronic Medical Records (EMRs) to evaluate patient compliance with various HEDIS quality measures.
+ 
+Key Capabilities
+ 
+1) PDF Ingestion & Text Extraction
+ 
+    Detects new EMR PDF files from a Snowflake stage.
+    Extracts text using Snowflake's AI_PARSE_DOCUMENT and stores the content for processing.
+ 
+2) Clinical Data Extraction using LLMs
+ 
+    Utilizes Snowflake Cortex AI (Claude Sonnet 4.5) with measure-specific prompts to extract structured clinical information from unstructured EMR documents.
+    Supports multiple HEDIS measures, including:
+        BCS – Breast Cancer Screening
+        EED – Eye Exam for Diabetics
+        BPD – Blood Pressure Control for Diabetes
+        CBP – Controlling High Blood Pressure
+        CCS – Cervical Cancer Screening
+        COL – Colorectal Cancer Screening
+        GSD – Glycemic Status Assessment
+ 
+3) ICD Code Extraction
+ 
+    Identifies diagnosed conditions and maps relevant ICD codes from clinical documentation.
+ 
+4) Patient Record Summarization
+ 
+    Generates structured JSON summaries containing patient demographics, diagnoses, medications, and other clinical details.
+ 
+5) Validation & Auditability
+ 
+    Performs secondary LLM-based validation of extracted information.
+    Generates confidence scores and an evidence matrix linking extracted data back to source text for transparency and auditing.
+ 
+6) Data Storage & Processing
+ 
+    Stores results in Snowflake tables and stages.
+    Uses idempotent upsert logic to prevent duplicate records during reprocessing.
+ 
+7) File Management
+ 
+    Automatically moves processed PDFs and extracted text files to designated processed stages.
+    Maintains processing status through log tables.
+ 
+Environment
+ 
+    The solution runs within the HEDISABSTRACTOR.AGENTICAIDEMO database/schema and uses configuration settings managed through an env.yaml file.
+ 
+Summary: HEDISAbstractor.ai provides an end-to-end AI-powered solution for transforming unstructured EMR documents into validated, structured HEDIS measure outcomes, enabling automated quality reporting, compliance tracking, and clinical data extraction at scale.
+ 
