@@ -1,23 +1,19 @@
+Here's the fully corrected version — I converted the section headers to Unicode bold characters, so they'll actually appear bold when pasted directly into LinkedIn (no need to manually re-bold anything in their editor). Everything else is already plain text and paste-safe:
+
 Your zip code can predict your health outcomes better than your genetic code.
-
 We decided to test that using our own data at EXL.
-
-Why we look beyond clinical data
-When we scored members using only clinical and claims history, most looked fine. But once we added neighborhood data — income, food access, housing — the picture changed for thousands of people. Some looked "low risk" on paper, but their neighborhood told a different story. Clinical data alone can't see that. That's why this series exists.
-
-The challenge
-Health data comes packaged by zip code. But zip codes are mail-delivery boundaries, not neighborhood boundaries — one zip code can cover several very different neighborhoods. When we checked our data, we found 2 out of every 3 zip codes span more than one neighborhood. Match on zip code alone, and you blur different neighborhoods together — and lose the exact signal you're trying to find.
-
-How we solved it
+𝗪𝗵𝘆 𝘄𝗲 𝗹𝗼𝗼𝗸 𝗯𝗲𝘆𝗼𝗻𝗱 𝗰𝗹𝗶𝗻𝗶𝗰𝗮𝗹 𝗱𝗮𝘁𝗮
+When we scored members using only clinical and claims history, most looked fine. But once we added neighborhood data — income, food access, housing — the picture changed for thousands of people.
+Some looked "low risk" on paper, but their neighborhood told a different story. Clinical data alone can't see that. That's why this series exists.
+𝗧𝗵𝗲 𝗰𝗵𝗮𝗹𝗹𝗲𝗻𝗴𝗲
+Health data comes packaged by zip code. But zip codes are mail-delivery boundaries, not neighborhood boundaries — one zip code can cover several very different neighborhoods.
+When we checked our data, we found 2 out of every 3 zip codes span more than one neighborhood. Match on zip code alone, and you blur different neighborhoods together — and lose the exact signal you're trying to find.
+𝗛𝗼𝘄 𝘄𝗲 𝘀𝗼𝗹𝘃𝗲𝗱 𝗶𝘁
 We built a lookup table connecting each zip code to its exact neighborhoods, so no neighborhood's data gets blended with its neighbors. Then we double-checked every match by hand instead of assuming a clean result meant it worked.
-
-Getting to our "Gold" layer
-We combine a member's clinical history, financial situation, care usage, and neighborhood conditions into one clean record — with a single risk score and the plain-language reasons behind it. That record is what powers everything else in this series: risk modeling, AI-driven outreach, and measuring what actually works.
-
-[IMAGE: 66% stat card — week1_stat.png]
-
+𝗚𝗲𝘁𝘁𝗶𝗻𝗴 𝘁𝗼 𝗼𝘂𝗿 "𝗚𝗼𝗹𝗱" 𝗹𝗮𝘆𝗲𝗿
+We combine a member's clinical history, financial situation, care usage, and neighborhood conditions into one clean record — with a single risk score and the plain-language reasons behind it.
+That record is what powers everything else in this series: risk modeling, AI-driven outreach, and measuring what actually works.
+[Attach: week1_stat_card.png]
 This is Week 1 of a 5-week series on building an SDOH-driven population health approach. Next week: turning this into an actual risk model.
-
 Have you seen a case where someone looked "low risk" on paper but wasn't?
-
 #PopulationHealth #SDOH #HealthEquity #ValueBasedCare
