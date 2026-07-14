@@ -145,3 +145,9 @@ Built secondary LLM-based validation layer producing confidence scores and an ev
 Designed idempotent upsert logic in Snowflake tables to prevent duplicate records during reprocessing.
 Automated file management — moving processed PDFs and extracted text files to designated processed stages and maintaining processing status through log tables.
 Managed environment configuration via env.yaml for pipeline settings.
+
+
+Built a spec-driven HEDIS gap detection engine that classifies members as Compliant, Non-Compliant, or Excluded across quality measures like BCS and CBP. Designed a metadata-driven JSON schema and reusable operator library so any new measure is added as configuration with zero engine code changes. Delivered a deterministic, audit-defensible Python + FastAPI backend with a React dashboard offering analyst, care-manager, and live spec-upload views.
+Architected end-to-end system: canonical data model, JSON spec schema, operator library, deterministic evaluator, REST API, and React dashboard.
+Designed a metadata-driven schema so new HEDIS measures are added as JSON configs with zero engine code changes.
+Built the deterministic evaluator with fixed eligibility → exclusion → numerator precedence, evidence traces, and structural + golden-set validation.
