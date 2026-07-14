@@ -118,5 +118,15 @@ SQL Server, T-SQL, SSIS | C#, ASP.NET MVC | Power BI, DAX | Python (Pandas) | Gi
 - Creation of test plans and documentation of all the deliverables.
 
 ---
+Project overview: A GenAI-assisted tool that flags members with care gaps (leveraging existing HEDIS Gap-in-Care logic) alongside Social Determinants of Health (SDOH) risk factors — such as transportation access, housing instability, and food insecurity — sourced from public SDOH datasets. An XGBoost model generates a Basic Risk Score (clinical/utilization features) and a Full Risk Score (clinical + SDOH factors), and the LLM layer converts this combined risk data into a plain-English, care-manager-ready outreach recommendation for each member.
+Roles & Responsibilities:
 
+Sourced and joined publicly available SDOH indicators with existing Gap-in-Care SQL data at the member/geography level.
+Built SQL views combining clinical risk flags with SDOH risk scores for a unified member risk profile.
+Built an XGBoost classification model to generate Basic Score (clinical only) and Full Score (clinical + SDOH) risk predictions, evaluated using AUC and F1-score.
+Analyzed feature weightage to identify top clinical and SDOH drivers contributing to member risk.
+Designed prompt templates to generate a short, actionable outreach summary per member/cohort using an LLM API.
+Added a human-review step so care managers approve/edit AI-generated summaries before outreach.
+Visualized combined clinical + SDOH risk (Basic vs. Full Score) in Power BI, with drill-down by geography and measure.
+Documented data sources, prompt design, model evaluation approach, and validation methodology for reproducibility.
 That's 6 projects total (2 QRT-related, 3 Gen AI, 1 Power BI) in your priority order. If you'd rather trim to exactly 5, tell me which one to drop and I'll adjust. Also, quick reminder before you send this out: since the 3 Gen AI projects are POCs, be ready to actually walk through the logic/code if asked — want me to help you build the NL-to-SQL one for real so you have working code behind it?
