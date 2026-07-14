@@ -132,55 +132,16 @@ Documented data sources, prompt design, model evaluation approach, and validatio
 That's 6 projects total (2 QRT-related, 3 Gen AI, 1 Power BI) in your priority order. If you'd rather trim to exactly 5, tell me which one to drop and I'll adjust. Also, quick re
 
 
+Organization: Personal / POC Initiative
+Environment: Snowflake Cortex AI, Claude Sonnet 4.5, Snowflake AI_PARSE_DOCUMENT, SQL, YAML
+Project overview: HEDISAbstractor.ai is an automated healthcare data processing pipeline built on Snowflake Cortex AI that analyzes Electronic Medical Records (EMRs) to evaluate patient compliance with various HEDIS quality measures. It transforms unstructured EMR PDF documents into validated, structured HEDIS measure outcomes, enabling automated quality reporting, compliance tracking, and clinical data extraction at scale.
+Roles & Responsibilities:
 
-minder before you send this out: since the 3 Gen AI projects are POCs, be ready to actually walk through the logic/code if asked — want me to help you build the NL-to-SQL one for real so you have working code behind it?
-The HEDISAbstractor.ai is an automated healthcare data processing pipeline built on Snowflake Cortex AI that analyzes Electronic Medical Records (EMRs) to evaluate patient compliance with various HEDIS quality measures.
- 
-Key Capabilities
- 
-1) PDF Ingestion & Text Extraction
- 
-    Detects new EMR PDF files from a Snowflake stage.
-    Extracts text using Snowflake's AI_PARSE_DOCUMENT and stores the content for processing.
- 
-2) Clinical Data Extraction using LLMs
- 
-    Utilizes Snowflake Cortex AI (Claude Sonnet 4.5) with measure-specific prompts to extract structured clinical information from unstructured EMR documents.
-    Supports multiple HEDIS measures, including:
-        BCS – Breast Cancer Screening
-        EED – Eye Exam for Diabetics
-        BPD – Blood Pressure Control for Diabetes
-        CBP – Controlling High Blood Pressure
-        CCS – Cervical Cancer Screening
-        COL – Colorectal Cancer Screening
-        GSD – Glycemic Status Assessment
- 
-3) ICD Code Extraction
- 
-    Identifies diagnosed conditions and maps relevant ICD codes from clinical documentation.
- 
-4) Patient Record Summarization
- 
-    Generates structured JSON summaries containing patient demographics, diagnoses, medications, and other clinical details.
- 
-5) Validation & Auditability
- 
-    Performs secondary LLM-based validation of extracted information.
-    Generates confidence scores and an evidence matrix linking extracted data back to source text for transparency and auditing.
- 
-6) Data Storage & Processing
- 
-    Stores results in Snowflake tables and stages.
-    Uses idempotent upsert logic to prevent duplicate records during reprocessing.
- 
-7) File Management
- 
-    Automatically moves processed PDFs and extracted text files to designated processed stages.
-    Maintains processing status through log tables.
- 
-Environment
- 
-    The solution runs within the HEDISABSTRACTOR.AGENTICAIDEMO database/schema and uses configuration settings managed through an env.yaml file.
- 
-Summary: HEDISAbstractor.ai provides an end-to-end AI-powered solution for transforming unstructured EMR documents into validated, structured HEDIS measure outcomes, enabling automated quality reporting, compliance tracking, and clinical data extraction at scale.
- 
+Built automated PDF ingestion pipeline to detect new EMR files from a Snowflake stage and extract text using Snowflake's AI_PARSE_DOCUMENT.
+Designed measure-specific LLM prompts using Snowflake Cortex AI (Claude Sonnet 4.5) to extract structured clinical information from unstructured EMR documents across multiple HEDIS measures — BCS (Breast Cancer Screening), EED (Eye Exam for Diabetics), BPD (Blood Pressure Control for Diabetes), CBP (Controlling High Blood Pressure), CCS (Cervical Cancer Screening), COL (Colorectal Cancer Screening), and GSD (Glycemic Status Assessment).
+Implemented ICD code extraction to identify diagnosed conditions and map relevant codes from clinical documentation.
+Generated structured JSON summaries of patient demographics, diagnoses, medications, and other clinical details.
+Built secondary LLM-based validation layer producing confidence scores and an evidence matrix linking extracted data back to source text for auditability.
+Designed idempotent upsert logic in Snowflake tables to prevent duplicate records during reprocessing.
+Automated file management — moving processed PDFs and extracted text files to designated processed stages and maintaining processing status through log tables.
+Managed environment configuration via env.yaml for pipeline settings.
