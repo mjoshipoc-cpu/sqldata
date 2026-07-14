@@ -1,16 +1,30 @@
-Your zip code predicts your health outcomes better than your genetic code.
-At EXL, we wanted to test that claim ourselves — not with a hypothesis, with data.
-For payers, "social determinants of health" often stays a slide in a strategy deck. So we started small: could we actually see SDOH risk at the census-tract level using data anyone can access?
-We pulled together four sources in Snowflake:
+Hook
+Your zip code can predict your health outcomes better than your genetic code. We decided to test that with our own data.
 
-CDC PLACES (chronic disease + health outcome estimates)
-USDA Food Access Research Atlas (food desert indicators, tract-level)
-Snowflake's US Open Census Data — Neighborhood Insights (demographic + economic context)
-A synthetic clinical/claims dataset, to simulate how a payer's real book of business would layer on top
+1. Why we look at SDOH + Clinical — not clinical alone
+When we scored our members using only clinical and claims history, most looked fine. But when we added neighborhood data — income, food access, housing, education — the picture changed for thousands of people.
 
-The hard part wasn't the health data — it was the geography. CDC PLACES comes in at the ZIP-code level; FARA and Census data are tract-level. That sounds like a footnote until you check the numbers: of the ~39K ZIPs in our crosswalk, two-thirds span more than one census tract. A naive join doesn't fail loudly — it just silently misallocates risk, spreading one ZIP's health signal across tracts it doesn't actually describe.
-Getting this right meant building a proper ZIP-to-tract crosswalk and auditing every join for orphaned records, instead of trusting a clean row count.
-[Add your screenshot here]
-This is Week 1 of a 5-week series on how we're building an SDOH-driven population health approach at EXL. Next week: turning this tract-level data into an actual risk model.
-Where does your SDOH data get messiest — access, or trusting the signal once you have it?
-#PopulationHealth #SDOH #HealthEquity #DataInHealthcare #Snowflake #ValueBasedCare
+Out of 1.2 million member records, 22,370 people (about 2 in every 100) looked low-risk based on their medical history alone — but their neighborhood told a different story. High poverty, food deserts, no reliable transportation. We call this "hidden risk" — real risk that clinical data alone simply cannot see.
+
+That's the whole reason this series exists.
+
+2. The challenge
+Health data and neighborhood data don't naturally speak the same language.
+
+CDC health data comes organized by zip code. But neighborhoods (census tracts) are smaller and more precise than zip codes. When we checked, 2 out of every 3 zip codes actually cover more than one neighborhood. If you just match on zip code, you blur many different neighborhoods into one number — and lose the exact signal you're trying to find.
+
+3. How we solved it
+Instead of a simple zip-code match, we built a proper bridge between zip codes and neighborhoods, so each area's data reflects its own conditions — not an average of several places nearby. We also checked every match for gaps instead of trusting a clean-looking row count.
+
+4. How we get to our "Gold" layer
+We start with a member's basic profile, then layer in: their clinical history, their financial situation (like unpaid bills or high copay burden), how often they use care (ER visits, missed checkups), and their neighborhood's conditions (income, food access, safety).
+
+All of it comes together into one clean, member-level record — with a single risk score, and the top reasons behind that score, in plain terms. That record is what powers everything in the rest of this series: risk modeling, AI-driven outreach, and measuring what actually helps.
+
+[SCREENSHOT HERE]
+
+This is Week 1 of a 5-week series on how we're building an SDOH-driven population health approach at EXL. Next week: how we turn this into an actual risk model.
+
+What's your experience — have you seen a case where someone looked "low risk" on paper but wasn't?
+
+#PopulationHealth #SDOH #HealthEquity #ValueBasedCare
