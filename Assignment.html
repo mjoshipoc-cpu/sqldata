@@ -1,153 +1,16 @@
-Here's everything ready to paste directly into your document — professional summary, skills, and all 6 projects with full bullet detail.
+Your zip code predicts your health outcomes better than your genetic code.
+At EXL, we wanted to test that claim ourselves — not with a hypothesis, with data.
+For payers, "social determinants of health" often stays a slide in a strategy deck. So we started small: could we actually see SDOH risk at the census-tract level using data anyone can access?
+We pulled together four sources in Snowflake:
 
----
+CDC PLACES (chronic disease + health outcome estimates)
+USDA Food Access Research Atlas (food desert indicators, tract-level)
+Snowflake's US Open Census Data — Neighborhood Insights (demographic + economic context)
+A synthetic clinical/claims dataset, to simulate how a payer's real book of business would layer on top
 
-## Professional Summary
-
-A highly dedicated IT professional having 10+ years of experience in US healthcare with more than 3 years of experience in project management. I have demonstrated exceptional business acumen and proposed effective process improvements & automated solutions to the problem areas of various clients. I have good technical skills required in profiling, DW/BI projects like programming in C#.NET, ASP.NET MVC, SQL, Power BI, and ability to work in any business intelligence tool. Recently expanded into Generative AI, building POCs that combine LLM-based natural language interfaces, retrieval-augmented workflows, and prompt engineering with existing SQL/Power BI reporting systems to modernize healthcare data solutions.
-
----
-
-## Technical Skills
-
-SQL Server, T-SQL, SSIS | C#, ASP.NET MVC | Power BI, DAX | Python (Pandas) | GitHub, SVN, DevOps | Gen AI: OpenAI/Azure OpenAI API, Prompt Engineering, LangChain, RAG (Retrieval-Augmented Generation)
-
----
-
-## Business Area – National Quality Management
-
-### Project: Quality Reporting Tool
-**Organization:** EXL Service (April 2019 – Till Date)
-**Environment:** ASP.Net(MVC), C#, SQL Server 2017, SSIS, Power BI, GitHub Enterprise
-
-**Project overview:** It is web based one-stop shop reporting solution built for the HEDIS team that houses more than 50 business reports including Gap In Care/DARTH Reports. It is a self-service tool with a user base of more than 100. The tool has modules to request new report requests, generate ad hoc reports and user maintenance.
-
-**Roles & Responsibilities:**
-- Create & maintain documents defining project scope, requirements, wireframes, change sets, client feedback, constraints and dependencies.
-- Worked on the creation of DevOps pipeline for the code repository maintenance and deployment.
-- Requirement discussion with client as well team on best possible technical solutions with feasibility and time constraints.
-- Worked on designing modular tasks to be assigned to all team members to target delivery dates.
-- Developed use cases and designed wireframes for the front end.
-- Developed the SQL tables architectural design, backend Stored Procs in SQL Server and ETL Applications in SSIS.
-- Tidal Scheduling of reports with automated email notifications and delivery of reports.
-- Creation of test plans and documentation of all the deliverables.
-- Pitched the client for adding the BI feature by creating report visualizations in Power BI.
-
----
-
-### Project: OCR Tool (Optical Character Recognition)
-**Organization:** EXL Service (Aug 2021 – Till Date)
-**Environment:** C#.NET, iTextSharp, SQL Server 2017, SVN, Python, Pandas
-
-**Project overview:** It is a tool that can extract human health parameters from the electronic medical records that are in .PDF format. It also includes a Quality Check tool built in Python that assesses the quality of the data extracted.
-
-**Roles & Responsibilities:**
-- Worked on the proof of concept for the OCR solution.
-- Developed the OCR Tool from the scratch as the individual contributor.
-- Creation & maintenance of data dictionary to maintain keyword repos.
-- Developed the Quality Reports in Python using Pandas to validate accuracy of extracted health parameters against source documents.
-- Addition of ECDS measures for reporting.
-- Creation of user manual & documentation for support.
-- Code reviews to maintain the code quality to follow best practices.
-- Created automated process to read emails and update counts tables in SQL Server.
-
----
-
-## Business Area – Generative AI Initiatives (POC)
-
-### Project: AI-Powered Natural Language Query Assistant (NL-to-SQL)
-**Organization:** Personal / POC Initiative
-**Environment:** Python, OpenAI/Azure OpenAI API, LangChain, SQL Server, Streamlit
-
-**Project overview:** A GenAI-powered assistant that allows business users to query HEDIS/healthcare reporting databases using plain English instead of SQL. The tool converts natural language questions into optimized SQL queries using schema-aware prompting and returns results in a conversational format, reducing dependency on technical teams for ad hoc data requests.
-
-**Roles & Responsibilities:**
-- Designed prompt templates with schema grounding and few-shot examples to improve SQL generation accuracy.
-- Integrated LLM API (OpenAI/Azure OpenAI) with existing SQL Server reporting database.
-- Built a lightweight front-end using Streamlit for business users to interact with the assistant.
-- Implemented guardrails to validate and sanitize LLM-generated SQL before execution.
-- Benchmarked query accuracy against manually written SQL for common report requests.
-
----
-
-### Project: SDOH-Aware Care Outreach Insight Tool
-**Organization:** Personal / POC Initiative
-**Environment:** SQL Server, Python, Power BI, OpenAI/Azure OpenAI API
-
-**Project overview:** A GenAI-assisted tool that flags members with care gaps (leveraging existing HEDIS Gap-in-Care logic) alongside Social Determinants of Health (SDOH) risk factors — such as transportation access, housing instability, and food insecurity — sourced from public SDOH datasets. The LLM layer converts combined clinical + SDOH risk data into a plain-English, care-manager-ready outreach recommendation for each member.
-
-**Roles & Responsibilities:**
-- Sourced and joined publicly available SDOH indicators with existing Gap-in-Care SQL data at the member/geography level.
-- Built SQL views combining clinical risk flags with SDOH risk scores for a unified member risk profile.
-- Designed prompt templates to generate a short, actionable outreach summary per member/cohort using an LLM API.
-- Added a human-review step so care managers approve/edit AI-generated summaries before outreach.
-- Visualized combined clinical + SDOH risk in Power BI, with drill-down by geography and measure.
-- Documented data sources, prompt design, and validation approach for reproducibility.
-
----
-
-### Project: Power BI Copilot — Natural Language Report Insights Chatbot
-**Organization:** Personal / POC Initiative
-**Environment:** Python, Power BI, DAX, OpenAI/Azure OpenAI API, Streamlit
-
-**Project overview:** A chatbot layer on top of Power BI datasets that lets business users ask questions in plain English and get answers generated from live DAX query results — reducing dependency on the BI team for ad hoc insight requests.
-
-**Roles & Responsibilities:**
-- Connected to Power BI dataset via DAX queries to pull live metric data.
-- Designed prompts to translate natural language questions into DAX queries and interpret results into plain-English answers.
-- Built a lightweight Streamlit chat interface for business users to interact with dashboards conversationally.
-- Added guardrails to restrict queries to approved measures/tables only.
-- Tested accuracy against manually run DAX queries for common business questions.
-
----
-
-## Power BI
-
-### Project: HEDIS Hybrid Medicare Power BI Dashboard
-**Organization:** EXL Service (April 2022 – Till Date)
-**Environment:** Power BI, SQL
-
-**Project overview:** It's a Power BI dashboard which gives insight to business regarding useful matrix regarding Measures i.e., rates, benchmark, hits required to benchmark.
-
-**Roles & Responsibilities:**
-- Create & maintain documents defining project scope, requirements, wireframes, change sets, client feedback, constraints and dependencies.
-- Worked on the creation of required set of queries to load data.
-- Create measures and calculated columns to get dynamic value.
-- Requirement discussion with client as well team on best possible technical solutions with feasibility and time constraints.
-- Worked on designing modular tasks to be assigned to all team members to target delivery dates.
-- Creation of test plans and documentation of all the deliverables.
-
----
-Project overview: A GenAI-assisted tool that flags members with care gaps (leveraging existing HEDIS Gap-in-Care logic) alongside Social Determinants of Health (SDOH) risk factors — such as transportation access, housing instability, and food insecurity — sourced from public SDOH datasets. An XGBoost model generates a Basic Risk Score (clinical/utilization features) and a Full Risk Score (clinical + SDOH factors), and the LLM layer converts this combined risk data into a plain-English, care-manager-ready outreach recommendation for each member.
-Roles & Responsibilities:
-
-Sourced and joined publicly available SDOH indicators with existing Gap-in-Care SQL data at the member/geography level.
-Built SQL views combining clinical risk flags with SDOH risk scores for a unified member risk profile.
-Built an XGBoost classification model to generate Basic Score (clinical only) and Full Score (clinical + SDOH) risk predictions, evaluated using AUC and F1-score.
-Analyzed feature weightage to identify top clinical and SDOH drivers contributing to member risk.
-Designed prompt templates to generate a short, actionable outreach summary per member/cohort using an LLM API.
-Added a human-review step so care managers approve/edit AI-generated summaries before outreach.
-Visualized combined clinical + SDOH risk (Basic vs. Full Score) in Power BI, with drill-down by geography and measure.
-Documented data sources, prompt design, model evaluation approach, and validation methodology for reproducibility.
-That's 6 projects total (2 QRT-related, 3 Gen AI, 1 Power BI) in your priority order. If you'd rather trim to exactly 5, tell me which one to drop and I'll adjust. Also, quick re
-
-
-Organization: Personal / POC Initiative
-Environment: Snowflake Cortex AI, Claude Sonnet 4.5, Snowflake AI_PARSE_DOCUMENT, SQL, YAML
-Project overview: HEDISAbstractor.ai is an automated healthcare data processing pipeline built on Snowflake Cortex AI that analyzes Electronic Medical Records (EMRs) to evaluate patient compliance with various HEDIS quality measures. It transforms unstructured EMR PDF documents into validated, structured HEDIS measure outcomes, enabling automated quality reporting, compliance tracking, and clinical data extraction at scale.
-Roles & Responsibilities:
-
-Built automated PDF ingestion pipeline to detect new EMR files from a Snowflake stage and extract text using Snowflake's AI_PARSE_DOCUMENT.
-Designed measure-specific LLM prompts using Snowflake Cortex AI (Claude Sonnet 4.5) to extract structured clinical information from unstructured EMR documents across multiple HEDIS measures — BCS (Breast Cancer Screening), EED (Eye Exam for Diabetics), BPD (Blood Pressure Control for Diabetes), CBP (Controlling High Blood Pressure), CCS (Cervical Cancer Screening), COL (Colorectal Cancer Screening), and GSD (Glycemic Status Assessment).
-Implemented ICD code extraction to identify diagnosed conditions and map relevant codes from clinical documentation.
-Generated structured JSON summaries of patient demographics, diagnoses, medications, and other clinical details.
-Built secondary LLM-based validation layer producing confidence scores and an evidence matrix linking extracted data back to source text for auditability.
-Designed idempotent upsert logic in Snowflake tables to prevent duplicate records during reprocessing.
-Automated file management — moving processed PDFs and extracted text files to designated processed stages and maintaining processing status through log tables.
-Managed environment configuration via env.yaml for pipeline settings.
-
-
-Built a spec-driven HEDIS gap detection engine that classifies members as Compliant, Non-Compliant, or Excluded across quality measures like BCS and CBP. Designed a metadata-driven JSON schema and reusable operator library so any new measure is added as configuration with zero engine code changes. Delivered a deterministic, audit-defensible Python + FastAPI backend with a React dashboard offering analyst, care-manager, and live spec-upload views.
-Architected end-to-end system: canonical data model, JSON spec schema, operator library, deterministic evaluator, REST API, and React dashboard.
-Designed a metadata-driven schema so new HEDIS measures are added as JSON configs with zero engine code changes.
-Built the deterministic evaluator with fixed eligibility → exclusion → numerator precedence, evidence traces, and structural + golden-set validation.
+The hard part wasn't the health data — it was the geography. CDC PLACES comes in at the ZIP-code level; FARA and Census data are tract-level. That sounds like a footnote until you check the numbers: of the ~39K ZIPs in our crosswalk, two-thirds span more than one census tract. A naive join doesn't fail loudly — it just silently misallocates risk, spreading one ZIP's health signal across tracts it doesn't actually describe.
+Getting this right meant building a proper ZIP-to-tract crosswalk and auditing every join for orphaned records, instead of trusting a clean row count.
+[Add your screenshot here]
+This is Week 1 of a 5-week series on how we're building an SDOH-driven population health approach at EXL. Next week: turning this tract-level data into an actual risk model.
+Where does your SDOH data get messiest — access, or trusting the signal once you have it?
+#PopulationHealth #SDOH #HealthEquity #DataInHealthcare #Snowflake #ValueBasedCare
