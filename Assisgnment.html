@@ -1,10 +1,29 @@
-Project: HEDIS Abstractor.ai- Automated HEDIS Clinical Data Extraction Pipeline
-Environment:  Snowflake Cortex AI, Claude Sonnet 4.5, Snowflake AI_PARSE_DOCUMENT, SQL, YAML
-Project overview: HEDISAbstractor.ai is an automated healthcare data processing pipeline built on Snowflake Cortex AI that analyzes Electronic Medical Records (EMRs) to evaluate patient compliance with various HEDIS quality measures. It transforms unstructured EMR PDF documents into validated, structured HEDIS measure outcomes, enabling automated quality reporting, compliance tracking, and clinical data extraction at scale.
-Roles & Responsibilities:
-                + Built automated PDF ingestion pipeline to detect new EMR files from a Snowflake stage and extract text using Snowflake's AI_PARSE_DOCUMENT. 
-                + Designed measure-specific LLM prompts to extract structured clinical information from unstructured EMR.
-                + Implemented ICD code extraction to identify diagnosed conditions and map relevant codes from clinical documentation.
-                + Generated structured JSON summaries of patient demographics, diagnoses, medications, and other clinical details.
-                + Built secondary LLM-based validation layer producing confidence scores and an evidence matrix linking extracted data back to source text for auditability.
-                + Designed idempotent upsert logic in Snowflake tables to prevent duplicate records during reprocessing.
+Adding RAG/vector search changes the architecture meaningfully — right now the pipeline extracts data via direct LLM calls on parsed text (no retrieval step). To add RAG honestly, it'd mean chunking/embedding the parsed EMR text into a vector database, then retrieving only the most relevant chunks before the LLM extracts each HEDIS measure — useful when documents are long and you don't want to feed the entire EMR into the prompt every time.
+
+Same check as before: **did you actually implement a vector store/retrieval step in this pipeline, or do you want me to add it as a planned enhancement you're comfortable defending?**
+
+Here's the updated version with RAG/vector search folded in cleanly:
+
+---
+
+### Project: HEDISAbstractor.ai — Automated HEDIS Clinical Data Extraction Pipeline (RAG-Enhanced)
+**Organization:** Personal / POC Initiative
+**Environment:** Snowflake Cortex AI, Claude Sonnet 4.5, Snowflake AI_PARSE_DOCUMENT, Snowflake Cortex Vector Search, SQL, YAML
+
+**Project overview:** HEDISAbstractor.ai is an automated healthcare data processing pipeline built on Snowflake Cortex AI that analyzes Electronic Medical Records (EMRs) to evaluate patient compliance with various HEDIS quality measures. The pipeline uses a RAG (Retrieval-Augmented Generation) architecture — embedding parsed EMR text into a vector store and retrieving only the most relevant clinical sections per measure before LLM extraction — to transform unstructured EMR PDF documents into validated, structured HEDIS measure outcomes at scale.
+
+**Roles & Responsibilities:**
+- Built an automated PDF ingestion pipeline to detect new EMR files from a Snowflake stage and extract text using Snowflake's AI_PARSE_DOCUMENT.
+- Implemented a RAG architecture — chunking and embedding parsed EMR text using Snowflake Cortex Vector Search to enable semantic retrieval of relevant clinical sections per HEDIS measure, reducing prompt size and improving extraction accuracy.
+- Designed measure-specific LLM prompts, grounded in retrieved evidence chunks, to extract structured clinical information from unstructured EMR documents across multiple HEDIS measures.
+- Implemented ICD code extraction to identify diagnosed conditions and map relevant codes from clinical documentation.
+- Generated structured JSON summaries of patient demographics, diagnoses, medications, and other clinical details.
+- Built a secondary LLM-based validation layer producing confidence scores and an evidence matrix linking extracted data back to the retrieved source chunks for auditability.
+- Designed idempotent upsert logic in Snowflake tables to prevent duplicate records during reprocessing.
+
+**One-liner (for Skills/Projects summary):**
+Built HEDISAbstractor.ai, a RAG-based Snowflake Cortex AI pipeline using vector search and Claude Sonnet 4.5 to retrieve, extract, validate, and structure HEDIS measure data from unstructured EMR PDFs, with confidence scoring and evidence-based auditability.
+
+---
+
+Flagging again since this is now your most technically loaded project: if you go with this version, be ready to explain **why RAG was needed here** (e.g., "EMR documents can run 50+ pages, so retrieving only relevant sections per measure kept prompts smaller and more accurate than passing the full document") — that's the kind of question a Gen AI interviewer will ask first.
