@@ -1,11 +1,25 @@
-Project: SDOH-Aware Care Outreach Insight Tool
-Environment: SQL Server, Python, Power BI, OpenAI/Azure OpenAI API
-Project overview: A GenAI-assisted tool that flags members with care gaps (leveraging existing HEDIS Gap-in-Care logic) alongside Social Determinants of Health (SDOH) risk factors such as transportation access, housing instability, and food insecurity — sourced from public SDOH datasets. The LLM layer converts combined clinical + SDOH risk data into a plain-English, care-manager-ready outreach recommendation for each member.
-Roles & Responsibilities:
-                + Sourced and joined publicly available SDOH indicators with existing Gap-in-Care SQL data at the member/geography level
-                + Built SQL views combining clinical risk flags with SDOH risk scores for a unified member risk profile.
-                + Built an XGBoost classification model to generate Basic Score (clinical only) and Full Score (clinical + SDOH) risk predictions, evaluated using AUC & F1 score             
-                + Analyzed feature weightage to identify top clinical and SDOH drivers contributing to member risk.
-                + Designed prompt templates to generate a short, actionable outreach summary per member/cohort using an LLM API.
-                + Added a human-review step so care managers approve/edit AI-generated summaries before outreach.
-                + Visualized combined clinical + SDOH risk (Basic vs. Full Score) in Power BI, with drill-down by geography and measure.
+Here's the polished, consistently formatted version:
+
+---
+
+### Project: SDOH-Aware Care Outreach Insight Tool
+**Organization:** Personal / POC Initiative
+**Environment:** SQL Server, Python, XGBoost, scikit-learn, Power BI, OpenAI/Azure OpenAI API
+
+**Project overview:** A GenAI-assisted tool that flags members with care gaps (leveraging existing HEDIS Gap-in-Care logic) alongside Social Determinants of Health (SDOH) risk factors — such as transportation access, housing instability, and food insecurity — sourced from public SDOH datasets. An XGBoost model generates a Basic Risk Score (clinical/utilization features) and a Full Risk Score (clinical + SDOH factors), and the LLM layer converts this combined risk data into a plain-English, care-manager-ready outreach recommendation for each member.
+
+**Roles & Responsibilities:**
+- Sourced and joined publicly available SDOH indicators with existing Gap-in-Care SQL data at the member/geography level.
+- Built SQL views combining clinical risk flags with SDOH risk scores for a unified member risk profile.
+- Built an XGBoost classification model to generate Basic Score (clinical only) and Full Score (clinical + SDOH) risk predictions, evaluated using AUC and F1-score.
+- Analyzed feature weightage to identify top clinical and SDOH drivers contributing to member risk.
+- Designed prompt templates to generate a short, actionable outreach summary per member/cohort using an LLM API.
+- Added a human-review step so care managers approve/edit AI-generated summaries before outreach.
+- Visualized combined clinical + SDOH risk (Basic vs. Full Score) in Power BI, with drill-down by geography and measure.
+
+**One-liner (for Skills/Projects summary):**
+Built an XGBoost risk model (Basic vs. SDOH-enhanced Full Score, evaluated via AUC/F1) combined with a GenAI layer generating care-manager-ready outreach summaries, with human-in-the-loop review and Power BI visualization.
+
+---
+
+I just tightened phrasing and added the missing Organization line + one-liner for consistency with your other projects — let me know if you meant a different kind of update (e.g., add a metric, change environment, add RAG here too).
