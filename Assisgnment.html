@@ -1,12 +1,87 @@
-Environment: ASP.NET MVC 4.0, C#, jQuery, SQL Server 2014
-Project overview: Insight is a solution built for BPO operations providing integrated services including reporting, LMS (Learning Management System), QMS (Quality Management System), and WAT (Work Activity Tracker). The LMS module manages learning modules and training assessments for agents. The QMS module enables quality checks of agent work as monitored by QA/TL based on management-defined parameters. The solution also includes performance dashboards for Agents and Team Leaders tailored per client requirements.
-Roles & Responsibilities:
+Every health plan already scores risk from claims and clinical history.
+But there's a category of member who looks fine on paper — no hospitalizations, no red flags — until you look at where they live.
+That risk is real, and a claims-only model never sees it.
 
-Involved in coding, designing, and maintenance of the application across modules (LMS, QMS, WAT, Reporting).
-Collaborated within a team of 8 members to deliver features across the solution.
-Contributed to development of the Learning Management System (LMS) covering learning modules and agent training assessments.
-Contributed to development of the Quality Management System (QMS) enabling QA/TL-driven quality checks based on configurable management parameters.
-Worked on Work Activity Tracker (WAT) module for tracking agent work activity.
-Built performance dashboards for Agents and Team Leaders, customized per client requirements.
-Developed front-end functionality using jQuery and backend logic in C#/ASP.NET MVC 4.0.
-Worked on SQL Server 2014 for data storage and retrieval supporting reporting and dashboard modules.
+11 states, 434 ZIP codes, 99,999 members scored. 64 ZIPs need immediate intervention. Average blended risk score is 0.362."
+
+"This is the number that matters: 13,305 members — 13.3% of the entire cohort — are cases where adding SDOH data meaningfully changed their risk picture.
+ Not a little noise — a real, measurable jump a claims-only model would have missed entirely."
+
+ SDOH_LIFT = P(Critical∪High | clinical+SDOH) − P(Critical∪High | clinical-only)
+  lift ≥ 0.20 → HIGH_SDOH_IMPACT
+  lift ≥ 0.10 → MODERATE_SDOH_IMPACT   ← 13,305 is everyone at or above this line
+  lift ≥ 0.00 → LOW_SDOH_IMPACT
+  lift <  0   → SDOH_PROTECTIVE
+
+Every state gets the same breakdown. Illinois is #1 right now — 67 ZIPs, 14 High / 28 Moderate / 25 Low, average risk 0.368, 13.2% SDOH impact, flagged Critical.
+
+Urgency (state):  critical = highZipCount≥2 AND (avgRisk≥0.40 OR impactPct≥12)
+                   high     = highZipCount≥1 OR avgRisk≥0.35 OR impactPct≥8
+
+Priority (tie-break within same Urgency): highZipCount*3 + moderateZipCount*1 + avgRisk*10
+
+
+"Let me drill into this state specifically. We're looking at 67 ZIP codes here, covering [X] members. Three numbers matter on the right side of this panel.
+
+First, the Avg Risk Score — 0.368. That's our blended model's average prediction across every ZIP in this state — it combines clinical severity and social risk factors into one number.
+
+Second, the SDOH Lift — you'll notice it's basically zero, actually a tiny bit negative. This is the average difference between our SDOH-enhanced model and a clinical-only baseline, across the whole state. What that tells us is: at the state level, SDOH data isn't shifting the overall risk picture much — some members' risk goes up because of social factors, others go down because of protective factors, and across a whole state those tend to average out.
+
+That's exactly why we don't stop at the state average — the Base number, 0.368, is nearly identical to the Risk Score for the same reason. The real story is at the individual level. When we drill into a specific member, like we'll do in a moment, that lift can swing meaningfully positive — and that's where the platform earns its value, catching the person the clinical model alone would've missed.
+
+Last number — Tier Mix, 14 High / 28 Moderate / 25 Low. That's how many ZIPs in this state fall into each neighborhood-disadvantage tier — a separate, area-level signal from the risk score itself, which is why we track it independently."
+
+Ek chhota tip: agar koi pooche "to phir state-level lift dikhाने ka fayda kya hai agar wo ~0 hai" — bol sakte hain: "It confirms the model isn't systematically biased in one direction for this state — it validates the model at scale, before we zoom into individuals where the real signal shows up."
+
+
+Domain bars — Economic leads at 0.516, Healthcare is lowest at 0.182. Illinois's problem isn't access to doctors, it's economic instability. In the burden mix donut, Food Desert alone is 36% of the total burden — bigger than poverty rate itself.
+
+
+
+
+
+page 2:::
+
+Let me filter down to a single ZIP code — 60827 in Illinois — so you can see exactly how this platform thinks about one specific neighborhood.
+
+This ZIP has 334 members. Right away, the top panel tells me: 39 of our overall Critical members and 138 High Risk members are in scope here, but the number that matters most for this ZIP specifically is 141 — that's High-Risk, SDOH-Confirmed. These are people flagged high-risk specifically because of where they live and their social circumstances, not just their medical history.
+
+And then there's 157 — Hidden Risk. That's almost half of everyone in this ZIP. These are members who look fine on paper today — moderate or low risk, clinically — but they're living in the exact same disadvantaged conditions as the 141 we've already confirmed. That's the population I want care teams watching closely.
+
+Now look at the score breakdown for this ZIP: Clinical Score is 0.389 — that's what a traditional, clinical-only model would say. Add SDOH data, and it jumps by 0.137 to a final Risk Score of 0.526. That jump — that's the whole value proposition of this platform in one number. Ignore social risk factors, and this ZIP looks moderate. Include them, and it crosses into high-risk territory.
+
+Why? Look at the Domain Scores. Neighborhood is the highest at 0.630, Economic is close behind at 0.546. This isn't a healthcare problem in this ZIP — it's an environment problem. Poverty, housing, and area disadvantage are driving the risk here far more than clinical health issues are.
+
+Breaking down that 157 Hidden Risk number: 87 of them are Moderate clinical tier, 70 are Low clinical tier — meaning 70 people in this one ZIP look completely low-risk today, purely because nothing has shown up in their claims yet. That's exactly who this platform is built to catch before they become an emergency.
+
+And the math behind all of this is simple: 334 people live in this disadvantaged ZIP. 36 were already high-risk for purely clinical reasons — we'd have found them anyway. 141 are high-risk because SDOH data revealed it. That leaves 157 — the Hidden Risk group — still waiting to be acted on.
+
+In the table below, you can see this ZIP is tagged CRITICAL urgency, with a risk score of 0.526 and an SDOH lift of +0.137 — the highest priority marker this platform assigns. This is exactly where I'd tell a care team: start here first.
+
+
+
+page 3 member 360 
+
+Let me show you what this platform looks like at the individual level. This is Devora Johnson — 56 years old, lives in Chicago, Illinois, ZIP 60827.
+
+Her composite risk score is 0.82 — High tier. But here's what's interesting: if you only looked at her clinical history — her conditions, her utilization — the score would be 0.42. It's the SDOH data that adds another 0.40 on top, nearly half her total risk score. That's not a rounding error — that's the platform telling us: for this woman, social circumstances are driving her risk almost as much as her clinical history is.
+
+Why? Look at her domain breakdown. Neighborhood scores highest — 0.63. She lives in a High Disadvantage area — nearly 24% poverty rate, 17% unemployment in her ZIP, 44% food insecurity, and she's in a food desert with no reliable vehicle access. This isn't abstract — this is the environment she lives in every day.
+
+Now look at her actual healthcare utilization: 20 total visits, zero ED visits, just one inpatient admission. On paper, that's a low-touch, low-cost patient. Her annual claims cost is only about $2,800. If you were triaging purely on clinical utilization or cost, she would not stand out.
+
+But dig one level deeper. Her Financial Risk Tier is Critical. Her income is 46% of the Federal Poverty Level — well below our threshold for safety-net eligibility. She's carrying two active personal flags — unemployment and stress — both of which map to standard SDOH diagnosis codes already in her record. And she has two open HEDIS quality gaps — a breast cancer screening and a colorectal screening — that haven't been closed.
+
+Here's the tension I want you to notice: her PHQ-9 depression screening came back minimal — a score of 4. If we only trusted that one clinical data point, we'd say she's fine emotionally. But everything else — the stress flag, the financial pressure, the neighborhood disadvantage — tells us there's real strain here that a single point-in-time screening didn't capture.
+
+So what does the platform do with all of this? It doesn't just flag her — it acts. Three interventions are already confirmed for her: a referral to SNAP enrollment and a food bank, because she qualifies financially and lives in a food desert; outreach for her open care gap, because a low-cost patient with unclosed quality gaps is exactly who falls through the cracks; and a workforce and job training referral, because addressing her unemployment addresses the root cause, not just the symptom.
+
+This is the complete loop — a member who looks unremarkable by traditional cost and utilization metrics, but who the platform correctly identifies as high-risk and already has three concrete, income-qualified, evidence-based actions moving toward her care team for approval.
+
+
+
+page AI
+
+Three needs, and this time — unlike a member with more financial means — all three come back as genuine, active referrals. Not downgraded, not marked informational. Because for Devora, they're all real: she's food-desert-flagged and below the SNAP income threshold, so it's a real SNAP referral. She's unemployed and below that same threshold, so workforce support is a real ask, not a mismatch. The platform isn't just flagging — it's reasoning about her actual situation."
+
+
