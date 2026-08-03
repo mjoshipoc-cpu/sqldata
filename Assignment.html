@@ -1,78 +1,15 @@
-# validator.py
-from pydantic import ValidationError
-from fhir.resources.R4B import construct_fhir_element
-from config import REQUIRED_FIELDS, VALUE_SETS, COMMON_VALUE_SETS
+# main.py
+import json
+from validator import FHIRResourceValidator
 
 
-def _get_path(data: dict, path: str):
-    """Walk a dotted path like 'clinicalStatus.coding.code', handling lists.
-    Returns [] if any part of the path is missing (safe for optional fields)."""
-    parts = path.split(".")
-    current = [data]
-    for part in parts:
-        nxt = []
-        for item in current:
-            if isinstance(item, dict) and part in item:
-                val = item[part]
-                nxt.extend(val if isinstance(val, list) else [val])
-        current = nxt
-    return current
+def validate_file(path: str):
+    with open(path) as f:
+        data = json.load(f)
+    validator = FHIRResourceValidator(data["resourceType"])
+    return validator.validate(data)
 
 
-class FHIRResourceValidator:
-    """Generic validator for any FHIR R4 resource type, config-driven."""
-
-    def __init__(self, resource_type: str):
-        self.resource_type = resource_type
-        self.required_fields = REQUIRED_FIELDS.get(resource_type, [])
-        self.value_sets = {**COMMON_VALUE_SETS, **VALUE_SETS.get(resource_type, {})}
-
-    def validate_structure(self, data: dict):
-        """Schema/type/structural check via fhir.resources (pydantic models)."""
-        try:
-            resource = construct_fhir_element(self.resource_type, data)
-            return True, resource, []
-        except ValidationError as e:
-            return False, None, e.errors()
-        except KeyError:
-            return False, None, [{"msg": f"Unknown resourceType: {self.resource_type}"}]
-
-    def validate_required_fields(self, data: dict) -> list:
-        """Cardinality check — only fields that are 1..1 in base FHIR."""
-        return [
-            f"Missing required field: {field}"
-            for field in self.required_fields
-            if not data.get(field)
-        ]
-
-    def validate_value_sets(self, data: dict) -> list:
-        """Terminology binding check — only runs if the field is present."""
-        errors = []
-        for path, allowed in self.value_sets.items():
-            for value in _get_path(data, path):
-                if value not in allowed:
-                    errors.append(f"Invalid value at '{path}': {value}")
-        return errors
-
-    def validate(self, data: dict) -> dict:
-        if data.get("resourceType") != self.resource_type:
-            return {
-                "resourceType": data.get("resourceType"),
-                "overall_valid": False,
-                "structural_errors": [
-                    f"Expected resourceType '{self.resource_type}', got '{data.get('resourceType')}'"
-                ],
-            }
-
-        struct_ok, _, struct_errors = self.validate_structure(data)
-        required_errors = self.validate_required_fields(data)
-        value_errors = self.validate_value_sets(data)
-
-        return {
-            "resourceType": self.resource_type,
-            "structurally_valid": struct_ok,
-            "structural_errors": struct_errors,
-            "required_field_errors": required_errors,
-            "value_set_errors": value_errors,
-            "overall_valid": struct_ok and not required_errors and not value_errors,
-        }
+if __name__ == "__main__":
+    report = validate_file("allergyintolerance.json")
+    print(json.dumps(report, indent=2))
