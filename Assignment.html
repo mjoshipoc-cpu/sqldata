@@ -1,85 +1,41 @@
-Senior GenAI Engineer Lead– Job description 
-Job Summary: 
-We are seeking a highly skilled Senior Generative AI Engineer Lead to drive the design, 
-development, and deployment of enterprise-grade Generative AI solutions. The ideal candidate will have deep 
-expertise in Large Language Models (LLMs), prompt engineering, AI orchestration frameworks, cloud-native AI 
-architectures, and model evaluation methodologies. 
-This role will lead the end-to-end lifecycle of GenAI initiatives, from translating business requirements into AI
-powered prototypes to delivering scalable, production-ready solutions across AWS, GCP, and Snowflake 
-ecosystems. The candidate will also establish engineering best practices around prompt governance, model 
-guardrails, benchmarking, and performance optimization. 
-Key Responsibilities: 
-Generative AI Solution Design 
-• Architect and implement enterprise-scale GenAI solutions using LLMs, foundation models, and agentic AI 
-frameworks. 
-• Design reusable AI patterns, accelerators, and reference architectures to enable rapid solution 
-development. 
-• Translate business problems into scalable AI workflows and production-ready proof-of-concepts. 
-• Drive AI platform modernization through adoption of emerging GenAI technologies and best practices. 
-Prompt Engineering & LLM Governance 
-• Develop and maintain sophisticated prompt engineering frameworks for controlled and reliable LLM 
-outputs. 
-• Implement prompt versioning, prompt lifecycle management, and testing strategies. 
-• Design AI guardrails to mitigate hallucinations, bias, security risks, and compliance concerns. 
-• Establish best practices for prompt optimization, response consistency, and output quality management. 
-AI Workflow Orchestration & Automation 
-• Design and build scalable orchestration pipelines using frameworks such as LangGraph, LangChain, 
-CrewAI, Semantic Kernel, or equivalent. 
-• Develop reusable AI components, tools, agents, and workflow templates for enterprise adoption. 
-• Implement multi-agent systems and autonomous workflows to support complex business use cases. 
-Prototyping & Business Enablement 
-• Partner with business stakeholders to identify high-value AI opportunities. 
-• Rapidly develop AI prototypes and MVP solutions using synthetic and enterprise datasets. 
-• Convert prototypes into production-ready applications adhering to scalability, security, and reliability 
-standards. 
-Cloud & Data Engineering 
-• Build scalable GenAI architectures across AWS, GCP, and Snowflake platforms. 
-• Leverage cloud-native AI services including Amazon Bedrock, SageMaker, Vertex AI, Snowflake Cortex AI, 
-and related ecosystems. 
-• Design robust RAG (Retrieval-Augmented Generation) architectures incorporating vector databases, 
-embeddings, and semantic search. 
-• Optimize model deployment, inference performance, and infrastructure cost efficiency. 
-Evaluation & Performance Optimization 
-• Establish AI evaluation frameworks to measure accuracy, relevance, latency, safety, and business impact. 
-• Develop benchmarking methodologies for comparing prompts, models, and workflows. 
-• Define KPIs, observability frameworks, and monitoring strategies for GenAI applications. 
-• Continuously improve model performance through prompt tuning, retrieval optimization, and workflow 
-enhancements. 
-EXL Service 
-10 Exchange Place, Suite 2200, Jersey City, NJ T: +1.201.748.4700  www.exlservice.com 
-Required Skills & Experience: 
-• Bachelor's or Master's degree in Computer Science, Artificial 
-Intelligence, Data Science, Engineering, or a related field.  
-• 8+ years of experience in software engineering, machine learning, data engineering, or AI 
-solution development.  
-• 4+ years of hands-on experience with Generative AI, LLMs, and foundation models.  
-• Strong experience designing enterprise GenAI solutions utilizing advanced LLM architectures 
-and prompt frameworks.  
-• Expertise in building scalable AI workflows, orchestration pipelines, and reusable AI 
-components.  
-• Proven ability to translate business requirements into production-ready AI solutions and 
-prototypes using synthetic data.  
-• Deep understanding of prompt versioning, prompt governance, guardrails, and controlled 
-LLM outputs.  
-• Hands-on experience with GCP, and Snowflake AI ecosystems.  
-• Strong knowledge of AI evaluation frameworks, benchmarking methodologies, and 
-optimization techniques.  
-• Experience with vector databases, embeddings, semantic search, and RAG architectures.  
-• Strong proficiency in Python and modern AI/ML development frameworks. 
-What we offer: 
-• EXL Analytics offers an exciting, fast paced and innovative environment, which brings together a 
-group of sharp and entrepreneurial professionals who are eager to influence business decisions. 
-From your very first day, you get an opportunity to work closely with highly experienced, world 
-class analytics consultants. 
-• You can expect to learn many aspects of businesses that our clients engage in. You will also learn 
-effective teamwork and time-management skills - key aspects for personal and professional 
-growth  
-• Analytics requires different skill sets at different levels within the organization. At EXL Analytics, 
-we invest heavily in training you in all aspects of analytics as well as in leading analytical tools 
-and techniques. 
-• We provide guidance/ coaching to every employee through our mentoring program wherein 
-every junior level employee is assigned a senior level professional as advisors. 
-• Sky is the limit for our team members. The unique experiences gathered at EXL Analytics sets 
-the stage for further growth and development in our company and beyond. 
-EXL Service 
-10 Exchange Place, Suite 2200, Jersey City, NJ T: +1.201.748.4700  www.exlservice.com 
+REQUIRED_FIELDS = {
+    "Patient":       ["identifier", "name", "gender", "birthDate"],
+    "Practitioner":  ["identifier", "name"],
+    "Organization":  ["name"],
+    "Location":      ["name", "status"],
+    "CareTeam":      ["status", "subject"],
+    "Condition":     ["subject", "clinicalStatus", "code"],
+    "Procedure":     ["subject", "status", "code"],
+    "ServiceRequest": ["status", "intent", "subject"],
+}
+
+VALUE_SETS = {
+    "Patient": {
+        "gender": {"male", "female", "other", "unknown"},
+    },
+    "Practitioner": {
+        "gender": {"male", "female", "other", "unknown"},
+    },
+    "Location": {
+        "status": {"active", "suspended", "inactive"},
+    },
+    "CareTeam": {
+        "status": {"proposed", "active", "suspended", "inactive", "entered-in-error"},
+    },
+    "Condition": {
+        "clinicalStatus.coding.code": {"active", "recurrence", "relapse", "inactive", "remission", "resolved"},
+    },
+    "Procedure": {
+        "status": {"preparation", "in-progress", "not-done", "on-hold", "stopped", "completed", "entered-in-error", "unknown"},
+    },
+    "ServiceRequest": {
+        "status": {"draft", "active", "on-hold", "revoked", "completed", "entered-in-error", "unknown"},
+        "intent": {"proposal", "plan", "directive", "order", "original-order", "reflex-order", "filler-order", "instance-order", "option"},
+    },
+}
+
+COMMON_VALUE_SETS = {
+    "telecom.system": {"phone", "fax", "email", "pager", "url", "sms", "other"},
+    "identifier.use": {"usual", "official", "temp", "secondary", "old"},
+    "name.use":       {"usual", "official", "temp", "nickname", "anonymous", "old", "maiden"},
+}
