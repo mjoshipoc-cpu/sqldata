@@ -1,15 +1,94 @@
 REQUIRED_FIELDS = {
-    "Patient":       ["identifier", "name", "gender", "birthDate"],
-    "Practitioner":  ["identifier", "name"],
-    "Organization":  ["name"],
-    "Location":      ["name", "status"],
-    "CareTeam":      ["status", "subject"],
-    "Condition":     ["subject", "clinicalStatus", "code"],
-    "Procedure":     ["subject", "status", "code"],
-    "ServiceRequest": ["status", "intent", "subject"],
+    # ---- Clinical Module ----
+    "AllergyIntolerance":   ["patient"],
+    "Condition":            ["subject"],
+    "Procedure":            ["subject", "status"],
+    "FamilyMemberHistory":  ["patient", "status", "relationship"],
+    "CarePlan":             ["subject", "status", "intent"],
+    "Goal":                 ["subject", "lifecycleStatus"],
+    "CareTeam":             [],   # no 1..1 elements in base FHIR
+
+    # ---- Diagnostic Module ----
+    "Observation":          ["status", "code"],
+    "DocumentReference":    ["status", "content"],
+    "ImagingStudy":         ["status", "subject"],
+    "DiagnosticReport":     ["status", "code"],
+    "ServiceRequest":       ["status", "intent", "subject"],
+
+    # ---- Medication Module ----
+    "MedicationDispense":       ["status", "medicationCodeableConcept"],
+    "MedicationAdministration": ["status", "medicationCodeableConcept", "subject"],
+    "Immunization":              ["status", "vaccineCode", "patient"],
+
+    # ---- Administration ----
+    "Patient":       [],   # no 1..1 elements in base FHIR
+    "Practitioner":  [],   # no 1..1 elements in base FHIR
+    "Organization":  [],   # no 1..1 elements in base FHIR
+    "Location":      [],   # no 1..1 elements in base FHIR
 }
 
 VALUE_SETS = {
+    # ---- Clinical Module ----
+    "AllergyIntolerance": {
+        "clinicalStatus.coding.code":      {"active", "inactive", "resolved"},
+        "verificationStatus.coding.code":  {"unconfirmed", "confirmed", "refuted", "entered-in-error"},
+        "type":                            {"allergy", "intolerance"},
+        "category":                        {"food", "medication", "environment", "biologic"},
+        "criticality":                     {"low", "high", "unable-to-assess"},
+        "reaction.severity":               {"mild", "moderate", "severe"},
+    },
+    "Condition": {
+        "clinicalStatus.coding.code":     {"active", "recurrence", "relapse", "inactive", "remission", "resolved"},
+        "verificationStatus.coding.code": {"unconfirmed", "provisional", "differential", "confirmed", "refuted", "entered-in-error"},
+    },
+    "Procedure": {
+        "status": {"preparation", "in-progress", "not-done", "on-hold", "stopped", "completed", "entered-in-error", "unknown"},
+    },
+    "FamilyMemberHistory": {
+        "status": {"partial", "completed", "entered-in-error", "health-unknown"},
+    },
+    "CarePlan": {
+        "status": {"draft", "active", "on-hold", "revoked", "completed", "entered-in-error", "unknown"},
+        "intent": {"proposal", "plan", "order", "option"},
+    },
+    "Goal": {
+        "lifecycleStatus": {"proposed", "planned", "accepted", "active", "on-hold", "completed", "cancelled", "entered-in-error", "rejected"},
+    },
+    "CareTeam": {
+        "status": {"proposed", "active", "suspended", "inactive", "entered-in-error"},
+    },
+
+    # ---- Diagnostic Module ----
+    "Observation": {
+        "status": {"registered", "preliminary", "final", "amended", "corrected", "cancelled", "entered-in-error", "unknown"},
+    },
+    "DocumentReference": {
+        "status":    {"current", "superseded", "entered-in-error"},
+        "docStatus": {"preliminary", "final", "amended", "entered-in-error"},
+    },
+    "ImagingStudy": {
+        "status": {"registered", "available", "cancelled", "entered-in-error", "unknown"},
+    },
+    "DiagnosticReport": {
+        "status": {"registered", "partial", "preliminary", "final", "amended", "corrected", "appended", "cancelled", "entered-in-error", "unknown"},
+    },
+    "ServiceRequest": {
+        "status": {"draft", "active", "on-hold", "revoked", "completed", "entered-in-error", "unknown"},
+        "intent": {"proposal", "plan", "directive", "order", "original-order", "reflex-order", "filler-order", "instance-order", "option"},
+    },
+
+    # ---- Medication Module ----
+    "MedicationDispense": {
+        "status": {"preparation", "in-progress", "cancelled", "on-hold", "completed", "entered-in-error", "stopped", "declined", "unknown"},
+    },
+    "MedicationAdministration": {
+        "status": {"in-progress", "not-done", "on-hold", "completed", "entered-in-error", "stopped", "unknown"},
+    },
+    "Immunization": {
+        "status": {"completed", "entered-in-error", "not-done"},
+    },
+
+    # ---- Administration ----
     "Patient": {
         "gender": {"male", "female", "other", "unknown"},
     },
@@ -19,21 +98,10 @@ VALUE_SETS = {
     "Location": {
         "status": {"active", "suspended", "inactive"},
     },
-    "CareTeam": {
-        "status": {"proposed", "active", "suspended", "inactive", "entered-in-error"},
-    },
-    "Condition": {
-        "clinicalStatus.coding.code": {"active", "recurrence", "relapse", "inactive", "remission", "resolved"},
-    },
-    "Procedure": {
-        "status": {"preparation", "in-progress", "not-done", "on-hold", "stopped", "completed", "entered-in-error", "unknown"},
-    },
-    "ServiceRequest": {
-        "status": {"draft", "active", "on-hold", "revoked", "completed", "entered-in-error", "unknown"},
-        "intent": {"proposal", "plan", "directive", "order", "original-order", "reflex-order", "filler-order", "instance-order", "option"},
-    },
+    # Organization has no coded terminology-bound fields in base FHIR
 }
 
+# shared datatype value sets, reused across every resource
 COMMON_VALUE_SETS = {
     "telecom.system": {"phone", "fax", "email", "pager", "url", "sms", "other"},
     "identifier.use": {"usual", "official", "temp", "secondary", "old"},
