@@ -1,109 +1,78 @@
-REQUIRED_FIELDS = {
-    # ---- Clinical Module ----
-    "AllergyIntolerance":   ["patient"],
-    "Condition":            ["subject"],
-    "Procedure":            ["subject", "status"],
-    "FamilyMemberHistory":  ["patient", "status", "relationship"],
-    "CarePlan":             ["subject", "status", "intent"],
-    "Goal":                 ["subject", "lifecycleStatus"],
-    "CareTeam":             [],   # no 1..1 elements in base FHIR
+# validator.py
+from pydantic import ValidationError
+from fhir.resources.R4B import construct_fhir_element
+from config import REQUIRED_FIELDS, VALUE_SETS, COMMON_VALUE_SETS
 
-    # ---- Diagnostic Module ----
-    "Observation":          ["status", "code"],
-    "DocumentReference":    ["status", "content"],
-    "ImagingStudy":         ["status", "subject"],
-    "DiagnosticReport":     ["status", "code"],
-    "ServiceRequest":       ["status", "intent", "subject"],
 
-    # ---- Medication Module ----
-    "MedicationDispense":       ["status", "medicationCodeableConcept"],
-    "MedicationAdministration": ["status", "medicationCodeableConcept", "subject"],
-    "Immunization":              ["status", "vaccineCode", "patient"],
+def _get_path(data: dict, path: str):
+    """Walk a dotted path like 'clinicalStatus.coding.code', handling lists.
+    Returns [] if any part of the path is missing (safe for optional fields)."""
+    parts = path.split(".")
+    current = [data]
+    for part in parts:
+        nxt = []
+        for item in current:
+            if isinstance(item, dict) and part in item:
+                val = item[part]
+                nxt.extend(val if isinstance(val, list) else [val])
+        current = nxt
+    return current
 
-    # ---- Administration ----
-    "Patient":       [],   # no 1..1 elements in base FHIR
-    "Practitioner":  [],   # no 1..1 elements in base FHIR
-    "Organization":  [],   # no 1..1 elements in base FHIR
-    "Location":      [],   # no 1..1 elements in base FHIR
-}
 
-VALUE_SETS = {
-    # ---- Clinical Module ----
-    "AllergyIntolerance": {
-        "clinicalStatus.coding.code":      {"active", "inactive", "resolved"},
-        "verificationStatus.coding.code":  {"unconfirmed", "confirmed", "refuted", "entered-in-error"},
-        "type":                            {"allergy", "intolerance"},
-        "category":                        {"food", "medication", "environment", "biologic"},
-        "criticality":                     {"low", "high", "unable-to-assess"},
-        "reaction.severity":               {"mild", "moderate", "severe"},
-    },
-    "Condition": {
-        "clinicalStatus.coding.code":     {"active", "recurrence", "relapse", "inactive", "remission", "resolved"},
-        "verificationStatus.coding.code": {"unconfirmed", "provisional", "differential", "confirmed", "refuted", "entered-in-error"},
-    },
-    "Procedure": {
-        "status": {"preparation", "in-progress", "not-done", "on-hold", "stopped", "completed", "entered-in-error", "unknown"},
-    },
-    "FamilyMemberHistory": {
-        "status": {"partial", "completed", "entered-in-error", "health-unknown"},
-    },
-    "CarePlan": {
-        "status": {"draft", "active", "on-hold", "revoked", "completed", "entered-in-error", "unknown"},
-        "intent": {"proposal", "plan", "order", "option"},
-    },
-    "Goal": {
-        "lifecycleStatus": {"proposed", "planned", "accepted", "active", "on-hold", "completed", "cancelled", "entered-in-error", "rejected"},
-    },
-    "CareTeam": {
-        "status": {"proposed", "active", "suspended", "inactive", "entered-in-error"},
-    },
+class FHIRResourceValidator:
+    """Generic validator for any FHIR R4 resource type, config-driven."""
 
-    # ---- Diagnostic Module ----
-    "Observation": {
-        "status": {"registered", "preliminary", "final", "amended", "corrected", "cancelled", "entered-in-error", "unknown"},
-    },
-    "DocumentReference": {
-        "status":    {"current", "superseded", "entered-in-error"},
-        "docStatus": {"preliminary", "final", "amended", "entered-in-error"},
-    },
-    "ImagingStudy": {
-        "status": {"registered", "available", "cancelled", "entered-in-error", "unknown"},
-    },
-    "DiagnosticReport": {
-        "status": {"registered", "partial", "preliminary", "final", "amended", "corrected", "appended", "cancelled", "entered-in-error", "unknown"},
-    },
-    "ServiceRequest": {
-        "status": {"draft", "active", "on-hold", "revoked", "completed", "entered-in-error", "unknown"},
-        "intent": {"proposal", "plan", "directive", "order", "original-order", "reflex-order", "filler-order", "instance-order", "option"},
-    },
+    def __init__(self, resource_type: str):
+        self.resource_type = resource_type
+        self.required_fields = REQUIRED_FIELDS.get(resource_type, [])
+        self.value_sets = {**COMMON_VALUE_SETS, **VALUE_SETS.get(resource_type, {})}
 
-    # ---- Medication Module ----
-    "MedicationDispense": {
-        "status": {"preparation", "in-progress", "cancelled", "on-hold", "completed", "entered-in-error", "stopped", "declined", "unknown"},
-    },
-    "MedicationAdministration": {
-        "status": {"in-progress", "not-done", "on-hold", "completed", "entered-in-error", "stopped", "unknown"},
-    },
-    "Immunization": {
-        "status": {"completed", "entered-in-error", "not-done"},
-    },
+    def validate_structure(self, data: dict):
+        """Schema/type/structural check via fhir.resources (pydantic models)."""
+        try:
+            resource = construct_fhir_element(self.resource_type, data)
+            return True, resource, []
+        except ValidationError as e:
+            return False, None, e.errors()
+        except KeyError:
+            return False, None, [{"msg": f"Unknown resourceType: {self.resource_type}"}]
 
-    # ---- Administration ----
-    "Patient": {
-        "gender": {"male", "female", "other", "unknown"},
-    },
-    "Practitioner": {
-        "gender": {"male", "female", "other", "unknown"},
-    },
-    "Location": {
-        "status": {"active", "suspended", "inactive"},
-    },
-    # Organization has no coded terminology-bound fields in base FHIR
-}
+    def validate_required_fields(self, data: dict) -> list:
+        """Cardinality check — only fields that are 1..1 in base FHIR."""
+        return [
+            f"Missing required field: {field}"
+            for field in self.required_fields
+            if not data.get(field)
+        ]
 
-# shared datatype value sets, reused across every resource
-COMMON_VALUE_SETS = {
-    "telecom.system": {"phone", "fax", "email", "pager", "url", "sms", "other"},
-    "identifier.use": {"usual", "official", "temp", "secondary", "old"},
-    "name.use":       {"usual", "official", "temp", "nickname", "anonymous", "old", "maiden"},
-}
+    def validate_value_sets(self, data: dict) -> list:
+        """Terminology binding check — only runs if the field is present."""
+        errors = []
+        for path, allowed in self.value_sets.items():
+            for value in _get_path(data, path):
+                if value not in allowed:
+                    errors.append(f"Invalid value at '{path}': {value}")
+        return errors
+
+    def validate(self, data: dict) -> dict:
+        if data.get("resourceType") != self.resource_type:
+            return {
+                "resourceType": data.get("resourceType"),
+                "overall_valid": False,
+                "structural_errors": [
+                    f"Expected resourceType '{self.resource_type}', got '{data.get('resourceType')}'"
+                ],
+            }
+
+        struct_ok, _, struct_errors = self.validate_structure(data)
+        required_errors = self.validate_required_fields(data)
+        value_errors = self.validate_value_sets(data)
+
+        return {
+            "resourceType": self.resource_type,
+            "structurally_valid": struct_ok,
+            "structural_errors": struct_errors,
+            "required_field_errors": required_errors,
+            "value_set_errors": value_errors,
+            "overall_valid": struct_ok and not required_errors and not value_errors,
+        }
