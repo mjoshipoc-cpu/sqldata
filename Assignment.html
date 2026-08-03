@@ -1,15 +1,26 @@
-# main.py
-import json
-from validator import FHIRResourceValidator
-
-
-def validate_file(path: str):
-    with open(path) as f:
-        data = json.load(f)
-    validator = FHIRResourceValidator(data["resourceType"])
-    return validator.validate(data)
-
-
-if __name__ == "__main__":
-    report = validate_file("allergyintolerance.json")
-    print(json.dumps(report, indent=2))
+{
+  "resourceType": "AllergyIntolerance",
+  "clinicalStatus": {
+    "coding": [{"code": "active"}]
+  },
+  "verificationStatus": {
+    "coding": [{"code": "confirmed"}]
+  },
+  "type": "allergy",
+  "category": ["medication"],
+  "criticality": "high",
+  "code": {
+    "coding": [{"system": "http://snomed.info/sct", "code": "7980", "display": "Penicillin"}]
+  },
+  "patient": {
+    "reference": "Patient/example"
+  },
+  "reaction": [
+    {
+      "manifestation": [
+        {"coding": [{"system": "http://snomed.info/sct", "code": "247472004", "display": "Hives"}]}
+      ],
+      "severity": "severe"
+    }
+  ]
+}
