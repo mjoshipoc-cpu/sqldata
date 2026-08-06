@@ -1,26 +1,47 @@
-{
-  "resourceType": "AllergyIntolerance",
-  "clinicalStatus": {
-    "coding": [{"code": "active"}]
-  },
-  "verificationStatus": {
-    "coding": [{"code": "confirmed"}]
-  },
-  "type": "allergy",
-  "category": ["medication"],
-  "criticality": "high",
-  "code": {
-    "coding": [{"system": "http://snomed.info/sct", "code": "7980", "display": "Penicillin"}]
-  },
-  "patient": {
-    "reference": "Patient/example"
-  },
-  "reaction": [
-    {
-      "manifestation": [
-        {"coding": [{"system": "http://snomed.info/sct", "code": "247472004", "display": "Hives"}]}
-      ],
-      "severity": "severe"
+# main.py
+import json
+from validator import FHIRResourceValidator
+
+
+def validate_resource(data: dict) -> dict:
+    resource_type = data.get("resourceType")
+    if not resource_type:
+        return {"overall_valid": False, "structural_errors": ["Missing resourceType"]}
+    validator = FHIRResourceValidator(resource_type)
+    return validator.validate(data)
+
+
+def validate_bundle(data: dict) -> dict:
+    entries = data.get("entry", [])
+    results = []
+    for i, entry in enumerate(entries):
+        resource = entry.get("resource")
+        if not resource:
+            results.append({"entry_index": i, "overall_valid": False, "structural_errors": ["Entry missing 'resource'"]})
+            continue
+        report = validate_resource(resource)
+        report["entry_index"] = i
+        results.append(report)
+
+    return {
+        "resourceType": "Bundle",
+        "total_entries": len(entries),
+        "valid_entries": sum(1 for r in results if r.get("overall_valid")),
+        "invalid_entries": sum(1 for r in results if not r.get("overall_valid")),
+        "entry_results": results,
+        "overall_valid": all(r.get("overall_valid") for r in results) if results else False,
     }
-  ]
-}
+
+
+def validate_file(path: str):
+    with open(path) as f:
+        data = json.load(f)
+
+    if data.get("resourceType") == "Bundle":
+        return validate_bundle(data)
+    return validate_resource(data)
+
+
+if __name__ == "__main__":
+    report = validate_file("bundle.json")
+    print(json.dumps(report, indent=2))
