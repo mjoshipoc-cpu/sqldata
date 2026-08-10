@@ -1,127 +1,122 @@
-import jwt
-import json
-from utils.logutils import logger
-from utils.confighelper import ConfigHelper
-from utils.db_utils import query_configdb
 
-class Jwtutils:
-    def __init__(self, clientname=None):
-        self.logger_obj = logger()
-        self.clientname = clientname
-        ch = ConfigHelper(clientname=self.clientname)
-        keys = ch.load_keys()
-        self.client_private_key = keys[0]
-        self.client_public_key = keys[1]
-        self.exl_private_key = keys[2]
-        self.exl_public_key = keys[3]
-        self.jwtconfig = ch.getJWTSettings()
 
-    def decode_jwt(self, token, internal = True):
-        try:
-            payload = jwt.decode(
-                token,
-                self.exl_public_key if internal else self.client_public_key,
-                algorithms=[f"{self.jwtconfig['jwt_algorithm']}"],
-                audience="interop.exlservice.com"
-            )
-            return payload
-        except jwt.ExpiredSignatureError:
-            self.logger_obj.log("Token expired")
-            raise ValueError("Token expired")
-        except jwt.InvalidTokenError:
-            self.logger_obj.log("Invalid token")
-            raise ValueError("Invalid token")
+Sdoh platform demo script · MD
+SDOH Risk Platform — Live Demo Script
+Flow: Cohort Overview → State Drill-Down (Illinois) → ZIP Drill-Down (60827) → Member Drill-Down (Devora Johnson) → AI Agent Reasoning → Intervention Lifecycle → Close
 
-    def encode_jwt(self, payload):
-        return jwt.encode(
-            payload,
-            self.exl_private_key,
-            algorithm=f"{self.jwtconfig['jwt_algorithm']}"
-        )
+1. Opening Hook (Cohort Overview)
+"Every health plan already scores risk from claims and clinical history. But there's a category of member who looks fine on paper — no hospitalizations, no red flags — until you look at where they live. That risk is real, and a claims-only model never sees it. Let me show you.
 
-    def validate_jwt_sub(self, payload, expected_sub):
-        if payload.get('sub') != expected_sub or payload.get('aud') != "interop.exlservice.com":
-            self.logger_obj.log("sub claim does not match")
-            raise ValueError("sub claim does not match")
-        
-    def validate_jwt_claims(self, payload: dict):
-        """
-        Validates JWT claims for 'sub', 'iss', and 'aud' against expected values.
-        Returns (is_valid, mismatches) where mismatches is a list of claim names that do not match.
-        Comparison is case-insensitive.
 
-        Args:
-            payload (dict): Decoded JWT payload.
-            clientname (str): Expected client name for 'sub'.
 
-        Returns:
-            tuple: (bool, list) where bool is True if all claims match, False otherwise.
-                list contains names of mismatched claims.
-        """
-        expected_iss = 'interop.exlservice.com'
-        expected_aud = 'interop.exlservice.com'
 
-        mismatches = []
-        if str(payload.get('sub', '')).lower() != str(self.clientname).lower():
-            mismatches.append('sub')
-        if str(payload.get('iss', '')).lower() != expected_iss.lower():
-            mismatches.append('iss')
-        if str(payload.get('aud', '')).lower() != expected_aud.lower():
-            mismatches.append('aud')
-        
-        return len(mismatches) == 0, mismatches
 
-    def get_oauth_config(self):
-        """
-        Fetch OAuth configuration for a client from config.vw_clientmessage.
-        Expected columns in view: oauthflag, oauth_api, oauth_headers, oauth_data.
-        Returns a dict with safe defaults.
-        """
-        query = """
-            SELECT
-                oauthflag,
-                oauth_api,
-                oauth_headers,
-                oauth_data
-            FROM config.vw_clientmessage
-            WHERE lower(client) = %s
-              AND endpointdesttype = 'RESTAPI'
-            LIMIT 1
-        """
 
-        defaults = {
-            "oauthflag": False,
-            "oauth_api": None,
-            "oauth_headers": {},
-            "oauth_data": {}
-        }
 
-        if not self.clientname:
-            return defaults
 
-        try:
-            row = query_configdb(query, (self.clientname.lower(),))
-            if not row:
-                return defaults
 
-            oauthflag = row.get("oauthflag", False)
-            if isinstance(oauthflag, str):
-                oauthflag = oauthflag.strip().lower() in {"1", "true", "t", "yes", "y"}
+this is executive levl summary
+We're scoring 99,999 members across 434 ZIP codes in 11 states. Right now, 64 ZIP codes need immediate intervention, and the average blended risk score across the whole cohort is 0.362.
 
-            oauth_headers = row.get("oauth_headers") or {}
-            oauth_data = row.get("oauth_data") or {}
+But here's the number that actually matters: 13,305 members — 13.3% of the entire cohort — are cases where adding social determinants of health data meaningfully changed their risk picture. That's not noise. That's a real, measurable jump a claims-only model would have missed entirely.
 
-            if isinstance(oauth_headers, str):
-                oauth_headers = json.loads(oauth_headers)
-            if isinstance(oauth_data, str):
-                oauth_data = json.loads(oauth_data)
+We measure that with what we call SDOH Lift — the difference between a member's risk probability with SDOH data included versus clinical data alone. Anything at or above a 0.10 lift is flagged Moderate or High SDOH impact. Those 13,305 members all clear that bar."
 
-            return {
-                "oauthflag": bool(oauthflag),
-                "oauth_api": row.get("oauth_api"),
-                "oauth_headers": oauth_headers if isinstance(oauth_headers, dict) else {},
-                "oauth_data": oauth_data if isinstance(oauth_data, dict) else {}
-            }
-        except Exception as e:
-            self.logger_obj.log(f"Failed to fetch oauth config: {str(e)}", "warning")
-            return defaults
+[Pause for reaction / questions before drilling in.]
+
+2. State Drill-Down — Illinois
+"Let's go one level down. Illinois is our #1 flagged state right now —  67 ZIP codes, broken out as 14 High, 28 Moderate, and 25 Low disadvantage tiers. Average risk score is 0.368, and SDOH impact sits at 13.2% of members here.
+
+Three numbers matter on this panel.
+
+Avg Risk Score — 0.368. That's our blended model's average prediction across every ZIP in this state — clinical severity and social risk combined into one number.
+
+SDOH Lift — basically zero, actually slightly negative at the state level. This is the average gap between our SDOH-enhanced model and a clinical-only baseline, across the whole state. At this scale, some members' risk goes up because of social factors, others go down because of protective factors — and across a whole state, those tend to cancel out. That's exactly why the Base score and the Risk Score look almost identical here: 0.368 either way. The real story isn't at the state level — it's at the individual level, and that's where we're headed next.
+
+Tier Mix — 14 High / 28 Moderate / 25 Low. That's how many ZIPs fall into each neighborhood-disadvantage tier. It's a separate, area-level signal from the risk score itself — which is why we track it independently.
+
+If someone asks: 'So what's the point of showing state-level lift if it's basically zero?' — the answer is: it confirms the model isn't systematically biased in one direction for this state. It validates the model at scale, before we zoom into the individuals where the real signal shows up.
+
+Now look at the domain bars. Economic leads at 0.516; Healthcare is the lowest at 0.182. Illinois's problem isn't access to doctors — it's economic instability. And in the burden mix donut, Food Desert alone accounts for 36% of total burden — bigger than the poverty rate itself."
+
+3. ZIP Drill-Down — 60827
+"Let me filter down to a single ZIP — 60827 in Illinois — so you can see exactly how this platform thinks about one specific neighborhood.
+
+This ZIP has 334 members. The top panel tells me 39 of our overall Critical members and 138 High Risk members are in scope here. But the number that matters most for this ZIP specifically is 141 — High-Risk, SDOH-Confirmed. These are people flagged high-risk specifically because of where they live and their social circumstances, not just their medical history.
+Now the score breakdown: Clinical Score is 0.389 — what a traditional, clinical-only model would say. Add SDOH data, and it jumps by 0.137 to a final Risk Score of 0.526. That jump is the whole value proposition of this platform in one number. Ignore social risk, and this ZIP looks moderate. Include it, and it crosses into high-risk territory.
+
+
+Why? Look at the domain scores — Neighborhood is highest at 0.630, Economic close behind at 0.546. This isn't a healthcare problem in this ZIP — it's an environment problem. Poverty, housing, and area disadvantage are driving risk here far more than clinical health issues.
+
+
+
+
+
+
+
+4. Member Drill-Down — Devora Johnson 1966019(Member #360)
+"Let me take this all the way down to the individual level. This is Devora Johnson — 56 years old, lives in Chicago, Illinois, ZIP 60827.
+
+Her composite risk score is 0.82 — High tier. But here's what's interesting: if you only looked at her clinical history — her conditions, her utilization — the score would be 0.42. It's the SDOH data that adds another 0.40 on top, nearly half her total risk score. That's not a rounding error. That's the platform telling us: for this woman, social circumstances drive her risk almost as much as her clinical history does.
+
+Why? Her Neighborhood domain scores highest at 0.63. She lives in a High Disadvantage area — nearly 24% poverty rate, 17% unemployment, 44% food insecurity, and she's in a food desert with no reliable vehicle access. This isn't abstract. This is the environment she lives in every day.
+
+Now look at her actual healthcare utilization: 35 total visits, zero ED visits, one inpatient admission. On paper, that's a low-touch, low-cost patient — annual claims cost around $2,800. If you triaged purely on clinical utilization or cost, she would not stand out.
+
+But dig one level deeper. Her Financial Risk Tier is Critical. Her income is 46% of the Federal Poverty Level — well below our safety-net eligibility threshold. She's carrying two active personal flags — unemployment and stress — both mapped to standard SDOH diagnosis codes already in her record. And she has two open HEDIS quality gaps: a breast cancer screening and a colorectal screening, both unclosed.
+
+Here's the tension I want you to notice: her PHQ-9 depression screening came back minimal — a score of 4. If we only trusted that one clinical data point, we'd say she's fine emotionally. But everything else — the stress flag, the financial pressure, the neighborhood disadvantage — tells us there's real strain here that a single point-in-time screening didn't capture.
+
+So what does the platform do with all of this? It doesn't just flag her — it acts. Three interventions are already confirmed: a referral to SNAP enrollment and a food bank, because she qualifies financially and lives in a food desert; outreach for her open care gaps, because a low-cost patient with unclosed quality gaps is exactly who falls through the cracks; and a workforce and job training referral, because addressing her unemployment addresses the root cause, not just the symptom.
+
+This is the complete loop — a member who looks unremarkable by traditional cost and utilization metrics, but who the platform correctly identifies as high-risk, with three concrete, income-qualified, evidence-based actions already moving toward her care team for approval."
+
+
+5. Behind the Scenes — The AI Agents
+"Before the platform decides what to do, two agents build the reasoning behind it — and this is where I want to show you the AI isn't hallucinating, it's reasoning from the actual data.
+
+Agent 1 — Risk Analysis — writes the headline finding: this member is high risk 'due to factors beyond traditional clinical metrics.' Notice what it does not say — it doesn't claim she has high spend or heavy utilization. It explicitly calls out just one inpatient admission and zero ED visits, and states plainly that SDOH factors — not clinical severity — are driving 49% of her risk score. That's the guardrail: the AI is grounded in her actual numbers, not guessing at her financial situation.
+
+Agent 2 — SDOH Assessment — goes one level deeper and explains why. It identifies Neighborhood as her dominant barrier at 0.630, and connects that to environmental and access-related risk. The more interesting part is the second half: it doesn't just list her three needs, it explains the sequencing logic. Food security comes first — not because it's the most severe finding on paper, but because it's foundational. You can't expect someone to engage with a workforce program or follow through on a care gap appointment if they're food insecure. Solve the foundational need first, and the member is in a better position to act on everything else.
+
+That's the difference between a rules engine that just lists interventions and an AI that can explain prioritization the way a human case manager would — with a rationale a care manager could actually defend to a medical director.
+
+Once the risk analysis is done, the platform hands off to two more agents that decide how to act.
+
+Agent 3 — the channel selector — looks at her profile and decides outreach isn't going to be a generic text message. Her SDOH Burden Index is high, and her primary domain is Neighborhood — meaning her biggest barrier isn't a lack of information, it's a lack of access. So the AI recommends a Community Health Worker — someone who can work with her directly, not just send an automated message.
+
+Agent 4 — the campaign planner — takes that decision and builds the actual action plan. It's not just 'reach out' — it names the specific program: Food Security Support, with a concrete intervention type, SNAP Enrollment and Food Bank Referral. And it's time-bound: first contact within 48 hours because she's High risk, a referral completed within 2 weeks, and a 30-day follow-up to confirm she actually enrolled and used the resource — not just that we called her.
+
+What I want you to notice is that this isn't one AI generating a paragraph — it's four specialized agents, each making one decision, and each one builds directly on what the previous one decided. The channel and the plan are connected, not independent guesses."
+
+6. Intervention Lifecycle — Food Security Support
+"This is the complete lifecycle of one intervention — from first contact to resolution — and it's the best place to show that the platform isn't just generating messages, it's adapting based on what the member actually says.
+
+Screening Call, 48 hours in: the AI script introduces the SNAP and food bank referral, and mentions the other two interventions in the queue — the care gap and job training — so she knows more help is coming. She responds, 'yes please schedule.' The system tags her as Engaged.
+
+Refer to Program, 72 hours in — and this is the key moment: the message isn't generic. It says, 'you'd mentioned you'd like to schedule a meeting' — directly referencing her prior response. This message was regenerated the moment she responded to the first call, not written at send time — so by the time it went out, it was already personalized to what she'd said.
+
+Her reply this time — 'thanks, for refer' — is genuinely ambiguous, and the system is honest about that: it tags it 'Unclear' rather than guessing.
+
+2-Week Check-In: same pattern — the message references her exact words again, and here you can see the AI's decision explicitly stated: 'Proceed — member said thanks for refer — intent unclear, proceeding with the standard next step.' When the system isn't confident, it doesn't stall or guess — it falls back to the safe default and tells you why.
+
+30-Day Referral Outcome Check: she responds, 'yes I have completed, thanks' — clear and unambiguous this time. The system tags the gap Closed and explicitly parses her words as confirmation: 'Member confirmed... referral resolved.'
+
+Now notice the two amber 'Possible delivery signal' tags — on her first and last responses. This is a lightweight keyword check, not another AI judgment. It's flagging that her free-text answer might indicate something was actually delivered or completed, and asking a human to confirm it, rather than auto-closing the loop on a text match alone. That's the Confirm Delivery box at the bottom — the care manager types the actual confirmation, like 'Navigator confirmed enrollment by phone 7/15,' and clicks Mark Delivered. The AI surfaces the signal; a person confirms the fact.
+
+The platform is careful not to conflate 'we texted her and she replied' with 'the service actually happened.' Every touchpoint above proves contact. This box is where a human confirms the real-world outcome — that a navigator actually enrolled her — and that gets logged as its own distinct fact in the record, not inferred from an SMS reply.
+
+Once this loop plays out, the care manager makes one final call: Closed if it worked, Escalate if it needs a human to step in beyond this workflow, or Retry if the approach itself failed — not just resend the same plan, but genuinely re-decide the channel and campaign from the top."
+
+7. Close
+"So that's the full path: 99,999 members, down to 434 ZIP codes, down to one ZIP with 157 hidden-risk members, down to one woman the clinical model would have missed entirely — and a set of AI agents that reasoned through why she's at risk, what to do about it, and adapted in real time as she responded.
+
+That's the platform: claims-only models find the people who are already sick. This finds the people who are about to be — while there's still time to act."
+
+Quick-Reference Cheat Sheet (numbers to have ready)
+Level	Key Figures
+Cohort	99,999 members · 434 ZIPs · 11 states · 64 ZIPs need immediate intervention · avg risk 0.362 · 13,305 (13.3%) SDOH-impacted
+Illinois (state)	67 ZIPs · 14 High / 28 Moderate / 25 Low · avg risk 0.368 · lift ≈ 0 · 13.2% impact · Critical urgency
+ZIP 60827	334 members · 141 High-Risk SDOH-Confirmed · 157 Hidden Risk (87 Moderate / 70 Low) · Clinical 0.389 → Risk 0.526 (+0.137 lift) · Neighborhood 0.630 top domain
+Devora Johnson	Age 56 · Composite 0.82 (Clinical 0.42 + SDOH +0.40) · 20 visits / 0 ED / 1 inpatient · $2,800 annual claims · Income 46% FPL · PHQ-9 = 4 (minimal) · 2 open HEDIS gaps · 3 confirmed interventions
+SDOH Lift formula	P(Critical∪High | clinical+SDOH) − P(Critical∪High | clinical-only); ≥0.20 High, ≥0.10 Moderate, ≥0.00 Low, <0 Protective
