@@ -1,419 +1,127 @@
-from flask import Blueprint, request, jsonify, current_app
-from datetime import datetime
-from pymongo.errors import DuplicateKeyError
-from utils.jwt_utils import Jwtutils
-from utils.db_utils import get_mongo_db_conn
-from utils.trackerutils import insert_tracking_record, tracking_data_define
+import jwt
+import json
 from utils.logutils import logger
-from fhirclient.models.subscription import Subscription as FHIRSubscription
-from bson.objectid import ObjectId
-import json, os
-import sys
+from utils.confighelper import ConfigHelper
+from utils.db_utils import query_configdb
 
-logger_obj = logger()
+class Jwtutils:
+    def __init__(self, clientname=None):
+        self.logger_obj = logger()
+        self.clientname = clientname
+        ch = ConfigHelper(clientname=self.clientname)
+        keys = ch.load_keys()
+        self.client_private_key = keys[0]
+        self.client_public_key = keys[1]
+        self.exl_private_key = keys[2]
+        self.exl_public_key = keys[3]
+        self.jwtconfig = ch.getJWTSettings()
 
-subscription_bp = Blueprint('claim/$subscription', __name__)
-# This is the subscription method.  It has to handle 1 inquiry profile type:  
-#      Subscription
-@subscription_bp.route('/claim/$subscription', methods=['POST'])
-def subscription():
-    try:
-        
-        # start the tracking table data
-        profile_type = "Subscription"
-        tracking_data = tracking_data_define()
-        requested_url = request.url
-        requested_dts = datetime.now()
-        tracking_data["Stage"] = "Begining of Subcription"
-        tracking_data["RequestURL"] = requested_url
-        tracking_data["RequestReceivedDTS"] = requested_dts
-        tracking_data["MessageType"] = profile_type
-
-        #verify the requst
-        # get client from header
-        clientname = request.headers.get("Client", None) or None
-        if not clientname:
-            return {"error": "Invalid Client is passed in header"}, 400
-        tracking_data["Client"] = clientname
-        tracking_data["Stage"] = "Added Client Name"
-        jwt_utils = Jwtutils(clientname=clientname)
-
-        # get and validate the header authorization
-        auth_header = request.headers.get("Authorization", None) or None
-
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return {"error": "Unauthorized Token"}, 401
-        
-        token = auth_header.split(" ")[1]
-
-        if not token:
-            logger_obj.log("Missing jwt",'error')
-            return jsonify({"error": "Missing jwt"}), 401
-        
-        if not request.is_json:
-            logger_obj.log("Request is not JSON",'info')
-            raise ValueError("Request has to be JSON")
-
-        # check the content type
-        content_type = request.content_type.split('/')[1]
-        logger_obj.log(content_type,'debug')
-        
-        if content_type not in ['json', 'xml']:
-            logger_obj.log("Unsupported content type",'info')
-            raise ValueError("Unsupported content type or invalid data format")
-
-        
-        # get and validate the data
-        json_data = json.loads(request.get_data())
-        if json_data is None:
-            raise ValueError("no data submitted in the body")
-
-        
-        payload = jwt_utils.decode_jwt(token)
-        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
-        if not is_valid:
-            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
-            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
-        logger_obj.log("valid jwt",'info')
-
-        # Initialize the subscription object
+    def decode_jwt(self, token, internal = True):
         try:
-            subscription = FHIRSubscription(json_data)
-        except Exception as e:
-            # add error to tracking_data and write it out
-            errorcode = "400 Bad Request - Subscription Error: " + str(e)
-            results = errorcode
-            tracking_data["Message"] = "Subscription Error: " + str(e)
-            tracking_data["Success"] = "Failed"
-            tracking_data["SuccessFlag"] = 0
-            insert_tracking_record(tracking_data)
-            return results
+            payload = jwt.decode(
+                token,
+                self.exl_public_key if internal else self.client_public_key,
+                algorithms=[f"{self.jwtconfig['jwt_algorithm']}"],
+                audience="interop.exlservice.com"
+            )
+            return payload
+        except jwt.ExpiredSignatureError:
+            self.logger_obj.log("Token expired")
+            raise ValueError("Token expired")
+        except jwt.InvalidTokenError:
+            self.logger_obj.log("Invalid token")
+            raise ValueError("Invalid token")
+
+    def encode_jwt(self, payload):
+        return jwt.encode(
+            payload,
+            self.exl_private_key,
+            algorithm=f"{self.jwtconfig['jwt_algorithm']}"
+        )
+
+    def validate_jwt_sub(self, payload, expected_sub):
+        if payload.get('sub') != expected_sub or payload.get('aud') != "interop.exlservice.com":
+            self.logger_obj.log("sub claim does not match")
+            raise ValueError("sub claim does not match")
         
-        # get the subscription data we need
-        substatus = subscription.status.lower()
-        if substatus == "active":
-            activerec = 1
-        else:
-            activerec = 0
-        subcontact = subscription.contact
-        subend = subscription.end
-        subreason = subscription.reason
-        subtype = subscription.channel.type.lower()
-        subendpoint = subscription.channel.endpoint
+    def validate_jwt_claims(self, payload: dict):
+        """
+        Validates JWT claims for 'sub', 'iss', and 'aud' against expected values.
+        Returns (is_valid, mismatches) where mismatches is a list of claim names that do not match.
+        Comparison is case-insensitive.
 
-        # get criteria data
-        if type(subscription.criteria) is str:
-            criteria = json_data["_criteria"] # this is in the example but not in the FHIR documentation
-        else:
-            criteria = subscription.criteria # this is what is should be based on the FHIR documentation
-        url, value = "", ""
-        for ext in criteria["extension"]:
-            url = ext["url"]
-            # value = ext["value"] # this should be 'value' based on the FHIR documentation
-            value = ext["valueString"] # this should be 'value' not 'valueString' but the example has 'valueString'
-            break
-        filtercriteria = {"URL": url, "Value": value} 
+        Args:
+            payload (dict): Decoded JWT payload.
+            clientname (str): Expected client name for 'sub'.
 
-        # get payload data
-        if type(subscription.channel.payload) is str:
-            payload = json_data["channel"]["_payload"] # this is in the example but not in the FHIR documentation
-        else:
-            payload = subscription.channel.payload # this is what is should be based on the FHIR documentation
-        for ext in payload["extension"]:
-            valuecode = ext["valueCode"]
-            break
-        subpayloadvaluecode = valuecode.lower()
-        channel = {"Type": subtype, "EndPoint": subendpoint, "PayloadValueCode": subpayloadvaluecode}
+        Returns:
+            tuple: (bool, list) where bool is True if all claims match, False otherwise.
+                list contains names of mismatched claims.
+        """
+        expected_iss = 'interop.exlservice.com'
+        expected_aud = 'interop.exlservice.com'
 
-        # test for valid status and type and payload valuecode
-        valid_status = ["active", "off"]
-        valid_type = ["rest-hook"]
-        valid_valuecode = ["full-resource"]
-        valid_flag, valid_error = 0, ""
-        if substatus not in valid_status:
-            valid_flag = -1
-            valid_error = "Invalid status - must be set to [active] or [off] only"
-        if subtype not in valid_type:
-            valid_flag = -1
-            valid_error = "Invalid Channel Type - must be [rest-hook] only"
-        if subpayloadvaluecode not in valid_valuecode:
-            valid_flag = -1
-            valid_error = "Invalid Payload ValueCode - must be [full-resource] only"
-        if valid_flag == -1:
-            # add error to tracking_data and write it out
-            errorcode = "400 Bad Request - Subscription Error: " + valid_error + " - Please check"
-            results = errorcode
-            tracking_data["Message"] = "Subscription Error: " + valid_error + " - Please check"
-            tracking_data["Success"] = "Failed"
-            tracking_data["SuccessFlag"] = 0
-            insert_tracking_record(tracking_data)
-            return results
+        mismatches = []
+        if str(payload.get('sub', '')).lower() != str(self.clientname).lower():
+            mismatches.append('sub')
+        if str(payload.get('iss', '')).lower() != expected_iss.lower():
+            mismatches.append('iss')
+        if str(payload.get('aud', '')).lower() != expected_aud.lower():
+            mismatches.append('aud')
         
-        # define the provider
-        allnpi, providernpi, providermsg = "N", "", ""
-        if value == "Client Subscription":
-            allnpi = "Y"
-            providermsg = "Client"
-        else:
-            providernpi = value[-10:]
-            providermsg = "NPI " + providernpi
-        provider = {"AllNPI": allnpi, "ProviderNPI": providernpi}
+        return len(mismatches) == 0, mismatches
 
-        # get a mongodb subscription connection 
-        subscription_collection = get_mongo_db_conn(clientname,'Subscriptions')
+    def get_oauth_config(self):
+        """
+        Fetch OAuth configuration for a client from config.vw_clientmessage.
+        Expected columns in view: oauthflag, oauth_api, oauth_headers, oauth_data.
+        Returns a dict with safe defaults.
+        """
+        query = """
+            SELECT
+                oauthflag,
+                oauth_api,
+                oauth_headers,
+                oauth_data
+            FROM config.vw_clientmessage
+            WHERE lower(client) = %s
+              AND endpointdesttype = 'RESTAPI'
+            LIMIT 1
+        """
 
-        # deactivate prior subscription rows if a new client subscription comes in
-        if allnpi == "Y":
-            deactive = deactivate(subscription_collection)
-            if deactive == -1:
-                # add error to tracking_data and write it out
-                errorcode = "400 Bad Request - Subscription Error: Cannot deactivate prior subscriptions - Please check"
-                results = errorcode
-                tracking_data["Message"] = "Subscription Error: Cannot deactivate prior subscriptions - Please check"
-                tracking_data["Success"] = "Failed"
-                tracking_data["SuccessFlag"] = 0
-                insert_tracking_record(tracking_data)
-                return results
-        # deactivate prior NPI subscription if a new one comes in and check that a client subscription is not on
-        else:
-            deactive = deactivate(subscription_collection, providernpi)
-            if deactive == -1:
-                # add error to tracking_data and write it out
-                errorcode = "400 Bad Request - Subscription Error: - Cannot deactivate prior NPI subscriptions - Please check"
-                results = errorcode
-                tracking_data["Message"] = "Subscription Error: Cannot deactivate prior NPI subscriptions - Please check"
-                tracking_data["Success"] = "Failed"
-                tracking_data["SuccessFlag"] = 0
-                insert_tracking_record(tracking_data)
-                return results
-            chkclientsub = check_client_sub(subscription_collection)
-            if chkclientsub == -1:
-                # add error to tracking_data and write it out
-                errorcode = "400 Bad Request - Subscription Error: Cannot add NPI subscription when a client subscription is active"
-                results = errorcode
-                tracking_data["Message"] = "Subscription Error: Cannot add NPI subscription when a client subscription is active - Please check"
-                tracking_data["Success"] = "Failed"
-                tracking_data["SuccessFlag"] = 0
-                insert_tracking_record(tracking_data)
-                return results
-
-        # create the subscription row to load into the database
-        sub_row = {"InsertDTS":datetime.now(),"InsertUser": "Interopservice",
-             "UpdateDTS":datetime.now(),"UpdateUser": "Interopservice",
-             "ResourceType": profile_type,
-             "SubscriptionId": "",
-             "Provider": provider,
-             "Status": substatus,
-             "Contact": subcontact,
-             "End": subend,
-             "Reason": subreason,
-             "FilterCriteria": filtercriteria,
-             "Channel": channel,
-             "DataFromSource": json_data,
-             "DataToSource": "",
-             "ActiveRecord": activerec
-            }
-        
-        # load the subscription into the mongodb subscription collection
-        sub_cnt = 0
-        sub_results = load_subscription(subscription_collection, sub_row, sub_cnt, requested_url)
-        sub_cnt = sub_results[0]
-        if sub_cnt == -1:
-            # add error to tracking_data and write it out
-            errorcode = "400 Bad Request - Subscription Error: Cannot create a Subscription - Please check"
-            results = errorcode
-            tracking_data["Message"] = "Subscription Error: Cannot create a Subscription - Please check"
-            tracking_data["Success"] = "Failed"
-            tracking_data["SuccessFlag"] = 0
-            insert_tracking_record(tracking_data)
-            return results
-        if sub_cnt == -2:
-            # add error to tracking_data and write it out
-            errorcode = "400 Bad Request - Subscription Error: Cannot create a Subscription - Please check"
-            results = errorcode
-            tracking_data["Message"] = "Subscription Error: Cannot create the unique Subscription ID index on the Subscription collection - Please delete all documents in the collection and try again."
-            tracking_data["Success"] = "Failed"
-            tracking_data["SuccessFlag"] = 0
-            insert_tracking_record(tracking_data)
-            return results
-        
-        # define the subscription results
-        sub_obj_id = sub_results[1]
-        subid = sub_results[2]
-        results = sub_results[3]
-
-         # close the subscription collection
-        subscription_collection.close
-
-        # add to tracking_data and write it out
-        tracking_msg = "Logged a Subscription [" + subid + "] for " + providermsg + " with status [" + substatus + "]"
-        success_msg = "Success"
-        success_flag = 1
-        tracking_data["Stage"] = "Logged subscription into MongoDB subscription collection"
-        tracking_data["RequestObjectId"] = sub_obj_id
-        tracking_data["ResponseForwardDTS"] = datetime.now()
-        tracking_data["Message"] = tracking_msg
-        tracking_data["Success"] = success_msg
-        tracking_data["SuccessFlag"] = success_flag
-        insert_tracking_record(tracking_data)
-        
-        # return results
-        return results
-
-    except Exception as e:
-        # add error to tracking_data and write it out
-        errorcode = "400 Bad Request - Subscription Error: " + str(e)
-        results = errorcode
-        tracking_data["Message"] = "Subscription Error: " + str(e)
-        tracking_data["Success"] = "Failed"
-        tracking_data["SuccessFlag"] = 0
-        insert_tracking_record(tracking_data)
-        return results
-
-
-#
-# function - Load a subscription into the database   
-# 
-def load_subscription(subscription_collection, sub_row, sub_cnt, requested_url):
-
-    # Get the current date and time
-    now = datetime.now()
-    sub_cnt += 1
-
-    # Extract the current month and year
-    current_mth = "0" + str(now.month)
-    current_month = current_mth[-2:]
-    current_year = str(now.year)[-2:]
-
-    # set the check id for current year + month
-    chkidstr = current_year + current_month + "0"
-    chkid = int(chkidstr)
-
-    # add a unique index on the collection if it doesn't exist
-    indexes = subscription_collection.list_indexes()
-    index_exists = False
-    for index in indexes:
-        if index['name'] == 'SubscriptionId':
-            index_exists = True
-            break
-    if not index_exists:
-        try:
-            subscription_collection.create_index([('SubscriptionId', 1)], unique=True)
-        except Exception as e:
-            try:
-                subscription_collection.drop_index('SubscriptionId')
-                subscription_collection.create_index([('SubscriptionId', 1)], unique=True)
-            except Exception as e:
-                print(f"Cannot create the unique Subscription ID index  on the Subscription collection - Please delete all documents in the collection and try again.")
-                return [-2, None, -1, ""]
-
-    # get the max subscription id from the current documents
-    sub_id_max = ''
-    sub_id_results = subscription_collection.find_one({}, sort=[('SubscriptionId', -1)], projection={'_id': 0, 'SubscriptionId': 1})
-    if sub_id_results:
-        sub_id_max = sub_id_results['SubscriptionId']
-
-    # define the new subscription id
-    if sub_id_max != '':
-        curid = int(sub_id_max[5:])
-    else:
-        curid = chkid
-    if chkid > curid:
-        newid = chkid + 1
-    else:
-        newid = curid + 1
-    subid = "SubID" + str(newid)
-
-    # Storing subscription in MongoDB subscription collection
-    results = "201 Created Location: " + requested_url + "/" + subid + " for status [" + sub_row["Status"] + "]"
-    sub_row["SubscriptionId"] = subid
-    sub_row["DataToSource"] = results
-    try:
-        sub_result = subscription_collection.insert_one(sub_row)
-        sub_obj_id = ObjectId(sub_result.inserted_id)
-    except DuplicateKeyError:
-        # call the funtion again to try again 
-        if sub_cnt > 10:
-            return [-1, None, -1, ""]
-        else:
-            sub_results = load_subscription(subscription_collection, sub_row, sub_cnt, requested_url)
-            sub_cnt = sub_results[0]
-            sub_obj_id = sub_results[1]
-            subid = sub_results[2]
-            results = sub_results[3]
-    except Exception as e:
-        return -1
-
-
-    # define the results to return
-    sub_results = [sub_cnt, sub_obj_id, subid, results]
-    
-    # return results
-    return sub_results
-
-
-#
-# function - deactivate prior subscription rows in the collection before adding a new   
-# 
-def deactivate(subscription_collection, providernpi=""):
-
-    # read each document in the collection for the NPI with an ActiveRecord = 1 and update it
-    total_rowcnt = 0
-    if providernpi == "":
-        query = {"ActiveRecord": 1}
-    else:
-        query = {
-            '$and': [
-            {"Provider.ProviderNPI": providernpi},{"ActiveRecord": 1}
-            ]
+        defaults = {
+            "oauthflag": False,
+            "oauth_api": None,
+            "oauth_headers": {},
+            "oauth_data": {}
         }
-    result_columns = {"_id": 1}
-    result_find = subscription_collection.find(query, result_columns)
-    if result_find:
-        for result in result_find:
-            object_id = result["_id"]
-            # update the record
-            query_filter = {"_id": object_id}
-            query_update = { "$set": { "ActiveRecord": 0, "UpdateDTS": datetime.now(),"UpdateUser": "Interopservice" } }
-            try:
-                result_upd = subscription_collection.update_one(query_filter, query_update)
-                row_cnt = result_upd.modified_count
-                total_rowcnt += row_cnt
-                print(f"NPI modified row_cnt = {row_cnt}")
-            except Exception as e:
-                # update failed
-                print(f"NPI Deactivate_all update error: {e}")
-                return -1
-    print(f"NPI updated total_rowcnt = {total_rowcnt}")
 
-    # return results
-    return 1
+        if not self.clientname:
+            return defaults
 
+        try:
+            row = query_configdb(query, (self.clientname.lower(),))
+            if not row:
+                return defaults
 
-#
-# function - check to see if there is an active client subscription before adding a new NPI subscription 
-# 
-def check_client_sub(subscription_collection):
+            oauthflag = row.get("oauthflag", False)
+            if isinstance(oauthflag, str):
+                oauthflag = oauthflag.strip().lower() in {"1", "true", "t", "yes", "y"}
 
-    # setup the query
-    query_filter = {
-        '$and': [ 
-        {"Provider.AllNPI": "Y"},
-        {"ActiveRecord": 1}
-        ]
-    }
+            oauth_headers = row.get("oauth_headers") or {}
+            oauth_data = row.get("oauth_data") or {}
 
-    # check client subscription
-    try:
-        results = 0
-        result_count = subscription_collection.count_documents(query_filter)
-        if result_count > 0:
-            results = -1
-    except Exception as e:
-        # check client subscription failed
-        return -1
+            if isinstance(oauth_headers, str):
+                oauth_headers = json.loads(oauth_headers)
+            if isinstance(oauth_data, str):
+                oauth_data = json.loads(oauth_data)
 
-    # return results
-    return results
-
-
+            return {
+                "oauthflag": bool(oauthflag),
+                "oauth_api": row.get("oauth_api"),
+                "oauth_headers": oauth_headers if isinstance(oauth_headers, dict) else {},
+                "oauth_data": oauth_data if isinstance(oauth_data, dict) else {}
+            }
+        except Exception as e:
+            self.logger_obj.log(f"Failed to fetch oauth config: {str(e)}", "warning")
+            return defaults
