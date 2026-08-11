@@ -1,117 +1,33 @@
+1. Structural validity (via fhir.resources library)
 
+Matches JSON against official FHIR R4B schema for the resource type.
+Flags unknown/misspelled resourceType.
+2. Resource type mismatch
 
-Sdoh platform demo script · MD
-SDOH Risk Platform — Live Demo Script
-"Every health plan already scores risk from claims and clinical history. But there's a category of member who looks fine on paper — no hospitalizations, no red flags — until you look at where they live. That risk is real, and a claims-only model never sees it. Let me show you.
+If you validate as "Patient" but data says "Condition", flags immediately.
+3. Required fields — now covers 19 resource types in config.py:
 
+Clinical: AllergyIntolerance, Condition, Procedure, FamilyMemberHistory, CarePlan, Goal, CareTeam
+Diagnostic: Observation, DocumentReference, ImagingStudy, DiagnosticReport, ServiceRequest
+Medication: MedicationDispense, MedicationAdministration, Immunization
+Administration: Patient, Practitioner, Organization, Location (correctly [] — no FHIR-mandated fields)
+4. Choice-type required fields (new capability) — handles FHIR's [x] fields where one of several alternatives must be present, e.g.:
 
+Immunization: occurrenceDateTime OR occurrenceString
+MedicationAdministration: medicationCodeableConcept OR medicationReference, and effectiveDateTime OR effectivePeriod
+MedicationDispense: medicationCodeableConcept OR medicationReference
+5. Value-set / allowed-code validation — 18 resource types, checking things like:
 
+Status codes (Observation.status, CarePlan.status, Goal.lifecycleStatus, etc.)
+Intent/priority (CarePlan.intent, ServiceRequest.priority)
+Nested coded paths (clinicalStatus.coding.code, reaction.severity)
+Location.mode, Immunization.primarySource (boolean check)
+6. Common cross-resource fields — telecom.system, identifier.use, name.use checked on any resource type via COMMON_VALUE_SETS.
 
+7. Bundles vs single resources — auto-detects Bundle vs standalone resource, validates each entry, aggregates valid_entries/invalid_entries/overall_valid.
 
+Still not handled (known gaps):
 
-
-Flow: Member 360 (Devora Johnson) → AI Agent Reasoning → Outreach (Intervention Lifecycle) → Geographical Risk (State + ZIP Drill-Down) → Overview (Cohort) → ROI Dashboard → Close
-
-1. Member 360 — Devora Johnson (1966019)
-"Let me start at the individual level, because that's where this platform actually earns its value. This is Devora Johnson — 56 years old, lives in Chicago, Illinois, ZIP 60827.
-
-Her composite risk score is 0.82 — High tier. But here's what's interesting: if you only looked at her clinical history — her conditions, her utilization — the score would be 0.42. It's the SDOH data that adds another 0.40 on top, nearly half her total risk score. That's not a rounding error. That's the platform telling us: for this woman, social circumstances drive her risk almost as much as her clinical history does.
-
-Why? Her Neighborhood domain scores highest at 0.63. She lives in a High Disadvantage area — nearly 24% poverty rate, 17% unemployment, 44% food insecurity, and she's in a food desert with no reliable vehicle access. This isn't abstract. This is the environment she lives in every day.
-
-Now look at her actual healthcare utilization: 35 total visits, zero ED visits, one inpatient admission. On paper, that's a low-touch, low-cost patient — annual claims cost around $2,800. If you triaged purely on clinical utilization or cost, she would not stand out.
-
-But dig one level deeper. Her Financial Risk Tier is Critical. Her income is 46% of the Federal Poverty Level — well below our safety-net eligibility threshold. She's carrying two active personal flags — unemployment and stress — both mapped to standard SDOH diagnosis codes already in her record. And she has two open HEDIS quality gaps: a breast cancer screening and a colorectal screening, both unclosed.
-
-Here's the tension I want you to notice: her PHQ-9 depression screening came back minimal — a score of 4. If we only trusted that one clinical data point, we'd say she's fine emotionally. But everything else — the stress flag, the financial pressure, the neighborhood disadvantage — tells us there's real strain here that a single point-in-time screening didn't capture.
-
-So what does the platform do with all of this? It doesn't just flag her — it acts. Three interventions are already confirmed: a referral to SNAP enrollment and a food bank, because she qualifies financially and lives in a food desert; outreach for her open care gaps, because a low-cost patient with unclosed quality gaps is exactly who falls through the cracks; and a workforce and job training referral, because addressing her unemployment addresses the root cause, not just the symptom.
-
-This is the complete loop — a member who looks unremarkable by traditional cost and utilization metrics, but who the platform correctly identifies as high-risk, with three concrete, income-qualified, evidence-based actions already moving toward her care team for approval."
-
-2. Behind the Scenes — The AI Agents
-"Before the platform decides what to do, two agents build the reasoning behind it — and this is where I want to show you the AI isn't hallucinating, it's reasoning from the actual data.
-
-Agent 1 — Risk Analysis — writes the headline finding: this member is high risk 'due to factors beyond traditional clinical metrics.' Notice what it does not say — it doesn't claim she has high spend or heavy utilization. It explicitly calls out just one inpatient admission and zero ED visits, and states plainly that SDOH factors — not clinical severity — are driving 49% of her risk score. That's the guardrail: the AI is grounded in her actual numbers, not guessing at her financial situation.
-
-Agent 2 — SDOH Assessment — goes one level deeper and explains why. It identifies Neighborhood as her dominant barrier at 0.630, and connects that to environmental and access-related risk. The more interesting part is the second half: it doesn't just list her three needs, it explains the sequencing logic. Food security comes first — not because it's the most severe finding on paper, but because it's foundational. You can't expect someone to engage with a workforce program or follow through on a care gap appointment if they're food insecure. Solve the foundational need first, and the member is in a better position to act on everything else.
-
-That's the difference between a rules engine that just lists interventions and an AI that can explain prioritization the way a human case manager would — with a rationale a care manager could actually defend to a medical director.
-
-Once the risk analysis is done, the platform hands off to two more agents that decide how to act.
-
-Agent 3 — the channel selector — looks at her profile and decides outreach isn't going to be a generic text message. Her SDOH Burden Index is high, and her primary domain is Neighborhood — meaning her biggest barrier isn't a lack of information, it's a lack of access. So the AI recommends a Community Health Worker — someone who can work with her directly, not just send an automated message.
-
-Agent 4 — the campaign planner — takes that decision and builds the actual action plan. It's not just 'reach out' — it names the specific program: Food Security Support, with a concrete intervention type, SNAP Enrollment and Food Bank Referral. And it's time-bound: first contact within 48 hours because she's High risk, a referral completed within 2 weeks, and a 30-day follow-up to confirm she actually enrolled and used the resource — not just that we called her.
-
-What I want you to notice is that this isn't one AI generating a paragraph — it's four specialized agents, each making one decision, and each one builds directly on what the previous one decided. The channel and the plan are connected, not independent guesses."
-
-3. Outreach — Intervention Lifecycle (Food Security Support)
-"This is the complete lifecycle of that intervention — from first contact to resolution — and it's the best place to show that the platform isn't just generating messages, it's adapting based on what the member actually says.
-
-Screening Call, 48 hours in: the AI script introduces the SNAP and food bank referral, and mentions the other two interventions in the queue — the care gap and job training — so she knows more help is coming. She responds, 'yes please schedule.' The system tags her as Engaged.
-
-Refer to Program, 72 hours in — and this is the key moment: the message isn't generic. It says, 'you'd mentioned you'd like to schedule a meeting' — directly referencing her prior response. This message was regenerated the moment she responded to the first call, not written at send time — so by the time it went out, it was already personalized to what she'd said.
-
-Her reply this time — 'thanks, for refer' — is genuinely ambiguous, and the system is honest about that: it tags it 'Unclear' rather than guessing.
-
-2-Week Check-In: same pattern — the message references her exact words again, and here you can see the AI's decision explicitly stated: 'Proceed — member said thanks for refer — intent unclear, proceeding with the standard next step.' When the system isn't confident, it doesn't stall or guess — it falls back to the safe default and tells you why.
-
-30-Day Referral Outcome Check: she responds, 'yes I have completed, thanks' — clear and unambiguous this time. The system tags the gap Closed and explicitly parses her words as confirmation: 'Member confirmed... referral resolved.'
-
-Now notice the two amber 'Possible delivery signal' tags — on her first and last responses. This is a lightweight keyword check, not another AI judgment. It's flagging that her free-text answer might indicate something was actually delivered or completed, and asking a human to confirm it, rather than auto-closing the loop on a text match alone. That's the Confirm Delivery box at the bottom — the care manager types the actual confirmation, like 'Navigator confirmed enrollment by phone 7/15,' and clicks Mark Delivered. The AI surfaces the signal; a person confirms the fact.
-
-The platform is careful not to conflate 'we texted her and she replied' with 'the service actually happened.' Every touchpoint above proves contact. This box is where a human confirms the real-world outcome — that a navigator actually enrolled her — and that gets logged as its own distinct fact in the record, not inferred from an SMS reply.
-
-Once this loop plays out, the care manager makes one final call: Closed if it worked, Escalate if it needs a human to step in beyond this workflow, or Retry if the approach itself failed — not just resend the same plan, but genuinely re-decide the channel and campaign from the top."
-
-4. Geographical Risk — Zooming Out From One Member to Her Neighborhood and State
-"Devora isn't an isolated case — let's zoom out and show you she's part of a real, measurable pattern, not a cherry-picked example.
-
-ZIP Drill-Down — 60827
-Let me filter down to her ZIP — 60827 in Illinois — 334 members. The top panel tells me 39 of our overall Critical members and 138 High Risk members are in scope here. But the number that matters most for this ZIP specifically is SDOH Reclassified — members flagged high-risk specifically because of where they live and their social circumstances, not just their medical history.
-
-Now the score breakdown: Clinical Score is 0.389 — what a traditional, clinical-only model would say. Add SDOH data, and it jumps by 0.137 to a final Risk Score of 0.526. That jump is the whole value proposition of this platform in one number. Ignore social risk, and this ZIP looks moderate. Include it, and it crosses into high-risk territory.
-
-Why? Look at the domain scores — Neighborhood is highest at 0.630, Economic close behind at 0.546. This isn't a healthcare problem in this ZIP — it's an environment problem. Poverty, housing, and area disadvantage are driving risk here far more than clinical health issues. And in the burden mix, Food Desert alone accounts for 40% of the combined burden — bigger than poverty or unemployment individually.
-
-State Drill-Down — Illinois
-Now zoom out one more level. Illinois is our #1 flagged state right now — 67 ZIP codes, broken out as 14 High, 28 Moderate, and 25 Low disadvantage tiers. Average risk score is 0.368, and SDOH impact sits at 13.2% of members here.
-
-SDOH Lift at the state level is basically zero, actually slightly negative. This is the average gap between our SDOH-enhanced model and a clinical-only baseline, across the whole state. At this scale, some members' risk goes up because of social factors, others go down because of protective factors — and across a whole state, those tend to cancel out. That's exactly why the Base score and the Risk Score look almost identical here: 0.368 either way.
-
-If someone asks: 'So what's the point of showing state-level lift if it's basically zero?' — the answer is: it confirms the model isn't systematically biased in one direction for this state. It validates the model at scale — the real signal is at the individual and ZIP level, exactly where we just were.
-
-Now look at the domain bars. Economic leads at 0.516; Healthcare is the lowest at 0.182. Illinois's problem isn't access to doctors — it's economic instability. And in the burden mix donut, Food Desert alone accounts for 36% of total burden — bigger than the poverty rate itself."
-
-5. Overview — The Full Cohort
-"Let's zoom out one final level, from Illinois to the entire cohort, so you can see the scale this runs at.
-
-We're scoring 99,999 members across 434 ZIP codes in 11 states. Right now, several dozen ZIP codes need immediate intervention, and the average blended risk score across the whole cohort is 0.362.
-
-But here's the number that actually matters: a meaningful share of the entire cohort — members where adding social determinants of health data changed their risk picture — is not noise. That's a real, measurable jump a claims-only model would have missed entirely.
-
-We measure that with what we call SDOH Lift — the difference between a member's risk probability with SDOH data included versus clinical data alone. Anything at or above a 0.10 lift is flagged Moderate or High SDOH impact. Devora, and thousands like her across this cohort, all clear that bar — that's the SDOH Impact % you see right here on this page."
-
-6. ROI Dashboard
-"Now let's talk about what this is worth — both at the programme level and in this specific session.
-
-The Programme Cost breakdown shows five phases — Identification, Outreach, Engagement, Delivery, and Follow-up — covering the eligible population end to end. These per-unit rates (like $8.50 per call) are planning assumptions in line with published care-management benchmarks, not numbers pulled from this specific dataset — worth saying plainly if asked, since this dataset's cost fields aren't wired to SDOH status the way a real longitudinal claims feed would be.
-
-The Live Referral Impact panel is different — this is real, session-tracked data. Every closed need you saw us work through in the Outreach section — like Devora's SNAP referral — shows up here as an actual closed NBA with an estimated realized value, and that value gets split across the same five phases so you can see where it landed in the lifecycle.
-
-The honest way to frame this to a skeptical audience: the workflow, the reasoning, the personalization, and the closed-loop tracking are all real and live. The dollar-per-intervention figures are industry-standard planning assumptions until we connect this to a real longitudinal claims feed — and that's the natural next step for a production deployment."
-
-7. Close
-"So that's the full picture: one woman the clinical model would have missed entirely, a set of AI agents that reasoned through why she's at risk and adapted in real time as she responded, the neighborhood and state pattern she's part of, the full 99,999-member cohort she sits inside, and the dashboard that shows what this looks like at scale.
-
-That's the platform: claims-only models find the people who are already sick. This finds the people who are about to be — while there's still time to act."
-
-Quick-Reference Cheat Sheet (numbers to have ready)
-Level	Key Figures
-Devora Johnson	Age 56 · Composite 0.82 (Clinical 0.42 + SDOH +0.40) · 35 visits / 0 ED / 1 inpatient · $2,800 annual claims · Income 46% FPL · PHQ-9 = 4 (minimal) · 2 open HEDIS gaps (BCS, COL) · 3 confirmed interventions
-ZIP 60827	334 members · 39 Critical / 138 High Risk · Clinical 0.389 → Risk 0.526 (+0.137 lift) · Neighborhood 0.630 top domain · Food Desert 40% of burden mix
-Illinois (state)	67 ZIPs · 14 High / 28 Moderate / 25 Low · avg risk 0.368 · lift ≈ 0 · 13.2% impact · Economic 0.516 top domain · Food Desert 36% of burden mix
-Cohort (Overview)	99,999 members · 434 ZIPs · 11 states · avg risk 0.362 · SDOH Impact % shown live on Overview page
-ROI Dashboard	Programme Cost = industry-benchmark planning assumptions, 5 phases · Live Referral Impact = real, session-tracked closed NBAs, split across the same 5 phases (illustrative split)
-SDOH Lift formula	P(Critical∪High | clinical+SDOH) − P(Critical∪High | clinical-only); ≥0.10 = meaningful/Moderate-or-High impact, <0 = Protective
+No rules for resource types outside the 19 listed (e.g. Encounter, Medication) — those only get structural validation.
+No cross-resource reference resolution (doesn't check Patient/example actually exists in the bundle).
+No real terminology binding to code systems like SNOMED/LOINC — value sets are hardcoded strings.
