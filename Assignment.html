@@ -1,33 +1,373 @@
-1. Structural validity (via fhir.resources library)
 
-Matches JSON against official FHIR R4B schema for the resource type.
-Flags unknown/misspelled resourceType.
-2. Resource type mismatch
+================================================================
+1. THE PROBLEM
+================================================================
+Every health plan already scores risk from claims and clinical history. But there's a category of member who looks fine on paper — no hospitalizations, no red flags — until you look at where they live. That risk is real, and a claims-only model never sees it
+================================================================
+2. THE SOLUTION
+================================================================
+"We built a platform that combines clinical data with social determinants of
+health — SDOH — data into one risk score, then automatically identifies
+which members need help, what kind of help, and drives that outreach
+end-to-end, from identification all the way to a closed, confirmed
+intervention.
 
-If you validate as "Patient" but data says "Condition", flags immediately.
-3. Required fields — now covers 19 resource types in config.py:
+Here's how it works, in plain terms:
+- We score every member twice — once on clinical and financial history
+  alone, once with neighborhood and social data added — so we can measure
+  exactly how much social factors change each person's real risk.
+- We identify the population that actually matters — members whose risk is
+  genuinely driven by social circumstances, not just clinical severity. Those
+  are the ones a traditional model would miss entirely.
+- A 4-agent AI pipeline explains why a member is at risk, what they need
+  first — prioritized, not just listed — how to reach them, and builds a
+  concrete, time-bound action plan.
 
-Clinical: AllergyIntolerance, Condition, Procedure, FamilyMemberHistory, CarePlan, Goal, CareTeam
-Diagnostic: Observation, DocumentReference, ImagingStudy, DiagnosticReport, ServiceRequest
-Medication: MedicationDispense, MedicationAdministration, Immunization
-Administration: Patient, Practitioner, Organization, Location (correctly [] — no FHIR-mandated fields)
-4. Choice-type required fields (new capability) — handles FHIR's [x] fields where one of several alternatives must be present, e.g.:
+  These four agents aren't four independent guesses — they run in a fixed
+  order, and the first two are the foundation the other two build on:
+  - Agent 1 (Risk Analysis) and Agent 2 (SDOH Assessment) are both genuinely
+    AI-generated — each one is a real model call that writes a narrative
+    explanation. They're the "base" agents because what THEY read is not AI
+    output: it's the XGBoost risk score and a separate rules engine that
+    already decided which needs apply and in what priority. So Agent 1 and
+    Agent 2 are each explaining a decision that was already made
+    deterministically — they add the "why," they don't invent the "what."
+    That's also why they can run independently of each other, not because
+    either one is rule-based.
+  - Agent 3 (Channel Selector) and Agent 4 (Campaign Planner) are the
+    "action" agents, and they run after and depend on that foundation —
+    Channel Selector reads the same risk and SDOH profile Agent 2 assessed
+    to decide HOW to reach the member, and Campaign Planner then takes
+    Channel Selector's actual decision as an input to build the concrete
+    plan around it. So the "how" and the "what to do" can't be decided
+    before the "why" and "what's needed" are settled — the pipeline
+    physically can't skip ahead.
+  - Why we built it this way: it mirrors how a human case manager actually
+    thinks — you don't decide how to contact someone or what to offer them
+    before you understand why they're at risk and what they need most. It
+    also means the later agents are always grounded in the earlier ones'
+    reasoning, not making an independent, potentially contradictory call.
 
-Immunization: occurrenceDateTime OR occurrenceString
-MedicationAdministration: medicationCodeableConcept OR medicationReference, and effectiveDateTime OR effectivePeriod
-MedicationDispense: medicationCodeableConcept OR medicationReference
-5. Value-set / allowed-code validation — 18 resource types, checking things like:
+- Outreach is automated and adaptive — calls and texts go out on schedule,
+  and follow-up messages adapt based on what the member actually said, not a
+  generic script.
+- And critically, outcomes are human-confirmed. The AI can surface a
+  signal — 'this response might mean the referral was completed' — but a
+  care manager always confirms the real-world fact before it's logged as
+  resolved."
 
-Status codes (Observation.status, CarePlan.status, Goal.lifecycleStatus, etc.)
-Intent/priority (CarePlan.intent, ServiceRequest.priority)
-Nested coded paths (clinicalStatus.coding.code, reaction.severity)
-Location.mode, Immunization.primarySource (boolean check)
-6. Common cross-resource fields — telecom.system, identifier.use, name.use checked on any resource type via COMMON_VALUE_SETS.
+================================================================
+3. THE DATA — WHERE IT COMES FROM
+================================================================
+"We're working with two data sources, both verified directly from our
+Snowflake account, both from the Snowflake Marketplace — so nothing here is
+custom-built or proprietary.
 
-7. Bundles vs single resources — auto-detects Bundle vs standalone resource, validates each entry, aggregates valid_entries/invalid_entries/overall_valid.
+First, clinical and claims data, from Synthea — MITRE's widely-used,
+open-source synthetic patient generator. It produces realistic, but not
+real, patient histories: encounters, conditions, medications, procedures,
+claims. It uses real clinical coding standards, and it even includes
+dedicated modules for social determinants — we've confirmed actual coded
+findings like 'Unemployed,' 'Homeless,' and 'Stress' sitting in the raw
+data.
 
-Still not handled (known gaps):
+Second, neighborhood and SDOH data, from SafeGraph's Open Census Data —
+built on real U.S. Census Bureau statistics: poverty rate, unemployment,
+food access, housing, transportation, at the ZIP and tract level.
 
-No rules for resource types outside the 19 listed (e.g. Encounter, Medication) — those only get structural validation.
-No cross-resource reference resolution (doesn't check Patient/example actually exists in the bundle).
-No real terminology binding to code systems like SNOMED/LOINC — value sets are hardcoded strings.
+The bottom line to remember: the neighborhood data is real — genuine Census
+statistics. The clinical and claims data is synthetic but methodologically
+realistic — necessary because real patient health information can't be used
+in a demo or proof of concept. Both sources are free and publicly available;
+we didn't build or license anything custom to get here."
+
+================================================================
+4. HOW THE SCORING WORKS (business framing, no code)
+================================================================
+"Under the hood, we run two parallel prediction models on the same
+population — one using only clinical and financial information, and one
+using that plus the full set of neighborhood and social data. Each model
+sorts members into four risk tiers: Critical, High, Moderate, Low.
+
+Because we run both models side by side, we can directly measure the gap
+between them for every single member — how much did adding social data
+change this person's risk picture? We call that gap 'SDOH Lift,' and it's
+the single number that proves the value of this whole approach: it shows,
+member by member, exactly how much a claims-only model would have missed.
+
+We also don't let the model take a shortcut. There's a composite
+'neighborhood disadvantage' score that's tempting to feed the model directly
+— but we deliberately exclude it from training, because it's built from the
+same underlying data as what we're trying to predict. Including it would let
+the model cheat rather than actually learn the pattern. We only give it the
+raw underlying facts.
+
+On top of the score, every member also gets an explanation — the top five
+factors that pushed their individual risk score up or down. So it's never
+just a number; it's a number with a reason attached, specific to that
+person, not a generic statement about the model."
+
+================================================================
+5. TRUST & GUARDRAILS (business framing)
+================================================================
+"Anywhere this platform uses AI to generate language — for a message, a
+summary, a recommendation — we built it so the AI can't freelance with facts
+it wasn't given. A few examples of how, in plain terms:
+
+- The AI is handed the facts it's allowed to use, already decided by us —
+  not raw numbers to interpret on its own. If a member isn't flagged as
+  high-cost by our own definition, the AI is told that explicitly and
+  instructed not to describe her that way. We learned this the hard way —
+  just telling the AI 'don't exaggerate' wasn't enough; handing it the
+  predetermined fact was what actually worked.
+- Wherever a decision doesn't need language generation — building the
+  action plan template, writing the care manager summary, translating a
+  clinical code — we use fixed logic, not AI. No model, no hallucination
+  risk, by design.
+- The system never generates a message at the moment it's about to send.
+  Whatever a care manager reviewed on screen is guaranteed to be exactly
+  what goes out — messages are only regenerated right after a member
+  responds, using their actual words, well before the next send.
+- When the AI isn't confident about what a member meant, it says so and
+  falls back to a safe default — it doesn't guess and present that guess
+  confidently.
+- Nothing closes a loop without a human. The system can flag a 'possible
+  delivery signal' from a text reply, but it cannot mark something resolved
+  on its own — a care manager has to type an actual confirmation before
+  that's logged as fact.
+- There's one single place in the system that decides what a member needs —
+  so the recommendation list on screen and the AI's own reasoning can never
+  contradict each other.
+- Every derived clinical code in the system carries a record of exactly
+  where it came from, so any decision can always be traced back to its
+  source.
+- If the AI service is ever slow or unavailable, the platform doesn't break
+  — it simply keeps the last good message in place rather than blocking the
+  workflow.
+
+The pattern across all of this: wherever a decision could be made
+deterministically, we made it deterministic. Wherever AI judgment was
+genuinely needed, we constrained it with facts and explicit boundaries
+rather than trusting it to reason freely. And wherever the system genuinely
+wasn't sure, we built it to say so rather than fake confidence."
+
+================================================================
+6. Q&A — QUESTIONS TO EXPECT (and the honest answer to give)
+================================================================
+
+Q: "Are you using Snowflake Cortex or native Snowflake AI? What model?"
+A: "No — that's configured as an option in the code but not actually
+   active. It's set up to use Claude Sonnet if we ever switch it on, but the
+   live AI running today is on Groq, a hosted model provider, using
+   Llama 3.3. So there are two models in the picture — Sonnet is wired up
+   as a future option, Groq/Llama is what's actually generating every
+   message and recommendation you see in this demo — worth clarifying
+   before this goes further."
+
+Q: "Won't the model become obsolete or go stale over time?"
+A: "The risk model needs periodic retraining as population and claims
+   patterns shift — that's true of any machine learning model, not unique
+   to this platform. The language piece runs on a hosted API, so those
+   upgrades happen on the vendor's side, not something we have to maintain
+   ourselves."
+
+Q: "Does the model have any bias — racial, geographic, income?"
+A: "Honestly, we haven't run a formal bias or fairness audit on this proof
+   of concept yet. That's a real gap, and I'd rather flag it now than have
+   it come up later — a production deployment should run disparate-impact
+   testing before go-live, especially given how strongly social data
+   correlates with race and geography historically."
+
+Q: "How often is the model retrained?"
+A: "That's not established yet in what we've built — there's a training
+   procedure in place, but no defined retraining schedule. That's an
+   operational decision for production; this proof of concept demonstrates
+   the architecture, not a live retraining pipeline."
+
+Q: "What happens if the AI service goes down or is slow?"
+A: "It degrades gracefully. If a call to the AI fails, the system keeps the
+   last known message in place rather than crashing or blocking the
+   workflow. Members and care managers aren't left stuck."
+
+Q: "What would this cost to run at scale — 100,000-plus members, with AI
+   calls for each one?"
+A: "That's not something this proof of concept tracks yet. The honest
+   answer is that AI cost per member, times how often we re-run things, is
+   a real production question that needs to be modeled properly — good to
+   flag as a next step rather than dodge."
+
+Q: "Is this regulated by the FDA as clinical decision support?"
+A: "This scores social and financial risk, not a clinical diagnosis or
+   treatment decision — so it's likely outside that scope, but that's a
+   compliance and legal determination, not something I'd want to assert
+   confidently in a room like this. That's a question for legal review
+   before production."
+
+Q: "Can a human override any AI decision?"
+A: "Yes, consistently. Every recommendation goes through an approval
+   workflow — draft, approved, rejected, or edited. Care managers can edit
+   messages directly, confirm delivery manually, and escalate or retry any
+   case. This is genuinely one of the strongest parts of what we've built."
+
+Q: "What if two different parts of the AI disagree with each other?"
+A: "They structurally can't — there's a single source of truth for 'what
+   does this member need,' and both the on-screen checklist and the AI
+   reasoning pull from that same place. It's decided once, not
+   independently by multiple components."
+
+Q: "Is any of this real patient data?"
+A: "No. The clinical and claims data is synthetic, generated by Synthea —
+   not real patients. Only the neighborhood and Census layer is real,
+   public data."
+
+Q: "How do you reduce hallucination risk with the AI?"
+A: "A few concrete things, not just a prompt asking it to be careful:
+   1. We don't let it interpret raw numbers itself — we compute the
+      interpretation first (e.g. 'is this member high-cost, yes or no?')
+      and hand it that as a fact to use, not a number to judge on its own.
+      We tried the soft version first — just telling it 'don't exaggerate
+      cost' — and it still got it wrong. Giving it the predetermined
+      answer instead is what actually fixed it.
+   2. We tell it explicitly what NOT to talk about — for example, several
+      agents are told outright not to speculate about income or cost,
+      because that data isn't in their prompt at all.
+   3. Some agents are never given sensitive data in the first place — the
+      message-writing agent never receives risk score or cost data, so it
+      can't leak or misuse something it was never handed.
+   4. Wherever a decision doesn't need natural language — building the
+      action-plan template, translating a clinical code — we use fixed
+      logic instead of AI. No model involved there means no hallucination
+      risk, by construction.
+   5. When the AI is genuinely unsure what a member meant, it's built to
+      say so and fall back to a safe default, rather than confidently
+      guess.
+   6. Every AI-written message is reviewed by a care manager before it's
+      approved, and nothing closes out as 'resolved' without a human
+      typing an actual confirmation — so even if something slipped
+      through, there's a human checkpoint before it affects a real member.
+   The short version: wherever we could remove the AI's need to judge or
+   guess, we did — real judgment calls are made deterministically upstream,
+   and the AI's job becomes explaining a decision, not making one from
+   scratch."
+
+Q: "What's the actual training sample size for the model, and why that
+   number?"
+A: "That detail lives in the training procedure running inside Snowflake,
+   not in the application layer we've been reviewing — so I don't want to
+   guess a number here. What we do know is the platform scores a cohort of
+   99,999 members today; I can follow up with the exact training sample
+   size and methodology separately rather than state it inaccurately."
+
+================================================================
+7. GLOSSARY — BUSINESS TERMS TO HAVE READY
+================================================================
+Quick definitions for terms that come up on screen or in Q&A — say these in
+plain language, don't read the acronym cold.
+
+NBA (Next Best Action)
+  The specific recommended action for a member — e.g. "refer to SNAP
+  enrollment," "outreach for care gap." When you see "closed NBA" on the ROI
+  dashboard, that means a recommended action was actually completed and
+  confirmed, not just suggested.
+
+SDOH (Social Determinants of Health)
+  The non-clinical, non-medical factors that affect someone's health —
+  income, housing, food access, employment, transportation, neighborhood
+  conditions. The whole platform exists to bring this into the risk picture
+  alongside clinical data.
+
+SDOH Lift
+  The core value-proof metric: how much a member's (or ZIP's, or state's)
+  risk score changes when you add social data on top of clinical data alone.
+  A high lift means "this person/place looks fine clinically but is
+  actually high-risk because of their circumstances" — exactly who a
+  claims-only model would miss.
+
+SDOH Reclassified
+  Members who cross into a higher risk tier specifically because of social
+  data — i.e., their clinical-only score would NOT have flagged them, but
+  their full score does.
+
+Risk Tier
+  The four-bucket classification every member gets: Critical / High /
+  Moderate / Low. This is the headline label a care manager sees.
+
+Composite / Full Risk Score
+  The single blended number (clinical + SDOH combined) used to assign risk
+  tier and prioritize outreach.
+
+Base Score
+  The same member's risk score using clinical/financial data only — the
+  "what a traditional model would say" baseline used to calculate lift.
+
+Neighborhood Disadvantage Score
+  A composite measure of how disadvantaged a member's area is (poverty,
+  unemployment, food access, etc. combined). Deliberately excluded from
+  model training to avoid leakage — the model isn't allowed to see this
+  shortcut answer.
+
+Domain Scores (Economic / Neighborhood / Healthcare / Education / Social)
+  The five categories social risk gets broken into, each scored separately,
+  so you can say specifically what's driving a member's or area's risk —
+  not just "SDOH is high."
+
+SDOH Burden Index
+  A combined measure of how many/how severe a member's social burdens are —
+  used to help decide how "high-touch" the outreach approach should be
+  (e.g. triggers a Community Health Worker instead of a text message).
+
+HEDIS Gap (Care Gap)
+  A missed preventive-care measure the health plan is required to track —
+  e.g. an overdue breast cancer or colorectal cancer screening. "Open" means
+  unclosed/overdue; the platform can trigger outreach specifically to close
+  these.
+
+PHQ-9
+  A standard 9-question depression screening score. Useful context, but the
+  script deliberately shows it can UNDER-capture strain that other data
+  (financial pressure, stress flags, neighborhood disadvantage) reveals —
+  a single point-in-time screening isn't the whole picture.
+
+FPL (Federal Poverty Level)
+  The government's income threshold used to determine eligibility for
+  assistance programs. "46% of FPL" means well below the poverty line —
+  the number used to determine SNAP/safety-net eligibility.
+
+Z-code
+  A standard clinical diagnosis code used to document social circumstances
+  (e.g. unemployment, housing instability) in a medical record — this is how
+  SDOH findings get formally attached to a patient's chart, not just
+  tracked internally.
+
+Care Manager
+  The human who reviews AI-drafted messages, confirms real-world outcomes,
+  and makes the final call (Closed / Escalate / Retry) on any intervention.
+  Always the final authority in the loop.
+
+Community Health Worker (CHW)
+  A high-touch outreach channel — a person, not an automated message —
+  used when a member's barrier is access-related (not just lack of
+  information), which a text or call alone won't solve.
+
+Escalate / Retry / Closed
+  The three outcomes a care manager can choose at the end of an
+  intervention: Closed = it worked; Escalate = needs a human to step in
+  beyond this workflow; Retry = the approach itself failed, so the channel
+  and campaign get re-decided from scratch, not just resent.
+
+Cohort
+  The full population being scored in a given view — e.g. "99,999 members
+  across 434 ZIPs in 11 states" is the whole demo cohort.
+
+Approval Workflow
+  The Draft → Approved / Rejected / Edited cycle every AI-generated
+  recommendation goes through before it's actually used — the human
+  checkpoint before anything reaches a member.
+
+================================================================
+8. CLOSING LINE
+================================================================
+"The short version: claims-only models find the people who are already
+sick. This finds the people who are about to be — while there's still time
+to act. And everywhere the AI is doing the talking, there's a guardrail
+underneath it and a human confirming anything that actually matters."
