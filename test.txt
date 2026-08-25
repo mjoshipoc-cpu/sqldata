@@ -1,356 +1,402 @@
-from flask import Blueprint, request, jsonify, current_app
-from datetime import datetime
-from interop.utils.jwt_utils import Jwtutils
-from interop.utils.db_utils import *
-from interop.utils.trackerutils import insert_tracking_record, is_transaction_successful, tracking_data_define
-from interop.utils.logutils import logger
-from fhirclient.models.bundle import Bundle
-from pymongo import DESCENDING
-import json, os
-import requests
-from urllib.parse import parse_qs
-from interop.utils.confighelper import ConfigHelper
+from flask import Blueprint, request, jsonify
+from datetime import datetime, timezone
+from utils.jwt_utils import Jwtutils
+from utils.db_utils import get_mongo_db_conn
+from utils.trackerutils import insert_tracking_record, tracking_data_define
+from utils.logutils import logger
 from fhirclient.models.patient import Patient
-from bson.objectid import ObjectId
+import json
+import xml.etree.ElementTree as ET
 import traceback
+
 
 logger_obj = logger()
 
-patinetcreate_bp = Blueprint('fhir/patient', __name__)
-patinetsearch_bp = Blueprint('/fhir/Patient/<string:patient_id>', __name__)
-patientupdate_bp = Blueprint('/fhir/Patient/<string:patient_id>', __name__)
-patientdelete_bp = Blueprint('/fhir/Patient/<string:patient_id>', __name__)
-@patinetcreate_bp.route('/fhit/patient', methods=['POST'])
+patient_bp = Blueprint('Patient', __name__)
+
+RESOURCE_TYPE = 'Patient'
+COLLECTION_NAME = 'PASPatient'
+
+
+def xml_element_to_dict(element):
+    """
+    Converts a FHIR XML element into its JSON representation.
+    """
+    resource_node = {}
+    for child in element:
+        tag = child.tag.split('}')[-1]
+
+        if len(child):
+            value = xml_element_to_dict(child)
+            for attribute_name, attribute_value in child.attrib.items():
+                value[attribute_name] = attribute_value
+        else:
+            value = child.attrib.get('value')
+            if value is None:
+                value = dict(child.attrib) or (child.text or '').strip()
+
+        if tag in resource_node:
+            if not isinstance(resource_node[tag], list):
+                resource_node[tag] = [resource_node[tag]]
+            resource_node[tag].append(value)
+        else:
+            resource_node[tag] = value
+
+    return resource_node
+
+
+def get_request_resource():
+    """
+    Reads the incoming body, converting XML to JSON when required.
+    Returns the FHIR resource as dict.
+    """
+    content_type = (request.content_type or '').split(';')[0].split('/')[-1].lower()
+    if content_type not in ['json', 'xml']:
+        raise ValueError("Unsupported content type or invalid data format")
+
+    raw_data = request.get_data()
+    if not raw_data:
+        raise ValueError("no data submitted in the body")
+
+    if content_type == 'xml':
+        # convert from XML to JSON as the downstream processing is JSON only
+        resource_json = xml_element_to_dict(ET.fromstring(raw_data))
+        resource_json['resourceType'] = RESOURCE_TYPE
+        return resource_json
+
+    return json.loads(raw_data)
+
+
+def validate_resource(resource_json):
+    """
+    Validates the resource against the FHIR R4 definition and returns resource id.
+    """
+    if not isinstance(resource_json, dict):
+        raise ValueError(f"{RESOURCE_TYPE} resource has to be a JSON object")
+
+    if (resource_json.get('resourceType') or '') != RESOURCE_TYPE:
+        raise ValueError(f"resourceType must be {RESOURCE_TYPE}")
+
+    # raises when the payload does not comply with the FHIR R4 definition
+    Patient(resource_json)
+
+    return resource_json.get('id') or ''
+
+
+def validate_request():
+    """
+    Validates client header and jwt. Returns (clientname, payload).
+    """
+    clientname = request.headers.get("Client", None) or None
+    if not clientname:
+        raise ValueError("Invalid Client is passed in header")
+
+    auth_header = request.headers.get("Authorization", None) or None
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise ValueError("Unauthorized Token")
+
+    token = auth_header.split(" ")[1]
+    if not token:
+        logger_obj.log("Missing jwt", 'error')
+        raise ValueError("Missing jwt")
+
+    jwt_utils = Jwtutils(clientname=clientname)
+    payload = jwt_utils.decode_jwt(token)
+    is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
+    if not is_valid:
+        logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
+        raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
+
+    logger_obj.log("valid jwt", 'info')
+    return clientname, payload
+
+
+def get_resource_collection(clientname):
+    """
+    Attempts to get MongoDB collection. Returns None if DB is unavailable.
+    """
+    try:
+        return get_mongo_db_conn(clientname, COLLECTION_NAME, logger_obj)
+    except Exception as e:
+        logger_obj.log(f"MongoDB connection unavailable: {str(e)}", 'error')
+        return None
+
+
+@patient_bp.route('/Patient', methods=['POST'])
 def create_patient():
+    trans_state = 'RequestReceived'
+
+    tracking_data = tracking_data_define()
+    tracking_data["MessageType"] = f'{RESOURCE_TYPE}Create'
+    tracking_data["Stage"] = trans_state
+    tracking_data["RequestReceivedDTS"] = datetime.now()
+    tracking_data["RequestURL"] = request.url
+
     try:
-        trans_state = 'RequestReceived'
-
-        tracking_data = tracking_data_define()
-        tracking_data["Stage"] = trans_state
-        tracking_data["RequestReceivedDTS"] = datetime.now()
-
-        tracking_data["RequestURL"] = request.url
-        # verify the requst
         trans_state = 'VerifyingRequest'
-
-        # get client from header
-        clientname = request.headers.get("Client", None) or None
-        if not clientname:
-            return {"error": "Invalid Client is passed in header"}, 400
+        clientname, payload = validate_request()
         tracking_data["Client"] = clientname
-        jwt_utils = Jwtutils(clientname=clientname)
 
-        # get and validate the header authorization
-        auth_header = request.headers.get("Authorization", None) or None
+        trans_state = 'ValidatingResource'
+        resource_json = get_request_resource()
+        resource_id = validate_resource(resource_json)
 
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return {"error": "Unauthorized Token"}, 401
+        resource_collection = get_resource_collection(clientname)
 
-        token = auth_header.split(" ")[1]
-
-        if not token:
-            logger_obj.log("Missing jwt", 'error')
-            return jsonify({"error": "Missing jwt"}), 401
-
-        # verify the request
-        if not request.is_json:
-            logger_obj.log("Request is not JSON", 'error')
-            raise ValueError("Request has to be JSON")
-
-        # check the content type
-        content_type = request.content_type.split('/')[1]
-        logger_obj.log(content_type, 'debug')
-        if content_type not in ['json']:
-            logger_obj.log("Unsupported content type", 'info')
-            raise ValueError("Unsupported content type or invalid data format")
-
-        # get and validate the data
-        json_data = json.loads(request.get_data())
-
-        if json_data is None:
-            raise ValueError("no data submitted in the body")
-
-        # validating the jwt
-        trans_state = 'ValidatingJWT'
-        payload = jwt_utils.decode_jwt(token)
-        # clientname = payload['sub']
-
-        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
-        if not is_valid:
-            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
-            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
-
-        logger_obj.log("valid jwt", 'info')
-
-        trans_state = 'InitializingBundleObject'
-        # Initialize the Bundle object
-        patient = Patient(json_data)
-
-        # creating mongo db collection objects for request and response
-        request_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
-        request_result = request_collection.insert_one({
-            'InsertDTS': datetime.now(),
+        mongo_document = {
+            'InsertDTS': datetime.now(timezone.utc).isoformat(),
             'InsertUser': 'Interopservice',
-            'RequestResourceType': 'Patient',
-            'RequestDataFromSource': patient,  # data from EMR
-
-        })
-        request_obj_id = ObjectId(request_result.inserted_id)
-        return jsonify({"id": request_obj_id, "message": "Patient created successfully"}), 201
-    except Exception as e:
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
-
-
-@patinetsearch_bp.route('/fhir/Patient/<string:patient_id>', methods=['GET'])
-def get_patient(patient_id):
-    try:
-        trans_state = 'RequestReceived'
-
-        tracking_data = tracking_data_define()
-        tracking_data["Stage"] = trans_state
-        tracking_data["RequestReceivedDTS"] = datetime.now()
-
-        tracking_data["RequestURL"] = request.url
-        # verify the requst
-        trans_state = 'VerifyingRequest'
-
-        # get client from header
-        clientname = request.headers.get("Client", None) or None
-        if not clientname:
-            return {"error": "Invalid Client is passed in header"}, 400
-        tracking_data["Client"] = clientname
-        jwt_utils = Jwtutils(clientname=clientname)
-
-        # get and validate the header authorization
-        auth_header = request.headers.get("Authorization", None) or None
-
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return {"error": "Unauthorized Token"}, 401
-
-        token = auth_header.split(" ")[1]
-
-        if not token:
-            logger_obj.log("Missing jwt", 'error')
-            return jsonify({"error": "Missing jwt"}), 401
-
-        # verify the request
-        if not request.is_json:
-            logger_obj.log("Request is not JSON", 'error')
-            raise ValueError("Request has to be JSON")
-
-        # validating the jwt
-        trans_state = 'ValidatingJWT'
-        payload = jwt_utils.decode_jwt(token)
-        # clientname = payload['sub']
-
-        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
-        if not is_valid:
-            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
-            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
-
-        logger_obj.log("valid jwt", 'info')
-
-
-        # creating mongo db collection objects for request and response
-        patient_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
-
-        patient = patient_id
-        # Step 1: First query - get only OriginalClaimIdentifier and OriginalMemberId
-        filter_query = {
-            "RequestDataFromSource": {
-                "identifier": {
-                    "value": f"{patient_id}"
-                }
-            }
+            'ResourceType': RESOURCE_TYPE,
+            'ResourceId': resource_id,
+            'ResourceData': resource_json,
+            'jwt_payload': payload,
+            'DeletedFlag': 0
         }
 
+        if resource_collection is None:
+            logger_obj.log("MongoDB unavailable - returning document that would be stored", 'info')
+            return jsonify({"mongodb_status": "unavailable", "operation": "create", "document": mongo_document}), 201
 
-        # Fetch the latest record for original identifiers and member ID
-        first_record = patient_collection.find_one(
-            filter=filter_query,
-            sort=[("InsertDTS", DESCENDING)]
-        ) or {}
+        # check for duplicate before creating the resource
+        trans_state = 'CheckingDuplicate'
+        if resource_id:
+            duplicate = resource_collection.find_one({'ResourceId': resource_id, 'DeletedFlag': 0})
+            if duplicate:
+                tracking_data["Stage"] = trans_state
+                tracking_data["Message"] = f"Duplicate {RESOURCE_TYPE} for id {resource_id}"
+                tracking_data["SuccessFlag"] = 0
+                insert_tracking_record(tracking_data)
+                return jsonify({"error": f"{RESOURCE_TYPE} already exists for id {resource_id}"}), 409
 
-        if not first_record:
-            return jsonify({"error": "Patient not found"}), 404
-        if not first_record.get("Status") == "Active":
-            return jsonify({"error": "Patient is not active"}), 400
-        return jsonify(first_record.get("RequestDataFromSource")), 200
-    except Exception as e:
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
+        trans_state = 'CreatingResource'
+        mongo_document['InsertDTS'] = datetime.now(timezone.utc)
+        insert_result = resource_collection.insert_one(mongo_document)
 
+        tracking_data["RequestObjectId"] = str(insert_result.inserted_id)
+        tracking_data["Stage"] = 'ResourceCreated'
+        tracking_data["Message"] = f"{RESOURCE_TYPE} created"
+        tracking_data["SuccessFlag"] = 1
+        insert_tracking_record(tracking_data)
 
-@patientupdate_bp.route('/fhir/Patient/<string:patient_id>', methods=['PUT'])
-def update_patient(patient_id):
-    try:
-        trans_state = 'RequestReceived'
+        return jsonify(resource_json), 201
 
-        tracking_data = tracking_data_define()
+    except ValueError as e:
         tracking_data["Stage"] = trans_state
-        tracking_data["RequestReceivedDTS"] = datetime.now()
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger_obj.log(f"{RESOURCE_TYPE} create Error: {traceback.format_exc()}", 'error')
+        tracking_data["Stage"] = trans_state
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": f"Error in {RESOURCE_TYPE} create: {str(e)}"}), 500
 
-        tracking_data["RequestURL"] = request.url
-        # verify the requst
+
+@patient_bp.route('/Patient/<resource_id>', methods=['PUT'])
+def update_patient(resource_id):
+    trans_state = 'RequestReceived'
+
+    tracking_data = tracking_data_define()
+    tracking_data["MessageType"] = f'{RESOURCE_TYPE}Update'
+    tracking_data["Stage"] = trans_state
+    tracking_data["RequestReceivedDTS"] = datetime.now()
+    tracking_data["RequestURL"] = request.url
+
+    try:
         trans_state = 'VerifyingRequest'
-
-        # get client from header
-        clientname = request.headers.get("Client", None) or None
-        if not clientname:
-            return {"error": "Invalid Client is passed in header"}, 400
+        clientname, payload = validate_request()
         tracking_data["Client"] = clientname
-        jwt_utils = Jwtutils(clientname=clientname)
 
-        # get and validate the header authorization
-        auth_header = request.headers.get("Authorization", None) or None
+        trans_state = 'ValidatingResource'
+        resource_json = get_request_resource()
+        payload_resource_id = validate_resource(resource_json)
 
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return {"error": "Unauthorized Token"}, 401
+        if payload_resource_id and payload_resource_id != resource_id:
+            raise ValueError("Resource id in the body does not match the id in the URL")
 
-        token = auth_header.split(" ")[1]
+        resource_json['id'] = resource_id
 
-        if not token:
-            logger_obj.log("Missing jwt", 'error')
-            return jsonify({"error": "Missing jwt"}), 401
+        resource_collection = get_resource_collection(clientname)
 
-        # verify the request
-        if not request.is_json:
-            logger_obj.log("Request is not JSON", 'error')
-            raise ValueError("Request has to be JSON")
-
-        # validating the jwt
-        trans_state = 'ValidatingJWT'
-        payload = jwt_utils.decode_jwt(token)
-        # clientname = payload['sub']
-
-        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
-        if not is_valid:
-            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
-            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
-
-        logger_obj.log("valid jwt", 'info')
-
-        # creating mongo db collection objects for request and response
-        patient_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
-
-        # Step 1: First query - get only OriginalClaimIdentifier and OriginalMemberId
-        filter_query = {
-            "RequestDataFromSource": {
-                "identifier": {
-                    "value": f"{patient_id}"
-                }
-            }
+        update_document = {
+            'ResourceData': resource_json,
+            'UpdateDTS': datetime.now(timezone.utc).isoformat(),
+            'UpdateUser': 'Interopservice',
+            'jwt_payload': payload
         }
 
-        # Fetch the latest record for original identifiers and member ID
-        first_record = patient_collection.find_one(
-            filter=filter_query,
-            sort=[("InsertDTS", DESCENDING)]
-        ) or {}
+        if resource_collection is None:
+            logger_obj.log("MongoDB unavailable - returning document that would be stored", 'info')
+            return jsonify({"mongodb_status": "unavailable", "operation": "update", "resource_id": resource_id, "document": update_document}), 200
 
-        if not first_record:
-            return jsonify({"error": "Patient not found"}), 404
-        if not first_record.get("Status") == "Active":
-            return jsonify({"error": "Patient is not active"}), 400
-        patient_data = json.loads(request.get_data())
-        request_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
-        patient = Patient(patient_data)
-        request_result = request_collection.insert_one({
-            'InsertDTS': datetime.now(),
-            'InsertUser': 'Interopservice',
-            'RequestResourceType': 'Patient',
-            'RequestDataFromSource': patient,  # data from EMR
-            'Status': 'Active'
+        trans_state = 'UpdatingResource'
+        update_document['UpdateDTS'] = datetime.now(timezone.utc)
+        update_result = resource_collection.update_one(
+            {'ResourceId': resource_id, 'DeletedFlag': 0},
+            {'$set': update_document}
+        )
 
-        })
+        if update_result.matched_count == 0:
+            tracking_data["Stage"] = trans_state
+            tracking_data["Message"] = f"{RESOURCE_TYPE} not found for id {resource_id}"
+            tracking_data["SuccessFlag"] = 0
+            insert_tracking_record(tracking_data)
+            return jsonify({"error": f"{RESOURCE_TYPE} not found for id {resource_id}"}), 404
 
-        return jsonify({"message": "Patient updated successfully"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
+        tracking_data["Stage"] = 'ResourceUpdated'
+        tracking_data["Message"] = f"{RESOURCE_TYPE} updated"
+        tracking_data["SuccessFlag"] = 1
+        insert_tracking_record(tracking_data)
 
+        return jsonify(resource_json), 200
 
-@patientdelete_bp.route('/fhir/Patient/<string:patient_id>', methods=['DELETE'])
-def delete_patient(patient_id):
-    try:
-        trans_state = 'RequestReceived'
-
-        tracking_data = tracking_data_define()
+    except ValueError as e:
         tracking_data["Stage"] = trans_state
-        tracking_data["RequestReceivedDTS"] = datetime.now()
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger_obj.log(f"{RESOURCE_TYPE} update Error: {traceback.format_exc()}", 'error')
+        tracking_data["Stage"] = trans_state
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": f"Error in {RESOURCE_TYPE} update: {str(e)}"}), 500
 
-        tracking_data["RequestURL"] = request.url
-        # verify the requst
+
+@patient_bp.route('/Patient/<resource_id>', methods=['DELETE'])
+def delete_patient(resource_id):
+    trans_state = 'RequestReceived'
+
+    tracking_data = tracking_data_define()
+    tracking_data["MessageType"] = f'{RESOURCE_TYPE}Delete'
+    tracking_data["Stage"] = trans_state
+    tracking_data["RequestReceivedDTS"] = datetime.now()
+    tracking_data["RequestURL"] = request.url
+
+    try:
         trans_state = 'VerifyingRequest'
-
-        # get client from header
-        clientname = request.headers.get("Client", None) or None
-        if not clientname:
-            return {"error": "Invalid Client is passed in header"}, 400
+        clientname, payload = validate_request()
         tracking_data["Client"] = clientname
-        jwt_utils = Jwtutils(clientname=clientname)
 
-        # get and validate the header authorization
-        auth_header = request.headers.get("Authorization", None) or None
+        resource_collection = get_resource_collection(clientname)
 
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return {"error": "Unauthorized Token"}, 401
-
-        token = auth_header.split(" ")[1]
-
-        if not token:
-            logger_obj.log("Missing jwt", 'error')
-            return jsonify({"error": "Missing jwt"}), 401
-
-        # verify the request
-        if not request.is_json:
-            logger_obj.log("Request is not JSON", 'error')
-            raise ValueError("Request has to be JSON")
-
-        # validating the jwt
-        trans_state = 'ValidatingJWT'
-        payload = jwt_utils.decode_jwt(token)
-        # clientname = payload['sub']
-
-        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
-        if not is_valid:
-            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
-            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
-
-        logger_obj.log("valid jwt", 'info')
-
-        # creating mongo db collection objects for request and response
-        patient_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
-
-        # Step 1: First query - get only OriginalClaimIdentifier and OriginalMemberId
-        filter_query = {
-            "RequestDataFromSource": {
-                "identifier": {
-                    "value": f"{patient_id}"
-                }
-            }
+        delete_document = {
+            'DeletedFlag': 1,
+            'DeletedDTS': datetime.now(timezone.utc).isoformat(),
+            'DeletedUser': 'Interopservice'
         }
 
-        # Fetch the latest record for original identifiers and member ID
-        first_record = patient_collection.find_one(
-            filter=filter_query,
-            sort=[("InsertDTS", DESCENDING)]
-        ) or {}
+        if resource_collection is None:
+            logger_obj.log("MongoDB unavailable - returning document that would be stored", 'info')
+            return jsonify({"mongodb_status": "unavailable", "operation": "delete", "resource_id": resource_id, "document": delete_document}), 200
 
-        if not first_record:
-            return jsonify({"error": "Patient not found"}), 404
-        if not first_record.get("Status") == "Active":
-            return jsonify({"error": "Patient is not active"}), 400
+        # delete is a soft delete, the existing resource is marked as deleted
+        trans_state = 'DeletingResource'
+        delete_document['DeletedDTS'] = datetime.now(timezone.utc)
+        delete_result = resource_collection.update_one(
+            {'ResourceId': resource_id, 'DeletedFlag': 0},
+            {'$set': delete_document}
+        )
 
-        patient_data = first_record.get("RequestDataFromSource")
-        # Update the status to 'Deleted'
-        patient = Patient(patient_data)
-        request_result = patient_collection.insert_one({
-            'InsertDTS': datetime.now(),
-            'InsertUser': 'Interopservice',
-            'RequestResourceType': 'Patient',
-            'RequestDataFromSource': patient,  # data from EMR
-            'Status': 'Deleted'
+        if delete_result.matched_count == 0:
+            tracking_data["Stage"] = trans_state
+            tracking_data["Message"] = f"{RESOURCE_TYPE} not found for id {resource_id}"
+            tracking_data["SuccessFlag"] = 0
+            insert_tracking_record(tracking_data)
+            return jsonify({"error": f"{RESOURCE_TYPE} not found for id {resource_id}"}), 404
 
-        })
-        return jsonify({"message": "Patient deleted successfully"}), 200
+        tracking_data["Stage"] = 'ResourceDeleted'
+        tracking_data["Message"] = f"{RESOURCE_TYPE} deleted"
+        tracking_data["SuccessFlag"] = 1
+        insert_tracking_record(tracking_data)
+
+        return '', 204
+
+    except ValueError as e:
+        tracking_data["Stage"] = trans_state
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
+        logger_obj.log(f"{RESOURCE_TYPE} delete Error: {traceback.format_exc()}", 'error')
+        tracking_data["Stage"] = trans_state
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": f"Error in {RESOURCE_TYPE} delete: {str(e)}"}), 500
+
+
+@patient_bp.route('/Patient', methods=['GET'])
+def search_patient():
+    trans_state = 'RequestReceived'
+
+    tracking_data = tracking_data_define()
+    tracking_data["MessageType"] = f'{RESOURCE_TYPE}Search'
+    tracking_data["Stage"] = trans_state
+    tracking_data["RequestReceivedDTS"] = datetime.now()
+    tracking_data["RequestURL"] = request.url
+
+    try:
+        trans_state = 'VerifyingRequest'
+        clientname, payload = validate_request()
+        tracking_data["Client"] = clientname
+
+        trans_state = 'SearchingResource'
+        search_query = {'DeletedFlag': 0}
+
+        resource_id = request.args.get('_id', None) or None
+        if resource_id:
+            search_query['ResourceId'] = resource_id
+
+        identifier = request.args.get('identifier', None) or None
+        if identifier:
+            search_query['ResourceData.identifier.value'] = identifier
+
+        resource_collection = get_resource_collection(clientname)
+
+        if resource_collection is None:
+            logger_obj.log("MongoDB unavailable - cannot perform search", 'info')
+            return jsonify({"mongodb_status": "unavailable", "operation": "search", "query": search_query, "message": "MongoDB is not connected. Search cannot return results."}), 200
+
+        matching_records = resource_collection.find(
+            filter=search_query,
+            projection={'ResourceData': 1, '_id': 0}
+        )
+
+        entries = [
+            {'resource': record.get('ResourceData')}
+            for record in matching_records if record.get('ResourceData')
+        ]
+
+        tracking_data["Stage"] = 'ResourceSearched'
+        tracking_data["Message"] = f"{RESOURCE_TYPE} search returned {len(entries)} records"
+        tracking_data["SuccessFlag"] = 1
+        insert_tracking_record(tracking_data)
+
+        # search response is returned as a FHIR searchset Bundle
+        return jsonify({
+            'resourceType': 'Bundle',
+            'type': 'searchset',
+            'total': len(entries),
+            'entry': entries
+        }), 200
+
+    except ValueError as e:
+        tracking_data["Stage"] = trans_state
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger_obj.log(f"{RESOURCE_TYPE} search Error: {traceback.format_exc()}", 'error')
+        tracking_data["Stage"] = trans_state
+        tracking_data["Message"] = str(e)
+        tracking_data["SuccessFlag"] = 0
+        insert_tracking_record(tracking_data)
+        return jsonify({"error": f"Error in {RESOURCE_TYPE} search: {str(e)}"}), 500
