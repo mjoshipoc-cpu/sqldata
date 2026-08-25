@@ -1,261 +1,1062 @@
-name: $(date:yyyyMMdd)$(rev:.r)
-trigger:
-  - relaase1.0
-resources:
-  repositories:
-  - repository: self
-    type: git
-    ref: refs/heads/relaase1.0
-
-variables:
-  poolName: 'az03-uc-devops-ado-nonprod-pool'
-  imageName: 'dandaapiserver'
-  imageTag: '$(Build.BuildId)'
-  additionalTag: 'InteropSrvc'
-  testdockerFile: 'src/test.DockerFile'
-  #uatdockerFile: 'src/uat.DockerFile'
-  buildContext: 'src'
-  testazureSubscription: 'IOPSRV-Service-Connection-Dev'
-  uatazureSubscription: 'IOPSRV-Service-Connection-Uat'
-
-stages:
-- stage: Build
-  displayName: Build and Push to Test
-  jobs:
-  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
-    parameters:
-      jobName: 'buildAndPushTest'
-      displayName: 'Build Docker Image and Push to Test'
-      azureSubscription: '$(testazureSubscription)'
-      containerRegistry: 'iopsrvtestacr'
-      buildContext: '$(buildContext)'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      dockerFile: '$(testdockerFile)'
-
-- stage: Review
-  displayName: Review
-  dependsOn: Build
-  condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
-  jobs: 
-  - job: releaseValidation
-    displayName: Confirm UAT Release
-    pool: server    
-    timeoutInMinutes: 12960 # job times out in 9 days
-    steps:
-    - task: ManualValidation@0
-      timeoutInMinutes: 10080 # task times out in 1 week
-      inputs:
-        notifyUsers: |
-          Kannam.Goud@exlservice.com
-        instructions: 'Please confirm before proceeding to UAT'
-        onTimeout: 'reject'
-
-- stage: UAT
-  displayName: Build and Push to UAT
-  dependsOn: Review
-  jobs:
-  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
-    parameters:
-      jobName: 'buildAndPushUAT'
-      displayName: 'Build Docker Image and Push to UAT'
-      azureSubscription: '$(uatazureSubscription)'
-      containerRegistry: 'iopsrvuatacr'
-      buildContext: '$(buildContext)'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      dockerFile: '$(testdockerFile)'
+from mapping.PASModule.claimrequest.memberdetails import MemberDetails
+from mapping.PASModule.claimrequest.requestingproviderdetails import RequestingProviderDetails
+from mapping.PASModule.claimrequest.servicedetails import ServiceDetails
+from utils.logutils import logger
+import traceback
 
 
+class claimRequest:
+    def __init__(self, bundle,selector):
+        self.bundle = bundle
+        self.selector = selector
+        self.logger_obj = logger()
+    
+    def main(self):
+        try:
+            self.logger_obj.log('before member details')
+            memberdetails = MemberDetails(self.selector).memberdetailsmapping()
+            self.logger_obj.log('after member details')
+            requestingProviderDetails = RequestingProviderDetails(self.selector).requestingprovidermapping()
+            self.logger_obj.log('after requesting provider details')
+            referenceDetails = self.selector.get_reference_details()
+            self.logger_obj.log('after reference details')
+            authorizationdetails = self.selector.get_authorization_details()
+            self.logger_obj.log('after authorization details')
+            contactDetails = self.selector.get_contact_details()
+            self.logger_obj.log('after contact details')
+            diagnosisdetails = self.selector.get_diagnosis_details()
+            self.logger_obj.log('after diagnosis details')
+            relatedConditiondetails = self.selector.get_related_condition_details()
+            self.logger_obj.log('after related condition details')
+            servicedetails = ServiceDetails(self.selector).get_services()
+            self.logger_obj.log('after service details')
+            supportinginformation = self.selector.get_authlevel_supportinginfo()
+            self.logger_obj.log('after supporting info details')
 
-=====================================================================================
+            outputdata = {"authorization":{
+                "referenceDetails": referenceDetails,
+                "authorizationDetails": authorizationdetails,
+                "contactDetails" : contactDetails,
+                "memberDetails": memberdetails,
+                "diagnosisDetails": diagnosisdetails,
+                "requestingProviderDetails": requestingProviderDetails,
+                "relatedConditions": relatedConditiondetails,
+                "services": servicedetails,
+                "supportingInformation": supportinginformation
+            }}
+            return outputdata
+        except Exception as e:
+            self.logger_obj.log(f"ClaimRequest main Error: {traceback.format_exc()}",'error')
+            raise ValueError(f"Error building ClaimRequest: {str(e)}")
+======================================================================================================================
 
-name: $(date:yyyyMMdd)$(rev:.r)
-trigger:
-  - messagelistener_release
-resources:
-  repositories:
-  - repository: self
-    type: git
-    ref: refs/heads/messagelistener_release
+import traceback
+from utils.logutils import logger
+class MemberDetails:
+    def __init__(self,ruleparser,memberId = None):
+        self.ruleparser = ruleparser
+        self.memberId = memberId
+        self.logger_obj = logger()  
+    
+    def memberdetailsmapping(self):
 
-variables:
-  poolName: 'az03-uc-devops-ado-nonprod-pool'
-  imageName: 'dandaqueuelistenerserver'
-  imageTag: '$(Build.BuildId)'
-  additionalTag: 'InteropQueueListenerSrvc'
-  dockerFile: 'src/test.quesvc.DockerFile'
-  buildContext: 'src'
-  testazureSubscription: 'IOPSRV-Service-Connection-Dev'
-  uatazureSubscription: 'IOPSRV-Service-Connection-Uat'
+        try:
 
-stages:
-- stage: Build
-  displayName: Build and Push to Test
-  jobs:
-  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
-    parameters:
-      jobName: 'buildAndPushTest'
-      displayName: 'Build Docker Image and Push to Test'
-      azureSubscription: '$(testazureSubscription)'
-      containerRegistry: 'iopsrvtestacr'
-      buildContext: '$(buildContext)'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      dockerFile: '$(dockerFile)'
+            claim_resource = self.ruleparser.get_resource('claim')
 
-- stage: Review
-  displayName: Review Stage
-  dependsOn: Build
-  condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
-  jobs: 
-  - job: releaseValidation
-    displayName: Confirm UAT Release
-    pool: server    
-    timeoutInMinutes: 12960 # job times out in 9 days
-    steps:
-    - task: ManualValidation@0
-      timeoutInMinutes: 10080 # task times out in 1 week
-      inputs:
-        notifyUsers: |
-          Kannam.Goud@exlservice.com
-        instructions: 'Please confirm before proceeding to UAT'
-        onTimeout: 'reject'
+            patient_resource = self.ruleparser.get_resource('patient')
+            
 
-- stage: UAT
-  displayName: Build and Push to UAT
-  dependsOn: Review
-  jobs:
-  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
-    parameters:
-      jobName: 'buildAndPushUAT'
-      displayName: 'Build Docker Image and Push to UAT'
-      azureSubscription: '$(uatazureSubscription)'
-      containerRegistry: 'iopsrvuatacr'
-      buildContext: '$(buildContext)'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      dockerFile: '$(dockerFile)'
+            focal_cov = self.ruleparser.get_focal_cov(claim_resource)
+
+            coverage_resource = self.ruleparser.get_resource('coverage',focal_cov)
+
+            patient_identifier = self.ruleparser.get_preferred_identifier(patient_resource)
+            familyname,givenname,textname,perfix,suffix = self.ruleparser.get_preferred_name(patient_resource)
+            patient_dob = patient_resource.birthDate.isostring
+            patient_gender = patient_resource.gender[0].upper()
+
+            if hasattr(patient_resource, "communication") and patient_resource.communication:
+                if not getattr(patient_resource.communication[0], "language", None):
+                    raise ValueError("Patient communication language is missing, which is mandatory.")
+                else:
+                    patient_language = patient_resource.communication[0].language.coding[0].code
+            else:
+                patient_language = ""        
+            
+
+            # Extract address information
+            address_info = self.ruleparser.extract_address_fields(patient_resource)
+           
+
+            # Extract telecom information
+            telecom_info = self.ruleparser.extract_telecom_fields(patient_resource)
+            homephone = telecom_info["homePhone"]
+            workphone = telecom_info["workPhone"]
+            mobilephone = telecom_info["mobilePhone"]
+            email = telecom_info["email"]
+
+            subscriber_id = coverage_resource.subscriberId
+            beneficiary_identifier = self.ruleparser.get_cov_beneficiary_id(coverage_resource) or ""
+            coverage_relationship_code = coverage_resource.relationship.coding[0].code
+            coverage_relationship_display = coverage_resource.relationship.coding[0].display
+
+                    
+                
+            memberdetails_dict = {
+                                "member": {
+                            "memberId": patient_identifier if self.memberId is None else self.memberId,
+                            "subscriberId": subscriber_id,
+                            "beneficiaryId": beneficiary_identifier,
+                            "lastName": familyname,
+                            "firstName": givenname,
+                            "prefix": perfix,
+                            "suffix": suffix,
+                            "dateOfBirth":patient_dob,
+                            "gender":patient_gender,
+                            "roleCode": coverage_relationship_code,
+                            "roleDescription": coverage_relationship_display,
+                            "language": patient_language,
+                            "address": address_info,
+                            "contactDetails": {
+                                "homePhone": homephone,
+                                "mobilePhone": mobilephone,
+                                "workPhone": workphone,
+                                "email": email
+                                }
+                            }
+                        }
+            return memberdetails_dict
+        except Exception as e:
+            self.logger_obj.log(f"Error in member details mapping: {traceback.format_exc()}",'error')
+            raise ValueError(f"Error in member details mapping: {str(e)}")
 
 
+====================================================================================================================
+import traceback
+from utils.logutils import logger
 
-=============================================================================
-name: $(date:yyyyMMdd)$(rev:.r)
-trigger:
-  - messaginginfra
-resources:
-  repositories:
-  - repository: self
-    type: git
-    ref: refs/heads/messaginginfra
+class RequestingProviderDetails:
+    def __init__(self,ruleparser):
+        self.ruleparser = ruleparser
+        self.logger_obj = logger()
+    
+    def requestingprovidermapping(self):
+        try:
+        
+            claim_resource = self.ruleparser.get_resource('claim')
+            
+            provider_reference = claim_resource.provider.reference
+            if not provider_reference:
+                raise ValueError("Provider reference is missing in the claim resource.")
+            
 
-variables:
-  poolName: 'az03-uc-devops-ado-nonprod-pool'
-  imageName: 'rabbitmq'
-  imageTag: '$(Build.BuildId)'
-  additionalTag: 'iopsrvcmessaging'
-  dockerFile: 'src/messaging/test.Dockerfile'
-  buildContext: 'src/messaging'
-  kubernetesNamespace: 'iopsrv-rabbitmq'
-  testazureSubscription: 'IOPSRV-Service-Connection-Dev'
-  uatazureSubscription: 'IOPSRV-Service-Connection-Uat'
+            providerresourcetype,providerid = self.ruleparser.split_reference(provider_reference)
+            
 
-stages:
-- stage: TestContainerBuildandPush
-  displayName: Build and Push to Test Container
-  jobs:
-  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
-    parameters:
-      jobName: 'buildAndPushTest'
-      displayName: 'Build Docker Image and Push to Test'
-      azureSubscription: '$(testazureSubscription)'
-      containerRegistry: 'iopsrvtestacr'
-      buildContext: '$(buildContext)'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      dockerFile: '$(dockerFile)'
 
-- stage: DeployToAKSTest
-  displayName: Deploy to AKS Test
-  dependsOn: TestContainerBuildandPush
-  jobs:
-  - template: src/devops/templates/InterOp_Kubernetes_Deploy_Template.yml
-    parameters:
-      azureSubscription: '$(testazureSubscription)'
-      aksClusterName: 'az03-hc-iopsrv-test-aks'
-      aksResourceGroup: 'az03-hc-iopsrv-test-rg-app'
-      kubernetesNamespace: 'iopsrv-rabbitmq'
-      containerRegistry: 'iopsrvtestacr.azurecr.io'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      environment: 'Dev'
-      loadBalancerSubnet: 'az03-hc-iopsrv-test-aks-subnet'
-      loadBalancerIP: '10.61.222.100'
-      keyVaultName: 'iopsrv-test-kv'
+            provider_resource = self.ruleparser.get_resource(providerresourcetype, providerid)
 
-- stage: Review
-  displayName: Review Stage
-  dependsOn: DeployToAKSTest
-  condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
-  jobs: 
-  - job: releaseValidation
-    displayName: Confirm UAT Release
-    pool: server    
-    timeoutInMinutes: 12960 # job times out in 9 days
-    steps:
-    - task: ManualValidation@0
-      timeoutInMinutes: 10080 # task times out in 1 week
-      inputs:
-        notifyUsers: |
-          Kannam.Goud@exlservice.com
-        instructions: 'Please confirm before proceeding to UAT'
-        onTimeout: 'reject'
+            if providerresourcetype.lower() == "organization":
+                providerid, providernpi, providertin, providerid_system = self.ruleparser.get_identifier(provider_resource)
+                providerfirstname = ''
+                providerlastname = ''
+                providername = provider_resource.name if provider_resource.name else ''
+                providernameprefix = ''
+                providernamesuffix = ''
+                #providerstate = provider_resource.address[0].state if provider_resource.address and provider_resource.address[0].state else ''
+                #providercity = provider_resource.address[0].city if provider_resource.address and provider_resource.address[0].city else ''
+                address_info = self.ruleparser.extract_address_fields(provider_resource)
+                contact_details = self.ruleparser.extract_telecom_fields(provider_resource)
 
-- stage: UATContainerBuildandPush
-  displayName: Build and Push to UAT Container
-  #dependsOn: Review
-  jobs:
-  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
-    parameters:
-      jobName: 'buildAndPushUAT'
-      displayName: 'Build Docker Image and Push to UAT'
-      azureSubscription: '$(uatazureSubscription)'
-      containerRegistry: 'iopsrvuatacr'
-      buildContext: '$(buildContext)'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      dockerFile: '$(dockerFile)'
+            elif providerresourcetype.lower() in ["practitionerrole","practitioner"]:
+                if providerresourcetype.lower() == "practitionerrole":
+                    providerresourcetype1,providerid1 = self.ruleparser.split_reference(provider_resource.practitioner.reference)
+                    provider_resource = self.ruleparser.get_resource(providerresourcetype1, providerid1)
+                    
+                providerid, providernpi, providertin, providerid_system = self.ruleparser.get_identifier(provider_resource)
+                providerfirstname = provider_resource.name[0].given[0] if provider_resource.name and provider_resource.name[0].given else ''
+                providerlastname = provider_resource.name[0].family if provider_resource.name and provider_resource.name[0].family else ''
+                providerid, providernpi, providertin, providerid_system = self.ruleparser.get_identifier(provider_resource)
+                providername = provider_resource.name[0].text if provider_resource.name and provider_resource.name[0].text else ''
+                providernameprefix = provider_resource.name[0].prefix[0] if provider_resource.name and provider_resource.name[0].prefix else ''
+                providernamesuffix = provider_resource.name[0].suffix[0] if provider_resource.name and provider_resource.name[0].suffix else ''
+                #providerstate = provider_resource.address[0].state if provider_resource.address and provider_resource.address[0].state else ''
+                #providercity = provider_resource.address[0].city if provider_resource.address and provider_resource.address[0].city else ''
+                address_info = self.ruleparser.extract_address_fields(provider_resource)
+                contact_details = self.ruleparser.extract_telecom_fields(provider_resource)
+            
+            
+            requestingproviderdetails_dict = {
+                                                "primaryProvider": {
+                                                    "providerId": providerid,
+                                                    "firstName": providerfirstname,
+                                                    "lastName": providerlastname,
+                                                    "name": providername,
+                                                    "prefix": providernameprefix or "",
+                                                    "suffix": providernamesuffix or "",
+                                                    "npi": providernpi,
+                                                    "tin": providertin
+                                                },
+                                                "providerLocation": address_info,
+                                                "contactDetails": contact_details,
+                                                "facility": "true" if providerresourcetype.lower() == "organization" else "false"
+                                            }
+            return requestingproviderdetails_dict
+        except Exception as e:
+            self.logger_obj.log(f"Error in requesting provider details mapping: {traceback.format_exc()}",'error')
+            raise ValueError(f"Error in requesting provider details mapping: {str(e)}")
 
-- stage: DeployToAKSUat
-  displayName: Deploy to AKS UAT
-  dependsOn: UATContainerBuildandPush
-  jobs:
-  - template: src/devops/templates/InterOp_Kubernetes_Deploy_Template.yml
-    parameters:
-      azureSubscription: '$(uatazureSubscription)'
-      aksClusterName: 'az03-hc-iopsrv-uat-aks'
-      aksResourceGroup: 'az03-hc-iopsrv-uat-rg-app'
-      kubernetesNamespace: 'iopsrv-rabbitmq'
-      containerRegistry: 'iopsrvuatacr.azurecr.io'
-      imageName: '$(imageName)'
-      imageTag: '$(imageTag)'
-      poolName: '$(poolName)'
-      additionalTag: '$(additionalTag)'
-      environment: 'Uat'
-      loadBalancerSubnet: 'az03-hc-iopsrv-uat-aks-subnet'
-      loadBalancerIP: '10.61.217.100'
-      keyVaultName: 'iopsrv-uat-kv'
+======================================================================================================================
+
+
+from utils.logutils import logger
+import uuid
+class ServiceDetails:
+    def __init__(self,ruleparser,passeqmapping_record = None):
+        self.ruleparser = ruleparser
+        self.claim_resource = self.ruleparser.get_resource('claim')
+        self.originalPasSequenceMapping = passeqmapping_record
+        self.logger_obj = logger()
+        
+    def get_service_procedures(self,item):
+        try:
+            """
+            Constructs a list of serviceProcedures with requestedProcedureDetails from both Claim.item[] (CPT/HCPCS)
+            and Claim.procedure[] (ICD-10), following PAS format with isPrimary flags and proper fallbacks.
+            """
+            
+            def extract_coding(coding_list):
+                if coding_list and len(coding_list) > 0:
+                    coding = coding_list[0]
+                    return coding.code, coding.display or ''
+                return '', ''
+
+            
+            procedures = getattr(self.claim_resource, 'procedure', [])
+            
+            service_procedures = []
+
+            # ?? Handle CPT/HCPCS from Claim.item[]
+            if not item.productOrService or not item.productOrService.coding or not item.productOrService.coding[0].code:
+                raise ValueError("Missing productOrService.code in Claim.item[]. Rejecting claim.")
+
+            # procedureLow
+            low_code, low_desc = extract_coding(item.productOrService.coding)
+
+            high_code, high_desc = low_code, low_desc
+
+            # procedureHigh: from productOrServiceCodeEnd if present, else fallback to productOrService
+            if hasattr(item, "extension") and item.extension:
+                productOrServiceCodeEnd = self.ruleparser.get_extension_value(item.extension, 'extension-productOrServiceCodeEnd')
+                if productOrServiceCodeEnd:
+                    if len(productOrServiceCodeEnd) > 0:
+                        high_code, high_desc = productOrServiceCodeEnd[0].get("code", ""), productOrServiceCodeEnd[0].get("display", "")
+                else:
+                    # Fallback to productOrService if no end code
+                    high_code, high_desc = low_code, low_desc
+            
+
+            # procedureRevenue (optional)
+            if item.revenue and item.revenue.coding:
+                rev_code, rev_desc = extract_coding(item.revenue.coding)
+            else:
+                rev_code, rev_desc = '', ''
+
+            service_procedures.append({"requestedProcedureDetails": {
+                    "isPrimary": "true",
+                    "procedureLow": {
+                        "code": low_code,
+                        "shortDescription": low_desc
+                    },
+                    "procedureHigh": {
+                        "code": high_code,
+                        "shortDescription": high_desc
+                    },
+                    "procedureRevenue": {
+                        "code": rev_code,
+                        "shortDescription": rev_desc
+                    }
+                }
+            }
+            )
+            # ?? Handle ICD-10 from Claim.procedure[]
+            if procedures and len(procedures) > 0:
+                for proc in procedures:
+                    if not proc.procedureCodeableConcept or not proc.procedureCodeableConcept.coding or not proc.procedureCodeableConcept.coding[0].code:
+                        raise ValueError("Missing procedureCodeableConcept.code in Claim.procedure[]. Rejecting claim.")
+
+                    code, desc = extract_coding(proc.procedureCodeableConcept.coding)
+
+                    service_procedures.append({ "requestedProcedureDetails": {
+                            "isPrimary": "false",
+                            "procedureLow": {
+                                "code": code,
+                                "shortDescription": desc
+                            },
+                            "procedureHigh": {
+                                "code": code,
+                                "shortDescription": desc
+                            },
+                            "procedureRevenue": {
+                                "code": '',
+                                "shortDescription": ''
+                            }
+                        }
+                    }
+                    )
+
+            return service_procedures
+        except Exception as e:
+            raise ValueError(f"Error in get_service_procedures mapping: {str(e)}")
+                
+            
+    def get_service_providers(self, item):
+        try:
+            output = []
+
+            # ---------------------------------------
+            # 1?? Facility - only if present at claim level
+            # ---------------------------------------
+            facility = getattr(self.claim_resource, "facility", None)
+            facility_reference = getattr(facility, "reference", None)
+            if facility_reference:
+                providerresourcetype, facility_id = self.ruleparser.split_reference(facility.reference)
+                facility_resource = self.ruleparser.get_resource(providerresourcetype, facility_id)
+                facility_name = getattr(facility_resource, "name", "") or ""
+                provider_id, provider_npi, provider_tin, provider_id_system = self.ruleparser.get_identifier(facility_resource)
+                address_info = self.ruleparser.extract_address_fields(facility_resource)
+                contact_details = self.ruleparser.extract_telecom_fields(facility_resource)
+                
+                output.append({
+                    "facility": "true",
+                    "primaryProvider": {
+                        "providerId": provider_id or '',
+                        "firstName": "",
+                        "lastName": "",
+                        "name": facility_name,
+                        "npi": provider_npi or "",
+                        "tin": provider_tin or ""
+                    },
+                    "contactDetails": contact_details,
+                    "providerLocation": address_info
+                })
+            else:
+                
+                self.logger_obj.log("No facility reference found in Claim resource. Skipping facility provider mapping.")
+
+            # ---------------------------------------
+            # 2?? careTeam for the given item
+            # ---------------------------------------
+            care_teams = getattr(self.claim_resource, "careTeam", []) or []
+            self.logger_obj.log(f"Care teams found: {len(care_teams)}")
+            
+
+            # Rule B/C:
+            # B) If item.careTeamSequence exists, match by sequence and use ItemClaimMember scope.
+            # C) If item.careTeamSequence is missing/empty, use OverallClaimMember scope.
+            matching_care_team_sequences = getattr(item, "careTeamSequence", []) or []
+            matching_sequence_set = {str(seq) for seq in matching_care_team_sequences}
+            use_sequence_match = len(matching_sequence_set) > 0
+
+            item_sequence = str(getattr(item, "sequence", "") or "")
+            if use_sequence_match:
+                self.logger_obj.log(
+                    f"Item {item_sequence}: using ItemClaimMember scope with careTeamSequence matches {sorted(matching_sequence_set)}"
+                )
+            else:
+                self.logger_obj.log(
+                    f"Item {item_sequence}: no careTeamSequence provided, using OverallClaimMember scope"
+                )
+            
+            
+            for member in care_teams[0:10]:
+                carescope = self.ruleparser.get_extension_value(member.extension, 'extension-careTeamClaimScope')
+                self.logger_obj.log(f"Processing careTeam member with sequence: {member.sequence}, carescope: {carescope}")
+
+                # extension-careTeamClaimScope is a boolean.
+                # True -> OverallClaimMember, False -> ItemClaimMember.
+                if isinstance(carescope, bool):
+                    carescope_bool = carescope
+                elif isinstance(carescope, str):
+                    carescope_bool = carescope.strip().lower() == "true"
+                else:
+                    carescope_bool = None
+
+                member_sequence = str(getattr(member, "sequence", "") or "")
+
+                if use_sequence_match:
+                    if member_sequence not in matching_sequence_set:
+                        self.logger_obj.log(
+                            f"Skipping careTeam member with sequence {member_sequence} as it does not match item.careTeamSequence {sorted(matching_sequence_set)}"
+                        )
+                        continue
+                else:
+                    if carescope_bool is not True:
+                        self.logger_obj.log(
+                            f"Skipping careTeam member with sequence {member_sequence} as it is not an OverallClaimMember (carescope: {carescope})"
+                        )
+                        continue
+
+                
+                if not getattr(member, "responsible", False):
+                    self.logger_obj.log(f"Skipping careTeam member with sequence {member_sequence} as it is not responsible.")
+                    continue
+
+                provider_ref = getattr(member, "provider", None)
+                provider_reference = getattr(provider_ref, "reference", None)
+
+                resource_type, provider_id_ref = self.ruleparser.split_reference(provider_reference)
+                
+                if resource_type.lower() == "organization":
+                    self.logger_obj.log(f"Skipping careTeam member with sequence {member_sequence} as provider is an Organization, not a Practitioner.")
+                    continue
+
+                provider_resource = self.ruleparser.get_resource(resource_type, provider_id_ref)
+                if resource_type.lower() == "practitionerrole":
+                    providerresourcetype1,providerid1 = self.ruleparser.split_reference(provider_resource.practitioner.reference)
+                    provider_resource = self.ruleparser.get_resource(providerresourcetype1, providerid1)
+                    provider_entity = provider_resource
+                else:
+                    provider_entity = provider_resource
+
+                provider_id, provider_npi, provider_tin, provider_id_system = self.ruleparser.get_identifier(provider_entity)
+                
+                
+                family, given,textname,prefix,suffix = self.ruleparser.get_preferred_name(provider_entity)
+                address_info = self.ruleparser.extract_address_fields(provider_entity)
+                contact_details = self.ruleparser.extract_telecom_fields(provider_entity)
+
+                output.append({
+                    "facility": "false",
+                    "primaryProvider": {
+                        "providerId": provider_id,
+                        "firstName": given,
+                        "lastName": family,
+                        "name": "",
+                        "prefix":prefix,
+                        "suffix":suffix,
+                        "npi": provider_npi or "",
+                        "tin": provider_tin or ""
+                    },
+                    "contactDetails": contact_details,
+                    "providerLocation": address_info
+                })
+
+            return output
+        except Exception as e:
+            raise ValueError(f"Error in get_service_providers mapping: {str(e)}")
+    
+    def get_service_quantity(self, item):
+
+        """
+        Extracts the quantity from the item and returns it in PAS-compatible format.
+        """
+        try:
+            output = {
+                    "quantity": "",
+                    "quantityQualifier": "",
+                }
+            
+
+            if hasattr(item, "quantity") and item.quantity:
+                output["quantity"] = str(item.quantity.value)
+
+                # Optional: If there is a unit or system you want to treat as a qualifier
+                if hasattr(item.quantity, "code") and item.quantity.code:
+                    output["quantityQualifier"] = item.quantity.code
+
+            return output
+        except Exception as e:
+            raise ValueError(f"Error in get_service_quantity mapping: {str(e)}")
+
+    def get_service_modifiers(self, item):
+        """
+        Extracts modifiers from the item and returns them in PAS-compatible format.
+        """
+        try:
+            output = []
+
+            if getattr(item, "modifier", None):
+                for modifier in item.modifier[:5]:
+                    for coding in getattr(modifier, "coding", []) or []:
+                        code = getattr(coding, "code", None)
+                        display = getattr(coding, "display", None)
+                        if code or display:
+                            output.append({
+                                "code": code or "",
+                                "description": display or "",
+                            })
+            return output
+        except Exception as e:
+            raise ValueError(f"Error in get_service_modifiers mapping: {str(e)}")
+
+    def get_related_diagnosis_details(self, item):
+        """
+        Extracts diagnosis details for a specific Claim.item based on its diagnosisSequence[].
+        Matches sequences with Claim.diagnosis[] and maps to PAS format.
+        """
+        try:
+            diagnosis_map = {}
+
+            # Create a mapping from Claim.diagnosis.sequence ? diagnosis.code & description
+            for diag in getattr(self.claim_resource, "diagnosis", []) or []:
+                sequence = getattr(diag, "sequence", "") or ""
+                if not sequence:
+                    continue
+
+                coding = diag.diagnosisCodeableConcept.coding[0] if (
+                    diag.diagnosisCodeableConcept and diag.diagnosisCodeableConcept.coding
+                ) else ""
+
+                if coding:
+                    diagnosis_map[sequence] = {
+                        "code": getattr(coding, "code", ""),
+                        "description": getattr(coding, "display", "")
+                    }
+
+            # Build diagnosisList[] from the item's diagnosisSequence[]
+            diagnosis_list = []
+            for seq in getattr(item, "diagnosisSequence", []) or []:
+                if seq in diagnosis_map:
+                    diagnosis_list.append({
+                        "sequence": str(seq),
+                        "diagnosis": {
+                            "code": diagnosis_map[seq]["code"],
+                            "description": diagnosis_map[seq]["description"]
+                        }
+                    })
+
+            return diagnosis_list
+        except Exception as e:
+            raise ValueError(f"Error in get_related_diagnosis_details mapping: {str(e)}")
+        
+
+
+    def map_home_health_to_first_service(self,services):
+        """
+        Maps Claim.extension.homeHealthCareInformation to the first service line in PAS output.
+        """
+        try:
+            home_health_data = {
+                "prognosis": {
+                    "code": "",
+                    "description": ""
+                },
+                "startDate": ""
+            }
+
+            # Extract extension data
+            if hasattr(self.claim_resource, "extension") and self.claim_resource.extension:
+                
+                homeHealthCareInformation = self.ruleparser.get_extension_value(self.claim_resource.extension, 'extension-homeHealthCareInformation','prognosis')
+                self.logger_obj.log(f"homeHealthCareInformation: {homeHealthCareInformation}")
+                if homeHealthCareInformation:
+                    if len(homeHealthCareInformation)>0:
+                        home_health_data["prognosis"]["code"] = homeHealthCareInformation[0].get("code", "")
+                        home_health_data["prognosis"]["description"] = homeHealthCareInformation[0].get("display", "")
+                    #home_health_data["startDate"] = homeHealthCareInformation.get("date", "")
+
+                startDate = self.ruleparser.get_extension_value(self.claim_resource.extension, 'extension-homeHealthCareInformation','date')
+                if startDate:
+                    home_health_data["startDate"] = f"{startDate}"
+            
+
+            # Only apply to the first service line
+            if len(services) > 0:
+                services[0]["homeHealth"] = home_health_data
+
+            return services
+        except Exception as e:
+            raise ValueError(f"Error in map_home_health_to_first_service mapping: {str(e)}")
+
+    def get_requested_service_details(self, item,status = None):
+        """
+        Maps Claim.item and Claim.type details to PAS format for requestedServiceDetails,
+        applying transformation and fallback rules.
+        """
+        def extract_date(info):
+            val = getattr(info, "timingDate", "") or ""
+            if val:
+                return val.isostring
+            # Handle timingPeriod separately for start/end dates
+            timing_period = getattr(info, "timingPeriod", None)
+            if timing_period:
+                start = getattr(timing_period, "start", "") or ""
+                if start:
+                    return start.date.date().isoformat()
+            return ""
+        
+        try:
+            output = {
+                    "inpatient": "false",
+                    "placeOfService": {
+                        "code": "",
+                        "description": ""
+                    },
+                    "serviceType": {
+                        "code": "",
+                        "description": ""
+                    },
+                    "serviceDateFrom": "",
+                    "serviceDateTo": "",
+                    "certificationType": {
+                        "code": "",
+                        "description": ""
+                    },
+                    "requestCategory": {
+                        "code": "",
+                        "description": ""
+                    },
+                    "epsdt": "",
+                    "nursingHomeStatus": {
+                        "code": "",
+                        "description": ""
+                    },
+                    "nursingHomeLevelOfCare": {
+                        "code": "",
+                        "description": ""
+                    },
+                    "revenueUnitRateLimit": "",
+                    "admitDate": "",
+                    "dischargeDate": ""
+                }
+            
+            #add status
+            if status:
+                output["status"] = status
+            # 1?? inpatient flag based on Claim.type
+            claim_type_coding = getattr(self.claim_resource.type, "coding", [])
+            for coding in claim_type_coding:
+                if coding.code == "institutional" or (coding.display and coding.display.lower() == "institutional"):
+                    output["inpatient"] = "true"
+                    break
+
+            # 2?? placeOfService
+            if hasattr(item, "locationCodeableConcept") and item.locationCodeableConcept:
+                coding = item.locationCodeableConcept.coding[0] if item.locationCodeableConcept.coding else None
+                if coding:
+                    output["placeOfService"]["code"] = coding.code if coding.code else ""
+                    output["placeOfService"]["description"] = coding.display if coding.display else ""
+
+            # 3?? serviceType
+            if hasattr(item, "category") and item.category:
+                coding = item.category.coding[0] if item.category.coding else None
+                if coding:
+                    output["serviceType"]["code"] = coding.code if coding.code else ""
+                    output["serviceType"]["description"] = coding.display if coding.display else ""
+
+            if hasattr(item, "servicedDate") and item.servicedDate:
+                serviced_date = item.servicedDate
+                output["serviceDateFrom"] = serviced_date
+                output["serviceDateTo"] = serviced_date
+            elif hasattr(item, "servicedPeriod") and item.servicedPeriod:
+                serviced_period = item.servicedPeriod
+
+                if serviced_period:
+                    start_date = getattr(serviced_period, "start", None)
+                    end_date = getattr(serviced_period, "end", None)
+                    output["serviceDateFrom"] = start_date.isostring if start_date else ""
+                    output["serviceDateTo"] = end_date.isostring if end_date else ""
+                else:
+                    output["serviceDateFrom"] = ""
+                    output["serviceDateTo"] = ""
+            else:
+                output["serviceDateFrom"] = ""
+                output["serviceDateTo"] = ""
+                
+            if hasattr(item, "extension") and item.extension:
+            # 4?? certificationType
+                certificationType = self.ruleparser.get_extension_value(item.extension, 'extension-certificationType')
+                if certificationType:
+                    if len(certificationType)>0:
+                        output["certificationType"]["code"] = certificationType[0].get("code", "")
+                        output["certificationType"]["description"] = certificationType[0].get("display", "")
+
+            # 5?? requesttype
+                requestType = self.ruleparser.get_extension_value(item.extension, 'extension-serviceItemRequestType')
+                if requestType:
+                    if len(requestType)>0:
+                        output["requestCategory"]["code"] = requestType[0].get("code", "")
+                        output["requestCategory"]["description"] = requestType[0].get("display", "")
+
+            # 6?? epsdt
+                epsdt = self.ruleparser.get_extension_value(item.extension, 'extension-epsdtIndicator') or ''
+                
+                if epsdt:
+                    output["epsdt"] = "true"
+                elif epsdt is None or len(epsdt) == 0:  # Handle case where extension is empty or not present
+                    output["epsdt"] = ""  # Default to false if no extension found
+                else:
+                    output["epsdt"] = "false"
+            # 7?? nursingHomeResidentialStatus
+                nursingHomeStatus = self.ruleparser.get_extension_value(item.extension, 'extension-nursingHomeResidentialStatus')
+                if nursingHomeStatus:
+                    if len(nursingHomeStatus)>0:
+                        output["nursingHomeStatus"]["code"] = nursingHomeStatus[0].get("code", "")
+                        output["nursingHomeStatus"]["description"] = nursingHomeStatus[0].get("display", "")
+            # 8?? nursingHomeLevelOfCare
+                nursingHomeLevelOfCare = self.ruleparser.get_extension_value(item.extension, 'extension-nursingHomeLevelOfCare')
+                if nursingHomeLevelOfCare:
+                    if len(nursingHomeLevelOfCare) > 0:
+                        output["nursingHomeLevelOfCare"]["code"] = nursingHomeLevelOfCare[0].get("code", "")
+                        output["nursingHomeLevelOfCare"]["description"] = nursingHomeLevelOfCare[0].get("display", "")
+            # 9?? revenueUnitRateLimit
+                revenueUnitRateLimit = self.ruleparser.get_extension_value(item.extension, 'extension-revenueUnitRateLimit') 
+                if revenueUnitRateLimit:
+                    output["revenueUnitRateLimit"] = int(revenueUnitRateLimit)
+            
+            # get admission and dischargedate from supporting info
+
+            item_info_sequences = getattr(item, "informationSequence", []) or [] 
+            supporting_infos = getattr(self.claim_resource, "supportingInfo", []) or []
+
+            for info in supporting_infos:
+
+                if not item_info_sequences:
+                    self.logger_obj.log("No informationSequence found in item. Skipping admission and dischargedate extraction.")
+                    continue
+                    
+                if info.sequence not in item_info_sequences:
+                    self.logger_obj.log(f"Skipping admission and dischargedate with sequence {info.sequence} as it is not in item_info_sequences.")
+                    continue
+
+                if info.category:
+                    category_code_lst = self.ruleparser.get_codeableconcept_codes(info.category)
+                    category_code = category_code_lst[0].get("code").lower() if category_code_lst else ""
+                else:
+                    continue
+
+                
+                if category_code.lower() == "admissiondates":
+                    date_val = extract_date(info)
+                    output["admitDate"] = date_val
+
+                elif category_code.lower() == "dischargedates":
+                    date_val = extract_date(info)
+                    output["dischargeDate"] = date_val
+
+            return output
+        except Exception as e:
+            raise ValueError(f"Error in get_requested_service_details mapping: {str(e)}")
+
+    def extract_attachments_from_document_reference(self, document_resource,status1 = None, sequence = ""):
+        """
+        Given a DocumentReference resource, extract all attachments from content[].
+        Returns a list of dicts with fileName, description, and data.
+        """
+        attachments = []
+        content_list = getattr(document_resource, "content", [])
+        for content in content_list:
+            attachment = getattr(content, "attachment", None)
+            if not attachment:
+                continue
+            datatoupload = getattr(attachment, "data", "")
+            fileID = uuid.uuid4().hex
+            self.logger_obj.log(f"Generated fileID: {fileID} for attachment: {getattr(attachment, 'title', '')}")
+            client_name = self.ruleparser.get_client_from_request()
+            if datatoupload:
+                upload_status =self.ruleparser.upload_attachments_to_storage(datatoupload, fileID, client_name)
+                if not upload_status:
+                    self.logger_obj.log(f"Failed to upload attachment: {getattr(attachment, 'title', '')} to storage.")
+                    raise ValueError(f"Failed to upload attachment: {getattr(attachment, 'title', '')} to storage.")
+            if status1:
+                attachments.append({
+                    "fileName": getattr(attachment, "title", ""),
+                    "description": getattr(document_resource, "description", ""),
+                    "data": "",
+                    "status": status1,
+                    "sequence": sequence,
+                    "fileID": f"{client_name}_{fileID}"
+                })
+            else:
+
+                attachments.append({
+                    "fileName": getattr(attachment, "title", ""),
+                    "description": getattr(document_resource, "description", ""),
+                    "data": "",
+                    "sequence": sequence,
+                    "fileID": f"{client_name}_{fileID}"
+                })
+
+        return attachments
+
+    def extract_supporting_info(self, item,certificationtypedict=None):
+
+        output = {
+            
+                "attachments": [],
+                "notes": []
+            }
+        
+
+        item_info_sequences = getattr(item, "informationSequence", []) or []
+        supporting_infos = getattr(self.claim_resource, "supportingInfo", []) or []
+
+        for info in supporting_infos:
+
+            if not item_info_sequences:
+                self.logger_obj.log("No informationSequence found in item. Skipping supporting info extraction.")
+                continue
+                
+            if info.sequence not in item_info_sequences:
+                self.logger_obj.log(f"Skipping supporting info with sequence {info.sequence} as it is not in item_info_sequences.")
+                continue
+
+            if info.category:
+                category_code_lst = self.ruleparser.get_codeableconcept_codes(info.category)
+                category_code = category_code_lst[0].get("code") if category_code_lst else ""
+                status = None
+                
+                if certificationtypedict:
+                    infoChanged = self.ruleparser.get_extension_value(info.extension, 'extension-infoChanged') or None
+                    self.logger_obj.log(f"infoChanged: {infoChanged}")
+
+                    if certificationtypedict is not None and infoChanged is None:
+                        self.logger_obj.log(f"Skipping supporting info with sequence {info.sequence} due to infoChanged value: {infoChanged}")
+                        continue
+
+                    infoCancelledFlag = self.ruleparser.get_extension_value(info.modifierExtension, 'modifierextension-infoCancelled')
+
+                    status = self.get_supportinginfo_status(infoChanged, certificationtypedict, infoCancelledFlag)
+            else:
+                continue
+
+            if category_code.lower() == "additionalinformation":
+                value_ref = getattr(info, "valueReference", None)
+                sequence = getattr(info, "sequence", None)
+                if not value_ref or not getattr(value_ref, "reference", None):
+                    continue  # no valid reference, skip
+
+                # Resolve the reference to the resource
+                resource_type, resource_id = self.ruleparser.split_reference(value_ref.reference)
+                referenced_resource = self.ruleparser.get_resource(resource_type, resource_id)
+                if resource_type.lower() == "documentreference":
+                    attachments = self.extract_attachments_from_document_reference(referenced_resource, status, sequence)
+                    output["attachments"].extend(attachments)
+                    
+            elif category_code.lower() == "freeformmessage":
+                note_data = getattr(info, "valueString", "")
+                if note_data:
+                    trimmed_note = note_data[:20000]  # Max 20,000 characters
+                    data_entry = {"data": trimmed_note}
+                    data_entry["sequence"] = info.sequence
+                    if status:
+                        data_entry["status"] = status
+                        
+                        trimmed_note += f" status: {status}"
+                    output["notes"].extend([data_entry])
+
+        return output
+
+    def add_prescription_supporting_info_to_firstservice(self, services):
+
+        # Handle prescription.supportingInfo if rule conditions met
+        prescription_ref = getattr(self.claim_resource, "prescription", None)
+
+        if prescription_ref and getattr(prescription_ref, "reference", None):
+            # Step 1: Resolve the DeviceRequest
+            resource_type, resource_id = self.ruleparser.split_reference(prescription_ref.reference)
+            if resource_type.lower() == "devicerequest":
+                device_request = self.ruleparser.get_resource(resource_type, resource_id)
+                
+
+            # Step 2: Iterate through supportingInfo references inside DeviceRequest
+                supporting_info_refs = getattr(device_request, "supportingInfo", []) or []
+
+                output = {
+                    "attachments": []
+                }
+
+                for ref in supporting_info_refs:
+                    doc_ref = getattr(ref, "reference", None)
+                    if not doc_ref:
+                        continue
+
+                    ref_type, ref_id = self.ruleparser.split_reference(doc_ref)
+                    if ref_type.lower() != "documentreference":
+                        continue
+                    #if ref.sequence not in item_info_sequences:
+                    #    continue
+                    document_resource = self.ruleparser.get_resource(ref_type, ref_id)
+                    attachments = self.extract_attachments_from_document_reference(document_resource)
+                    
+                    output["attachments"].extend(attachments)
+
+                # Step 3: Add attachments to the first service line only when output attachments are not empty
+                if output["attachments"] and isinstance(services, list) and services:
+                    service = services[0]
+                    supporting_info = service.setdefault("supportingInformation", {})
+                    existing_attachments = supporting_info.setdefault("attachments", [])
+                    existing_attachments.extend(output["attachments"])
+
+        return services
+
+    
+    def get_status_details(self):
+
+        try:
+            dateinitiated = self.ruleparser.dateinitiated
+            timeinitiated = self.ruleparser.timeinitiated
+
+            if self.claim_resource.priority:
+                priority_code = self.claim_resource.priority.coding[0].code if self.claim_resource.priority.coding else ""
+                priority_description = self.claim_resource.priority.coding[0].display if self.claim_resource.priority.coding else ""
+
+            else:
+                raise ValueError("Missing priority in Claim resource. Rejecting claim.")
+            return {
+                        "dateAuthorizationReceived": dateinitiated,
+                        "timeAuthorizationReceived": timeinitiated,
+                        "umReviewType": {
+                            "code": priority_code or "",
+                            "description": priority_description or ""
+                        }
+                    }
+        except Exception as e:
+            raise ValueError(f"Error in get_status_details mapping: {str(e)}")
+
+    def get_services(self):
+        """
+        Builds a list of service entries using the provided list of Claim.item[].
+        Each service contains serviceProcedures and serviceProviders.
+        """
+
+        services = []
+        for item in self.claim_resource.item:
+            
+            service = {
+                "pasSequence": str(item.sequence),
+                "serviceProcedures": self.get_service_procedures(item),
+                "requestedProviders": self.get_service_providers(item),
+                "requestedQuantityDetails": self.get_service_quantity(item),
+                "requestedModifierDetails": self.get_service_modifiers(item),
+                "requestedServiceDetails": self.get_requested_service_details(item),
+                "diagnosisList" : self.get_related_diagnosis_details(item),
+                "supportingInformation": self.extract_supporting_info(item),
+                "statusDetails": self.get_status_details()
+
+            }
+            services.append(service)
+        # Map home health data to the first service line
+        services = self.map_home_health_to_first_service(services)
+        services = self.add_prescription_supporting_info_to_firstservice(services)
+
+        return services
+
+    def get_requestedservice_status(self,infoChanged,certificationTypeCode, certificationTypeDisplay, infoCancelledFlag):
+        
+        infoChanged = (infoChanged or '').strip().lower()
+        cert_type = (certificationTypeCode or '').strip().lower()
+        cert_display = (certificationTypeDisplay or '').strip().lower()
+
+        if infoChanged == 'changed' and (cert_type == '3' or 'cancel' in cert_display or infoCancelledFlag):
+            return 'cancel'
+        elif infoChanged == 'changed' and (cert_type == 's' or 'revised' in cert_display):
+            return 'revised'
+        elif infoChanged == 'added' and (cert_type == 'i' or 'initial' in cert_display):
+            return 'add'
+        elif infoChanged == 'changed' and (cert_type == '4' or 'extension' in cert_display):
+            return 'extension'
+        else:
+            return None
+        
+    def get_supportinginfo_status(self, info_changed, certification_type, info_cancelled_flag=False):
+        """
+        Determines the status value for authorization.services.status
+        based on business rules.
+
+        Args:
+            info_changed (str): Value of the 'infoChanged' flag (e.g., 'changed', 'added').
+            certification_type (str): Certification type (e.g., '3', 'S', 'I').
+            info_cancelled_flag (bool): Indicates if the info is cancelled.
+
+        Returns:
+            str or None: The corresponding status value ('cancel', 'revised', 'add') or None if no match.
+        """
+        info_changed = (info_changed or "").strip().lower() or ""
+        certification_type = (certification_type.get("code") or "").strip().upper() or ""
+
+        if info_changed == "changed":
+            if certification_type == "3" or info_cancelled_flag is True:
+                return "cancel"
+            elif certification_type == "S":
+                return "revised"
+        elif info_changed == "added" and certification_type == "I":
+            return "add"
+
+        return None
+
+        
+    def pasSeqMapping(self,seq):
+
+        cr_sequence = next(
+            (entry["crSequence"] for entry in self.originalPasSequenceMapping if str(entry["pasSequence"]) == str(seq)),
+            ""
+        )
+        
+        return str(cr_sequence)
+
+
+    
+    def get_services_updated(self):
+        
+        """
+        Builds a list of updated service entries using the provided list of Claim.item[].
+        Each service contains serviceProcedures and serviceProviders.
+        """
+
+        services = []
+        items = getattr(self.claim_resource, 'item', []) or []
+        for item in items:
+
+            certificationType = self.ruleparser.get_extension_value(item.extension, 'extension-certificationType')
+            self.logger_obj.log(f"certificationType: {certificationType}")
+
+            certificationTypecode = ""
+            certificatedescription = ""
+
+            if certificationType and isinstance(certificationType, list) and len(certificationType) > 0:
+                certificationTypecode = certificationType[0].get("code", "") or ""
+                certificatedescription = certificationType[0].get("display", "") if isinstance(certificationType[0], dict) else ""
+            self.logger_obj.log(f"certificationType: {certificationType}, certificatedescription: {certificatedescription}")
+            certificationTypedict = {
+                "code": certificationTypecode,
+                "description": certificatedescription
+            }
+            self.logger_obj.log(f"certificationTypedict: {certificationTypedict}")
+            infoChanged = self.ruleparser.get_extension_value(item.extension, 'extension-infoChanged') or None
+            self.logger_obj.log(f"infoChanged: {infoChanged}")
+
+            if infoChanged is None or infoChanged.lower() not in ['added', 'changed']:
+                self.logger_obj.log(f"Skipping item with sequence {item.sequence} due to infoChanged value: {infoChanged}")
+                continue
+
+            infoCancelledFlag = self.ruleparser.get_extension_value(item.modifierExtension, 'modifierextension-infoCancelled')
+
+            status = self.get_requestedservice_status(infoChanged, certificationTypecode, certificatedescription, infoCancelledFlag)
+            self.logger_obj.log(f"status: {status}")
+            self.logger_obj.log(f"item.sequence: {item.sequence}")
+
+            
+                        
+            service = {
+                "servicePASMapping":{"pasSequence": str(item.sequence),"crSequence": str(self.pasSeqMapping(item.sequence))},
+                "serviceProcedures": self.get_service_procedures(item),
+                "requestedProviders": self.get_service_providers(item),
+                "requestedQuantityDetails": self.get_service_quantity(item),
+                "requestedModifierDetails": self.get_service_modifiers(item),
+                "requestedServiceDetails": self.get_requested_service_details(item,status),
+                "diagnosisList" : self.get_related_diagnosis_details(item),
+                "supportingInformation": self.extract_supporting_info(item,certificationTypedict),
+                "statusDetails": self.get_status_details()
+
+            }
+            services.append(service)
+
+        # Map home health data to the first service line
+        services = self.map_home_health_to_first_service(services)
+        services = self.add_prescription_supporting_info_to_firstservice(services)
+
+        return services
+        
