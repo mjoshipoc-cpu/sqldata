@@ -1,1946 +1,356 @@
-import os
-from utils.InteropEncrypt import *
-from configparser import ConfigParser
-from cryptography.hazmat.primitives import serialization
-from flask import request
-import xml.etree.ElementTree as ET
-from utils.logutils import logger
-from azure.identity import DefaultAzureCredential
-from azure.keyvault.secrets import SecretClient
-from ast import literal_eval
-"""
+from flask import Blueprint, request, jsonify, current_app
+from datetime import datetime
+from interop.utils.jwt_utils import Jwtutils
+from interop.utils.db_utils import *
+from interop.utils.trackerutils import insert_tracking_record, is_transaction_successful, tracking_data_define
+from interop.utils.logutils import logger
+from fhirclient.models.bundle import Bundle
+from pymongo import DESCENDING
+import json, os
+import requests
+from urllib.parse import parse_qs
+from interop.utils.confighelper import ConfigHelper
+from fhirclient.models.patient import Patient
+from bson.objectid import ObjectId
+import traceback
 
-------------------------------------------------------------------------------------------------------------------------------------------------
-Log:
-??         ??       Initial Version
-2021-05-17 FAYAZM1  Added the password decryption logic
-2021-07-05 FAYAZM1  Config pointing to deployed location
-------------------------------------------------------------------------------------------------------------------------------------------------
-"""
+logger_obj = logger()
 
-class ConfigHelper():
-
-    config = []
-
-    # basedir = "K:\\Nihal\\interoperability\\emrapi\\interop\\"
-    
-    
-
-    def __init__(self, basedir=None, configfile=None, clientname = None):
-
-        self.JWT_ALGORITHM=None
-        self.JWT_PUBLIC_KEY=None
-        self.JWT_PRIVATE_KEY=None
-        self.JWT_EXP_DELTA_SECONDS=0
-        self.logger_obj = logger()
-        self.basedir = (os.environ.get('basedir') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) + os.sep
-        self.key_vault_uri = os.getenv("key_vault_uri", "")
-        self.deploymentplatform = (os.getenv("deploymentplatform") or 'local').lower()
-        self.default_credential = None
-        self.key_client = None
-        if self.deploymentplatform == 'azure' and self.key_vault_uri:
-            self.default_credential = DefaultAzureCredential()
-            self.key_client = SecretClient(vault_url=self.key_vault_uri, credential=self.default_credential)
-        self.clientname = clientname
-
-        # pem_file_path = f'{basedir}'
-        # private_key_path = f'{pem_file_path}private-key.pem'
-        # public_key_path = f'{pem_file_path}public-key.pem'
-
-        if configfile is None:
-            self.configfile = f"{self.basedir}interop.config"
-
-        self.logger_obj.log(f"config file - {self.configfile}")
-
-        self.jwtconfig = self.read_config('jwtsettings',False)
-        self.repoconfig = self.read_config('repodb', True)
-        self.configdbinfo = self.read_config('configdb', True)
-        self.msgqueueconfig = self.read_config('msgqueue',True)
-        
-
-    def load_keys(self):#, private_key_path, public_key_path):
-        from utils.db_utils import query_configdb
-
-        query = "SELECT clientprivatekey, clientpublickey,exlprivatekey, exlpublickey FROM config.vw_clientmessage WHERE lower(client) = %s and endpointdesttype = 'RESTAPI'"
-        params = (self.clientname.lower(),)
-        result = query_configdb(query, params)
-        if not result:
-            raise ValueError(f"{self.clientname} is not a valid client.")
-        client_private_key = result.get('clientprivatekey')
-        client_public_key = result.get('clientpublickey')
-        exl_private_key = result.get('exlprivatekey')
-        exl_public_key = result.get('exlpublickey')
-
-
-        return client_private_key, client_public_key, exl_private_key, exl_public_key
-
-    def detect_format(self, content_type):
-        #content_type = request.content_type
-        if content_type and 'application/json' in content_type:
-            try:
-                data = request.get_json(force=True)
-                return 'json', data
-            except Exception:
-                return 'invalid', None
-        elif content_type and ('application/xml' in content_type or 'text/xml' in content_type):
-            try:
-                data = ET.fromstring(request.data)
-                return 'xml', data
-            except Exception:
-                return 'invalid', None
-        else:
-            return 'unknown', None
-
-    def getJWTSettings(self):
-        return self.jwtconfig
-
-    def getMsgQueueConfig(self):
-        return self.msgqueueconfig
-
-    def getRepoDBConfig(self):
-        return self.repoconfig
-
-    def getConfigDBInfo(self):
-        return self.configdbinfo
-    
-    def getCrApi(self):
-        return self.crapi
-
-    def read_config(self, section_name, decrypt=False):
-        try:
-            if self.deploymentplatform == 'azure':
-                return literal_eval(self.key_client.get_secret(section_name).value)
-
-            else:
-                step = 1
-                config_parser = ConfigParser()
-                step = 2
-                config_parser.read(self.configfile)
-
-                step = 3
-                if not decrypt:
-                    return config_parser._sections[section_name]
-                else:
-                    config = config_parser._sections[section_name]
-                    passwordencrypted = config['password']
-                    password = InteropEncrypt().decrypt(passwordencrypted)
-                    config['password'] = password
-                    return config
-        except Exception as e:
-            self.logger_obj.log('FATAL ERROR in confighelper.py(read_config):  section_name={} step={} ex={}'.format(section_name,step,e))
-            raise Exception(e)
-=================================================================================================================
-
-import psycopg2
-# from flask import current_app
-from pymongo import MongoClient
-import urllib.parse
-from utils.confighelper import ConfigHelper
-from utils.logutils import logger
-import os
-from psycopg2.extras import RealDictCursor
-
-
-logging_obj = logger()
-
-ch = ConfigHelper()
-jwtconfig = ch.getJWTSettings()
-configdbinfo = ch.getConfigDBInfo()
-repodbinfo = ch.getRepoDBConfig()
-
-keys_to_remove = ['retry', 'sleeptime','instance']
-for key in keys_to_remove:
-    configdbinfo.pop(key, None)
-
-def get_postgres_conn():
-    #params = current_app.config['DB_PARAMS']
-    params = configdbinfo
-    return psycopg2.connect(**params)
-    #return psycopg2.connect(current_app.config['POSTGRES_URI'])
-
-def get_client_keys(client_id):
-    conn = get_postgres_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT client
-        FROM config.client
-        WHERE lower(client) = %s
-    """, (client_id.lower(),))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    if not row:
-        return None
-    #return {'public_key': row[0], 'private_key': row[1], 'sub': row[2]}
-    #return {'client': row[0]}
-    return {'sub': row[0]}
-
-
-def get_mongo_db_conn(clientname,collection_name=None,logger_obj=None):
-    if collection_name is None:
-        raise ValueError("Collection name must be provided")
-    #cfg = current_app.config['MONGO_CONFIG']
-    cfg = repodbinfo
-    deploymentplatform = (os.environ.get('deploymentplatform') or 'local').lower()
-    
-    host = cfg['hostname']
-    port = cfg['port']
-    db_name = cfg['database'].replace('clientname',clientname)
-    auth_source = cfg.get('auth_source', db_name)
-    collection_name = collection_name
-    
-    if deploymentplatform == 'azure':
-        username = cfg['username']
-        password = cfg['password']
-        uri = f"mongodb://{username}:{password}@{host}:{port}/?ssl=true&replicaSet=globaldb&retrywrites=false&maxIdleTimeMS=120000&appName=@{auth_source}@"
-    else:
-        username = urllib.parse.quote_plus(cfg['username'])
-        password = urllib.parse.quote_plus(cfg['password'])
-        uri = f"mongodb://{username}:{password}@{host}:{port}/?authSource={auth_source}&tls=true&directConnection=true&retrywrites=false"
-    
-    client = MongoClient(uri)
-
-    if logger_obj is not None:
-        logger_obj.log(client.server_info())
-
-    db = client[db_name]
-    return db[f"{collection_name}"]
-
-def query_configdb(query, params=None):
-    """
-    Executes a query on the configuration database.
-    
-    :param query: SQL query to execute.
-    :param params: Parameters for the SQL query (tuple or list).
-    :return: Query result as a list of dictionaries.
-
-    Query with one condition
-    query = "SELECT * FROM config_table WHERE key = %s"
-    params = ('api_timeout',)
-    result = query_configdb(query, params)
-
-    Multiple parameters
-    query = "SELECT * FROM config_table WHERE key = %s AND environment = %s"
-    params = ('api_timeout', 'prod')
-    result = query_configdb(query, params)
-
-    LIKE query
-    query = "SELECT * FROM config_table WHERE key LIKE %s"
-    params = ('%timeout%',)
-    result = query_configdb(query, params)
-
-    """
-    conn = None
+patinetcreate_bp = Blueprint('fhir/patient', __name__)
+patinetsearch_bp = Blueprint('/fhir/Patient/<string:patient_id>', __name__)
+patientupdate_bp = Blueprint('/fhir/Patient/<string:patient_id>', __name__)
+patientdelete_bp = Blueprint('/fhir/Patient/<string:patient_id>', __name__)
+@patinetcreate_bp.route('/fhit/patient', methods=['POST'])
+def create_patient():
     try:
-        conn = get_postgres_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, params)
-            rows = cur.fetchall()
+        trans_state = 'RequestReceived'
+
+        tracking_data = tracking_data_define()
+        tracking_data["Stage"] = trans_state
+        tracking_data["RequestReceivedDTS"] = datetime.now()
+
+        tracking_data["RequestURL"] = request.url
+        # verify the requst
+        trans_state = 'VerifyingRequest'
+
+        # get client from header
+        clientname = request.headers.get("Client", None) or None
+        if not clientname:
+            return {"error": "Invalid Client is passed in header"}, 400
+        tracking_data["Client"] = clientname
+        jwt_utils = Jwtutils(clientname=clientname)
+
+        # get and validate the header authorization
+        auth_header = request.headers.get("Authorization", None) or None
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return {"error": "Unauthorized Token"}, 401
+
+        token = auth_header.split(" ")[1]
+
+        if not token:
+            logger_obj.log("Missing jwt", 'error')
+            return jsonify({"error": "Missing jwt"}), 401
+
+        # verify the request
+        if not request.is_json:
+            logger_obj.log("Request is not JSON", 'error')
+            raise ValueError("Request has to be JSON")
+
+        # check the content type
+        content_type = request.content_type.split('/')[1]
+        logger_obj.log(content_type, 'debug')
+        if content_type not in ['json']:
+            logger_obj.log("Unsupported content type", 'info')
+            raise ValueError("Unsupported content type or invalid data format")
+
+        # get and validate the data
+        json_data = json.loads(request.get_data())
+
+        if json_data is None:
+            raise ValueError("no data submitted in the body")
+
+        # validating the jwt
+        trans_state = 'ValidatingJWT'
+        payload = jwt_utils.decode_jwt(token)
+        # clientname = payload['sub']
+
+        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
+        if not is_valid:
+            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
+            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
+
+        logger_obj.log("valid jwt", 'info')
+
+        trans_state = 'InitializingBundleObject'
+        # Initialize the Bundle object
+        patient = Patient(json_data)
+
+        # creating mongo db collection objects for request and response
+        request_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
+        request_result = request_collection.insert_one({
+            'InsertDTS': datetime.now(),
+            'InsertUser': 'Interopservice',
+            'RequestResourceType': 'Patient',
+            'RequestDataFromSource': patient,  # data from EMR
 
-            if len(rows) == 1:
-                first_row = rows[0]
-                if len(first_row) == 1:
-                    # One row, one column ? return just the value
-                    return list(first_row.values())[0]
-                else:
-                    # One row, multiple columns ? return single dict
-                    return first_row
-            else:
-                # Multiple rows ? return list of dicts
-                return rows
-    except Exception as e:
-        raise e
-    finally:
-        if conn:
-            conn.close()
-
-====================================================================================================================
-from cryptography.fernet import Fernet, InvalidToken
-import codecs
-import sys, os
-
-basedir = os.environ.get('basedir') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-class InteropEncrypt():
-    '''Tool to do encryption of individual strings.
-    This requires a key file.  You can create a new keyfile by
-    calling InteropEncrypt.createKeyFile().
-    The keyfile path is passed into the constructor; if not
-    then ./InteropEncrypt.key is assumed.
-
-    TODO:
-    - Try/Except around more stuff to catch when encrypt/decrypt fails.
-        should failures throw an error or return None/False?
-    - handle expiration on key file.  Better reporting when expired - show age of token.
-            extract_timestamp(token)
-    - encryptToBytes()
-    - decryptFromBytes()
-    
-    Modification log
-    2021-01-09 carrst1  Initial Version
-    2021-05-17 fayazm1  Added conditional check for env
-    2021-05-19 carrst1  V1.1 improved error messaging a bit in decrypt()
-    2021-06-17 carrst1  V1.2 added environment in error messages to aid in debugging when keys, passwords, etc are failing
-    '''
-    TEST_CHARACTER_SET = 'iso-8859-1'
-    CHARACTER_SET = 'utf-8'
-    # print ("Base dir is " + basedir)
-
-    def __init__(self, keyString=None):
-       self.pathToKeyfile = "{basedir}/interop.key".format(basedir=basedir)
-       if not keyString is None:
-            self._getFernet(keyString)
-       else:
-            self._getFernet()
-            if not self.fernetInstance == None and not self._testRoundTrip():
-                print('ERROR: something is wrong with InteropEncrypt. test failed.')
-
-    def _getFernet(self, keyString=None):
-        '''
-        Read the key file and remember the Fernet instance.
-        input: self.pathToKeyfile
-        output: self.fernetInstance - the fernet object on which encrypt/decrypt is called
-        '''
-        if keyString is not None:
-            self.keyBytes = keyString
-            self.fernetInstance = Fernet(self.keyBytes)
-        else:
-            try:
-                with open(self.pathToKeyfile, "rb") as keyfile:
-                    self.keyBytes = keyfile.read()
-                self.fernetInstance = Fernet(self.keyBytes)
-            #except FileNotFoundError as fnf:
-            #    print('ERROR: Keyfile=[{}] not found!'.format(self.pathToKeyfile))
-            #    self.keyBytes = None
-            #    self.fernetInstance = None
-            except Exception as e:
-                print(e)
-                print('ERROR: {}'.format(e.strerror))
-                self.keyBytes = None
-                self.fernetInstance = None
-        return
-
-    def _fileExists(self, path):
-        try:
-            fh = open(path,"r")
-        #except FileNotFoundError as fnf:
-        except Exception as fnf:
-            return False
-        return True
-
-    def _testRoundTrip(self,testString=None):
-        '''Does an encrypt >> decrypt roundtrip and tests to make sure no data is lost.
-        Test with all 256 extended ascii (iso-8859-1) characters.
-        NOTE: encrypt() also does a compare so this is a bit redundant.'''
-        if testString == None:
-            testString='''this is a password string
-            !@#$%^&*()_+ 01234567890,.{}[]|\;':" '''
-            #testString=codecs.decode(bytes([n for n in range(256)]),InteropEncrypt.TEST_CHARACTER_SET)
-            testString=codecs.decode(bytearray([n for n in range(127)]), InteropEncrypt.TEST_CHARACTER_SET)
-            testString=str(testString)      #convert from unicode to str
-        x = self.decrypt(self.encrypt(testString))
-        return True if x == testString else False
-            
-    def createKeyFile(self, overwrite=False):
-        keyBytes_new = Fernet.generate_key()
-        if keyBytes_new == self.keyBytes:
-            print('WARNING: new key is same as the existing key.  no changes made.')
-            return
-        elif self._fileExists(self.pathToKeyfile) and not overwrite:
-            print('WARNING: keyfile exists, must specify -overwrite to replace')
-            return
-        else:
-            with open(self.pathToKeyfile,"wb") as keyfile:
-                keyfile.write(keyBytes_new)
-        self._getFernet()
-        print('New kefile created at [{}]'.format(self.pathToKeyfile))
-        print('Test roundtrip is good = [{}]'.format(self._testRoundTrip()))
-
-    def encrypt(self, s):
-        if self.fernetInstance == None:
-            return None
-        elif not type(s) == type(str()):
-            print('[{}] must be a string, not [{}]'.format(s, type(s)))
-            return None
-        ba=s.encode('utf-8')    #convert string to bytes
-        encryptedByteArray = self.fernetInstance.encrypt(ba)
-        encryptedStr = codecs.decode(encryptedByteArray, InteropEncrypt.CHARACTER_SET)
-        #now test to make sure decrypt will work.
-        decrypted = self.decrypt(encryptedStr)
-        if not decrypted == s:
-            
-            return None
-        return encryptedStr
-
-    def decrypt(self, s, ttlSeconds=None):
-        if not ttlSeconds == None:      #convert to int if necessary
-            ttlSeconds = int(ttlSeconds)
-        if self.fernetInstance == None:
-            return None
-        elif not type(s) == type(str()):
-            print('[{}] must be a string, not [{}]'.format(s, type(s)))
-            return None
-        ba=s.encode('utf-8')    #convert string to bytes
-        try:
-            decrypted = self.fernetInstance.decrypt(ba,ttlSeconds)
-        except InvalidToken as ITerror:
-            print('ERROR: Invalid or expired token [{}] in InteropEncrypt().decrypt() keyfile=[{}]'.format(s,self.pathToKeyfile))
-            return None
-        except Exception as e:
-            print('ERROR: in InteropEncrypt().decrypt() for [{}] {} keyfile=[{}]'.format(s,e,self.pathToKeyfile))
-            return None
-        return codecs.decode(decrypted, InteropEncrypt.CHARACTER_SET)
-
-    # def decrypt(self, s, keyfile, ttlSeconds=None):
-    #     if not ttlSeconds == None:      #convert to int if necessary
-    #         ttlSeconds = int(ttlSeconds)
-    #     if self.fernetInstance == None:
-    #         return None
-    #     elif not type(s) == type(str()) and not type(s) == type(unicode()):
-    #         print('[{}] must be a string, not [{}]'.format(s, type(s)))
-    #         return None
-    #     ba=s.encode('utf-8')    #convert string to bytes
-    #     try:
-    #         decrypted = self.fernetInstance.decrypt(ba,ttlSeconds)
-    #     except InvalidToken as ITerror:
-    #         print('ERROR: Invalid or expired token [{}] in InteropEncrypt().decrypt() keyfile=[{}]'.format(s,self.pathToKeyfile))
-    #         return None
-    #     except Exception as e:
-    #         print('ERROR: in InteropEncrypt().decrypt() for [{}] {} keyfile=[{}]'.format(s,e,self.pathToKeyfile))
-    #         return None
-    #     return codecs.decode(decrypted, InteropEncrypt.CHARACTER_SET)
-    @staticmethod
-    def printHelp():
-        print('''
-InteropEncrypt() v1.2 - utility to encrypt/decrypt strings
-
-To encrypt/decrypt a string:
-    from InteropEncrypt import InteropEncrypt
-    ee = InteropEncrypt()  # will use ./InteropEncrypt.key
-    ee = InteropEncrypt(environment='prod')   #will use /opt/scio/<env>/InteropEncrypt.key
-    ee = InteropEncrypt(pathToKeyfile='/opt/scio/prod/newkeyfile.key')  #will use this file
-    es = ee.encrypt('string to encrypt')
-    ds = ee.decrypt('string to decrypt',[-ttlSeconds=#])
-
-To create a new keyfile - issue one of the following:
-    ! python InteropEncrypt [switches] createkeyfile
-
-To encrypt/decrypt from command line:
-    ! python InteropEncrypt [switches] [encrypt | decrypt] <string>
-
-WHERE optional switches are:
-    -overwrite          to allow for overwriting an existing keyfile when running createkeyfile
-    -environment=xx     to specify one of the environments [prod, dev, qa, etc]
-                        which then points to an environment based keyfile
-    -pathToKeyfile=xx   to specify a relative or full path to the keyfile
-    -ttlSeconds=#       when decrypting, will generate an error if the encrypted value
-                        is older than # seconds
-
-    NOTE: if environment nor pathToKeyfile is specified then InteropEncrypt.key in the current
-                        directory is assumed.
-        ''')
-
-if __name__ == '__main__':
-    argList=[]
-    switchDict1={}
-    switchDict2={}
-    for a in sys.argv[1:]:      #skip the first as it is the path to this program
-        if a.startswith('-'):
-            toks = a.split('=')
-            tok_1 = toks[0][1:]
-            if len(toks) == 1:
-                switchDict1[tok_1] = True
-            else:
-                switchDict1[tok_1] = toks[1]
-        else:
-            argList.append(a)
-    
-    validSwitchList = ['overwrite','environment','pathToKeyfile','ttlSeconds']
-    invalidSwitches = set(switchDict1.keys()) - set(validSwitchList)
-    if 'overwrite' in switchDict1:
-        switchDict2['overwrite']=switchDict1['overwrite']
-        del switchDict1['overwrite']
-    if 'ttlSeconds' in switchDict1:
-        switchDict2['ttlSeconds']=switchDict1['ttlSeconds']
-        del switchDict1['ttlSeconds']
-    
-    if len(argList) == 0:
-        print('ERROR: missing command')
-        print('argList={} switchDict1={}'.format(argList, switchDict1))
-        InteropEncrypt.printHelp()
-    elif len(invalidSwitches) > 0:
-        print('ERROR: invalid switches: {}'.format(invalidSwitches))
-        print('argList={} switchDict1={}'.format(argList, switchDict1))
-        InteropEncrypt.printHelp()
-    elif 'environment' in switchDict1 and 'pathToKeyfile' in switchDict1:
-        print('ERROR: cannot specify both environment and pathToKeyfile switches'.format(invalidSwitches))
-        print('argList={} switchDict1={}'.format(argList, switchDict1))
-        InteropEncrypt.printHelp()
-    else:
-        cmd = argList[0].lower()
-        del argList[0]
-        if cmd == 'createkeyfile':
-            InteropEncrypt(**switchDict1).createKeyFile(**switchDict2)
-        elif cmd == 'encrypt':
-            rs=InteropEncrypt(**switchDict1).encrypt(*argList, **switchDict2)
-            print('Encrypted value=[{}]'.format(rs))
-        elif cmd == 'decrypt':
-            rs=InteropEncrypt(**switchDict1).decrypt(*argList, **switchDict2)
-            
-        else:
-            print('ERROR: invalid command: [{}]'.format(cmd))
-            InteropEncrypt.printHelp()
-=====================================================================================================
-import jwt
-import json
-from utils.logutils import logger
-from utils.confighelper import ConfigHelper
-from utils.db_utils import query_configdb
-
-class Jwtutils:
-    def __init__(self, clientname=None):
-        self.logger_obj = logger()
-        self.clientname = clientname
-        ch = ConfigHelper(clientname=self.clientname)
-        keys = ch.load_keys()
-        self.client_private_key = keys[0]
-        self.client_public_key = keys[1]
-        self.exl_private_key = keys[2]
-        self.exl_public_key = keys[3]
-        self.jwtconfig = ch.getJWTSettings()
-
-    def decode_jwt(self, token, internal = True):
-        try:
-            payload = jwt.decode(
-                token,
-                self.exl_public_key if internal else self.client_public_key,
-                algorithms=[f"{self.jwtconfig['jwt_algorithm']}"],
-                audience="interop.exlservice.com"
-            )
-            return payload
-        except jwt.ExpiredSignatureError:
-            self.logger_obj.log("Token expired")
-            raise ValueError("Token expired")
-        except jwt.InvalidTokenError:
-            self.logger_obj.log("Invalid token")
-            raise ValueError("Invalid token")
-
-    def encode_jwt(self, payload):
-        return jwt.encode(
-            payload,
-            self.exl_private_key,
-            algorithm=f"{self.jwtconfig['jwt_algorithm']}"
-        )
-
-    def validate_jwt_sub(self, payload, expected_sub):
-        if payload.get('sub') != expected_sub or payload.get('aud') != "interop.exlservice.com":
-            self.logger_obj.log("sub claim does not match")
-            raise ValueError("sub claim does not match")
-        
-    def validate_jwt_claims(self, payload: dict):
-        """
-        Validates JWT claims for 'sub', 'iss', and 'aud' against expected values.
-        Returns (is_valid, mismatches) where mismatches is a list of claim names that do not match.
-        Comparison is case-insensitive.
-
-        Args:
-            payload (dict): Decoded JWT payload.
-            clientname (str): Expected client name for 'sub'.
-
-        Returns:
-            tuple: (bool, list) where bool is True if all claims match, False otherwise.
-                list contains names of mismatched claims.
-        """
-        expected_iss = 'interop.exlservice.com'
-        expected_aud = 'interop.exlservice.com'
-
-        mismatches = []
-        if str(payload.get('sub', '')).lower() != str(self.clientname).lower():
-            mismatches.append('sub')
-        if str(payload.get('iss', '')).lower() != expected_iss.lower():
-            mismatches.append('iss')
-        if str(payload.get('aud', '')).lower() != expected_aud.lower():
-            mismatches.append('aud')
-        
-        return len(mismatches) == 0, mismatches
-
-    def get_oauth_config(self):
-        """
-        Fetch OAuth configuration for a client from config.vw_clientmessage.
-        Expected columns in view: oauthflag, oauth_api, oauth_headers, oauth_data.
-        Returns a dict with safe defaults.
-        """
-        query = """
-            SELECT
-                oauthflag,
-                oauth_api,
-                oauth_headers,
-                oauth_data
-            FROM config.vw_clientmessage
-            WHERE lower(client) = %s
-              AND endpointdesttype = 'RESTAPI'
-            LIMIT 1
-        """
-
-        defaults = {
-            "oauthflag": False,
-            "oauth_api": None,
-            "oauth_headers": {},
-            "oauth_data": {}
-        }
-
-        if not self.clientname:
-            return defaults
-
-        try:
-            row = query_configdb(query, (self.clientname.lower(),))
-            if not row:
-                return defaults
-
-            oauthflag = row.get("oauthflag", False)
-            if isinstance(oauthflag, str):
-                oauthflag = oauthflag.strip().lower() in {"1", "true", "t", "yes", "y"}
-
-            oauth_headers = row.get("oauth_headers") or {}
-            oauth_data = row.get("oauth_data") or {}
-
-            if isinstance(oauth_headers, str):
-                oauth_headers = json.loads(oauth_headers)
-            if isinstance(oauth_data, str):
-                oauth_data = json.loads(oauth_data)
-
-            return {
-                "oauthflag": bool(oauthflag),
-                "oauth_api": row.get("oauth_api"),
-                "oauth_headers": oauth_headers if isinstance(oauth_headers, dict) else {},
-                "oauth_data": oauth_data if isinstance(oauth_data, dict) else {}
-            }
-        except Exception as e:
-            self.logger_obj.log(f"Failed to fetch oauth config: {str(e)}", "warning")
-            return defaults
-===============================================================================================================
-import os
-import logging
-
-from opentelemetry._logs import get_logger_provider, set_logger_provider
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-from azure.monitor.opentelemetry.exporter import AzureMonitorLogExporter
-
-deploymentplatform = (os.getenv("deploymentplatform") or 'local').lower()
-logfilewithpath = os.getenv("logfilewithpath") or 'logs/interopsvc.log'
-
-class logger:
-    def __init__(self, psrvc=None):
-
-        self.svc_name= "interopapisvc" if psrvc is None else psrvc
-        # Setup file logger
-        self.file_logger = logging.getLogger(self.svc_name)
-        self.file_logger.setLevel(logging.INFO)
-
-        if not any(isinstance(h, logging.FileHandler) for h in self.file_logger.handlers):
-            file_handler = logging.FileHandler(logfilewithpath)
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            file_handler.setFormatter(formatter)
-            self.file_logger.addHandler(file_handler)
-        self.file_logger.propagate = False  # Prevent duplicate logs via propagation
-
-        # Step 2: Setup OTEL logger via LoggingHandler (only for Azure)
-        self.otel_logger = None
-        appinsights_conn = os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING') or ''
-        if deploymentplatform == "azure" and appinsights_conn:
-            # Set OTEL LoggerProvider once, with a proper Resource
-            if not isinstance(get_logger_provider(), LoggerProvider):
-                resource = Resource(attributes={SERVICE_NAME: self.svc_name})
-                provider = LoggerProvider(resource=resource)
-                set_logger_provider(provider)
-
-                exporter = AzureMonitorLogExporter(
-                    connection_string=appinsights_conn
-                )
-                provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
-
-            # Attach OTEL handler to Python logger
-            self.otel_logger = logging.getLogger(self.svc_name)
-            self.otel_logger.setLevel(logging.INFO)
-            if not any(isinstance(h, LoggingHandler) for h in self.otel_logger.handlers):
-                otel_handler = LoggingHandler()
-                self.otel_logger.addHandler(otel_handler)
-            self.otel_logger.propagate = False
-
-    def log(self, message, msgtype=None):
-        if deploymentplatform == "azure" and self.otel_logger:
-            if msgtype == "error":
-                self.otel_logger.error(message)
-            elif msgtype == "debug":
-                self.otel_logger.debug(message)
-            else:
-                self.otel_logger.info(message)
-        else:
-            if msgtype == "error":
-                self.file_logger.error(message)
-            elif msgtype == "debug":
-                self.file_logger.debug(message)
-            else:
-                self.file_logger.info(message)
-========================================================================================
-#from fhirclient.models.fhirabstractbase import FHIRAbstractBase
-from datetime import datetime, timezone
-from fhirclient.models import (extension, codeableconcept, humanname, identifier, address, practitioner,
-organization, fhirreference, quantity as quantity_, fhirdate, period,fhirdatetime,coding as c1, contactpoint, claimresponse)
-import uuid
-import json
-import copy
-from utils.logutils import logger
-from collections import defaultdict
-import base64
-from azure.storage.blob import BlobServiceClient
-from io import BytesIO
-from flask import request
-import os
-
-class PasRules:
-    def __init__(self,bundle, receivedpasjson = None):
-        self.bundle = bundle
-        self.receivedpasjson = receivedpasjson
-        """
-        Initialize without default priority lists; they'll be set inside methods.
-        """
-        self.dateinitiated = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        self.timeinitiated = datetime.now(timezone.utc).strftime('%H%M')
-        self.claim_ref = self.get_resource("claim")
-        self.logger_obj = logger()
-        self._counter = 1
-
-    def get_client_from_request(self):
-        return request.headers.get("Client", None) 
-
-    def validate_claim(self):
-        claim_resource = self.get_resource('claim')
-
-        if not claim_resource:
-            raise ValueError("Claim resource not found in the bundle")
-        
-        if claim_resource.use.lower() not in ['preauthorization', 'predetermination']:
-            raise ValueError("Claim resource use must be 'preauthorization' or 'predetermination'")
-
-        if claim_resource.status.lower() != 'active':
-            raise ValueError("Claim resource status must be 'active'")
-
-    def get_reference_details(self,claim_resource_update=None):
-        
-        if claim_resource_update is None:
-            claim_resource = self.get_resource("claim")
-            
-        else:
-            claim_resource = claim_resource_update
-            
-        identifiers = getattr(claim_resource, "identifier", [])
-        
-
-        if not identifiers:
-            raise ValueError("No identifiers found in Claim resource.")
-        if len(identifiers) > 2:
-            raise ValueError("Claim contains more than 2 identifiers, which violates the PAS rule.")
-
-        # Define priority order
-        priority_order = ["official", "secondary", "usual", "temp", "old"]
-
-        # Find identifier with highest priority use
-        selected_identifier = None
-        if len(identifiers) == 1:
-            selected_identifier = identifiers[0]
-
-        else:
-            for priority in priority_order:
-                for identifier in identifiers:
-                    if getattr(identifier, "use", "") == priority:
-                        selected_identifier = identifier
-                        break
-                if selected_identifier:
-                    break
-
-        if not selected_identifier:
-            raise ValueError("No identifier with valid 'use' found. Expected one of: official, secondary, usual, temp, old.")
-
-        value = getattr(selected_identifier, "value", "")
-        system = getattr(selected_identifier, "system", "")
-        if not value or not system:
-            raise ValueError("Selected identifier is missing 'value' or 'system'.")
-
-        return {
-            "pasIdentifierValue": value,
-            "pasIdentifierSystem": system
-        }
-
-    def get_claim_type(self):
-        claim_resources = [
-            entry.resource
-            for entry in self.bundle.entry
-            if entry.resource.resource_type.lower() == "claim"
-        ]
-        
-        if not claim_resources:
-            return None  # No Claim resource in the bundle
-
-        for claim in claim_resources:
-            if hasattr(claim, "related") and claim.related:
-                claim_reference = claim.related[0].claim.reference
-                
-                resourcetype,resourceid = self.split_reference(claim_reference)
-                related_claim_resource = self.get_resource(resourcetype, resourceid)
-                orig_identifiers = self.get_reference_details(claim_resource_update=related_claim_resource)
-                
-                
-                return "Update",orig_identifiers
-
-        return "Claim",None  # Default to claimrequest if no related found
-
-
-    def get_authorization_details(self,certificationTypeDict=None):
-        claim_resource = self.get_resource('claim')
-
-    
-        casetypecode = claim_resource.type.coding[0].code
-        if claim_resource.type.coding[0].display:
-            casetypedescription = claim_resource.type.coding[0].display
-        elif claim_resource.type.coding[0].code:
-            casetypedescription = claim_resource.type.coding[0].code
-        else:
-            casetypedescription = ''
-        extensioncode=''
-        extensiondisplay=''
-
-        isextension_available = True if claim_resource.extension else False
-        if isextension_available:
-            levelOfServiceCode = self.get_extension_value(claim_resource.extension, "extension-levelOfServiceCode")
-            if levelOfServiceCode:
-                extensioncode = levelOfServiceCode[0].get('code', '')
-                extensiondisplay = levelOfServiceCode[0].get('display', '')
-
-
-        authorizationdetails_dict = {
-            
-                "caseType" : {
-                    "code" : casetypecode,
-                    "description" : casetypedescription
-                },
-                "eventClassification" : {
-                "code": extensioncode,
-                "description": extensiondisplay
-            },
-            "dateInitiated": self.dateinitiated,
-            "timeInitiated": self.timeinitiated
-        
-        }
-
-        if certificationTypeDict:
-            authorizationdetails_dict['certificationType'] = certificationTypeDict
-        return authorizationdetails_dict
-
-    def get_contact_details(self):
-        claim_resource = self.get_resource('claim')
-        enterer_resource = None
-        if claim_resource.enterer and claim_resource.enterer.reference:
-            enterer_ref = claim_resource.enterer.reference
-            enterer_type, enterer_id = self.split_reference(enterer_ref)
-            enterer_resource = self.get_resource(enterer_type, enterer_id)
-            if enterer_type.lower() == "practitionerrole":
-                providerresourcetype1,providerid1 = self.split_reference(enterer_resource.practitioner.reference)
-                enterer_resource = self.get_resource(providerresourcetype1, providerid1)
-                
-        primarycontactname = ''
-        primarycontactphone = ''
-        if enterer_resource:
-            firstname, givenname, textname, prefix, suffix = self.get_preferred_name(enterer_resource)
-            primarycontactname = result = next((v for v in [textname, firstname, givenname] if v not in [None, ""]), "")
-            #textname or firstname or givenname or ''
-            telecoms = self.extract_telecom_fields(enterer_resource)
-            for i in telecoms.values():
-                if i != '':
-                    primarycontactphone = i
-                    break
-        contact_details_dict = {
-                "primaryContactName": primarycontactname,
-                "primaryContactPhone": primarycontactphone
-            }
-        
-        return contact_details_dict
-
-    def get_diagnosis_details(self):
-
-        claim_resource = self.get_resource('claim')
-
-        diagnoses = claim_resource.diagnosis or []
-
-        # Determine primary diagnosis based on minimum sequence
-        sequences = [d.sequence for d in diagnoses if d.sequence is not None]
-        min_sequence = min(sequences) if sequences else None
-
-        diagnosis_list = []
-
-        for d in diagnoses[0:12]:
-            # Get recorded date from extension
-            dateDiagnosed = self.get_extension_value(d.extension, "extension-diagnosisRecordedDate") if d.extension else None
-
-            # Utility function to check boolean values from code/display
-            def interpret_boolean(code, display):
-                val = (code or display or "").strip().lower()
-                if not val:
-                    return ""
-                if val in ["y", "yes"]:
-                    return "true"
-                elif val in ["n", "no"]:
-                    return "false"
-                return ""  # default to False if unclear
-
-            # Admitting flag
-            admittingYn = "false"
-            if d.onAdmission and d.onAdmission.coding:
-                c = d.onAdmission.coding[0]
-                admittingYn = interpret_boolean(c.code, c.display)
-
-            # Reason for visit flag
-            reasonForVisitYn = "false"
-            if d.type and d.type[0].coding:
-                c = d.type[0].coding
-                for coding in c:
-                    if coding.code.lower() == "patientreasonforvisit" or (coding.display and coding.display.lower() == "patient reason for visit"):
-                        
-                        reasonForVisitYn = "true"
-                        break
-                #typeval = (c.code or c.display or "").strip().lower()
-                #reasonForVisitYn = "true" if typeval == "patientreasonforvisit" else "false"
-
-            diag_data = {
-                "sequence": str(d.sequence),
-                "primaryYn": "true" if d.sequence == min_sequence else "false",
-                "admittingYn": admittingYn,
-                "reasonForVisitYn": reasonForVisitYn,
-                "dateDiagnosed": dateDiagnosed if dateDiagnosed else "",
-                "diagnosis": {
-                    "code": (
-                        d.diagnosisCodeableConcept.coding[0].code
-                        if d.diagnosisCodeableConcept and d.diagnosisCodeableConcept.coding
-                        else ""
-                    )
-                }
-            }
-
-            diagnosis_list.append(diag_data)
-
-        return {
-            "diagnosisList": diagnosis_list
-        }
-
-
-    def get_related_condition_details(self):
-
-        claim_resource = self.get_resource('claim')
-
-        # Get all extensions with URL "conditionCode" (simulated custom structure)
-        extensions = claim_resource.extension or []
-
-        related_conditions = []
-
-        # Limit to 5 related conditions
-        count = 0
-        for ext in extensions:
-            if "extension-conditioncode" not in ext.url.lower():
-                continue
-
-            if count >= 5:
-                break
-
-            condition_entry = {
-                "category": {
-                    "code": "",
-                    "description": ""
-                },
-                "applicableYn": "",
-                "condition": []
-            }
-
-            # Parse nested extensions inside "conditionCode"
-            for sub_ext in ext.extension or []:
-                if sub_ext.url.lower() == "category" and sub_ext.valueCodeableConcept:
-                    coding = sub_ext.valueCodeableConcept.coding[0] if sub_ext.valueCodeableConcept.coding else None
-                    if coding:
-                        condition_entry["category"]["code"] = coding.code
-                        condition_entry["category"]["description"] = coding.display
-                elif sub_ext.url.lower() == "indicator":
-                    condition_entry["applicableYn"] = f"{sub_ext.valueBoolean}".lower()
-                elif sub_ext.url == "code" and sub_ext.valueCodeableConcept:
-                    codes = self.get_codeableconcept_codes(sub_ext.valueCodeableConcept)
-                    # Map 'display' to 'description'
-                    mapped_codes = [
-                        {"code": c.get("code", "")
-                         , "description": c.get("display", "")
-                         }
-                        for c in codes
-                    ]
-                    condition_entry["condition"].extend(mapped_codes)
-
-            related_conditions.append(condition_entry)
-            count += 1
-        
-        
-
-        return related_conditions
-
-    def get_resource(self, resource_type: str, resource_id: str = None):
-        return next(
-            (
-                e.resource
-                for e in self.bundle.entry
-                if e.resource.resource_type.lower() == resource_type.lower() and (resource_id is None or e.resource.id.lower() == resource_id.lower())
-            ),
-            None
-        )
-    
-    def get_authlevel_supportinginfo(self):
-        attachments = []
-        pasbundle = self.remove_supporting_info(self.receivedpasjson)
-        Bundledata = base64.b64encode(json.dumps(pasbundle).encode('utf-8')).decode('utf-8')
-
-        fileID = uuid.uuid4().hex
-        self.logger_obj.log(f"Generated fileID: {fileID} for attachment: 'PASClaim.json'")
-        client_name = self.get_client_from_request()
-
-        if Bundledata:
-            upload_status = self.upload_attachments_to_storage(Bundledata, fileID, client_name)
-            if not upload_status:
-                self.logger_obj.log(f"Failed to upload attachment: 'PASClaim.json' to storage.")
-                raise ValueError("Failed to upload PASClaim.json attachment to storage.")
-            
-        attachments.append({
-            "pasClaimYn": "Y",
-            "fileName": "PASClaim.json",
-            "description": "PAS claim request",
-            "data": "", #self.receivedpasjson  # Include full EHR bundle as attachment data
-            "fileID": f"{client_name}_{fileID}"
         })
-        return {"attachments": attachments}
-
-
-    def get_preferred_identifier(self, resource) -> str | None:
-        """
-        Returns the identifier value from the given FHIR resource based on identifier priority.
-        If there's only one identifier, return that one; otherwise, use priority to determine the preferred identifier.
-
-        :param resource: FHIR resource (Patient, Practitioner, etc.)
-        :return: The preferred identifier value, or None if no match found
-        """
-        # Default priority list for identifiers
-        identifier_priority_list = [
-            'MB',
-            'MC',
-            'MA',
-            'SS'
-        ]
-
-        # Check if the resource has an 'identifier' field
-        if not hasattr(resource, 'identifier') or not resource.identifier:
-            raise ValueError(f"Resource {resource.id} does not have an identifier field or it is empty.")
-
-        # If there's only one identifier, return it directly without applying the priority logic
-        
-        identifier_list = getattr(resource, 'identifier', [])
-        if len(resource.identifier) == 1:
-            return resource.identifier[0].value
-
-        # If there are multiple identifiers, apply the priority logic
-        for preferred_type in identifier_priority_list:
-            
-                for identifier in identifier_list:
-                    if hasattr(identifier, 'type') and identifier.type:
-                        for coding in identifier.type.coding:
-                            if coding.code.strip().lower() == preferred_type.strip().lower():
-                                return identifier.value
-                    else:
-                        raise ValueError(f"Resource identifier type is missing or not structured as expected in {resource.id}.")
-
-        return None  # Return None if no match is found
-
-
-    def get_preferred_name(self, resource) -> str | None:
-        """
-        Returns the name value from the given FHIR resource based on name priority.
-        If there's only one name, return that one; otherwise, use priority to determine the preferred name.
-
-        :param resource: FHIR resource (Patient, Practitioner, etc.)
-        :return: The preferred familyname,givenname value, or None if no match found
-        """
-        # Default priority list for names
-        name_priority_list = [
-            'official',  
-            'maiden',
-            'usual',  
-            'nickname',
-            'old', 
-            'anonymous',
-            'temporary'  
-            ]
-
-        # Check if the resource has a 'name' field
-        if not hasattr(resource, 'name') or not resource.name:
-            return None
-
-        # If there's only one name, return it directly without applying the priority logic
-        if len(resource.name) == 1:
-            # Return the full name (given + family name)
-            name = resource.name[0]
-            givenname = name.given[0] if name.given else ''
-            familyname = name.family if name.family else ''
-            textname = name.text if name.text else ''
-            prefix = name.prefix[0] if name.prefix else ''
-            suffix = name.suffix[0] if name.suffix else ''
-            return familyname,givenname, textname, prefix, suffix
-
-        # If there are multiple names, apply the priority logic
-        for preferred_name_type in name_priority_list:
-            for name in resource.name:
-                if name.use and name.use.strip().lower() == preferred_name_type.strip().lower():
-                    givenname = name.given[0] if name.given else ''
-                    familyname = name.family if name.family else ''
-                    textname = name.text if name.text else ''
-                    prefix = name.prefix[0] if name.prefix else ''
-                    suffix = name.suffix[0] if name.suffix else ''
-                    return familyname, givenname, textname, prefix, suffix
-
-        return None,None,None,None,None  # Return None if no match is found
-
-    def get_focal_cov(self, resource):
-
-        for i in resource.insurance:
-            if i.focal == True:
-                cov = i.coverage.reference.split('/')[-1]
-        return cov
-    def create_identifier(self, system: str, value: str) -> identifier.Identifier:
-        id_obj = identifier.Identifier()
-        id_obj.system = system or ""
-        id_obj.value = value or ""
-        return id_obj
-
-    def create_human_name(self, given: str = "", family: str = "", text: str = "") -> humanname.HumanName:
-        name = humanname.HumanName()
-        if given:
-            name.given = [given]
-        if family:
-            name.family = family
-        if text:
-            name.text = text
-        return name
-
-    def create_address(self, location: dict) -> address.Address:
-        addr = address.Address()
-        addr.line = [
-            location.get("line1", ""),
-            location.get("line2", ""),
-            location.get("line3", ""),
-            location.get("line4", "")
-        ]
-        addr.city = location.get("city", "")
-        addr.state = location.get("state", "")
-        addr.country = location.get("country", "")
-        addr.district = location.get("county", "")
-        addr.postalCode = location.get("postalCode", "")
-        return addr
-
-    def create_dummy_provider(self, is_facility=False):
-        
-
-        dummy_id = str(uuid.uuid4())
-
-        if is_facility:
-            org = organization.Organization()
-            org.id = dummy_id
-            org.name = "Unknown Organization"
-            return org
-        else:
-            prac = practitioner.Practitioner()
-            prac.id = dummy_id
-            name = humanname.HumanName()
-            name.given = ["Unknown"]
-            name.family = "Provider"
-            prac.name = [name]
-            return prac
-    def add_ext_authorizeditemdetails(self,item,ext):
-        auth_detail_ext = next((ext for ext in item.extension if ext.url.endswith("authorizedItemDetail")), None)
-        if not auth_detail_ext:
-            auth_detail_ext = extension.Extension()
-            auth_detail_ext.url = "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-authorizedItemDetail"
-            auth_detail_ext.extension = []
-            item.extension.append(auth_detail_ext)
-
-        # Append quantity extension into authorizedItemDetail
-        auth_detail_ext.extension.append(ext)
-        return
-
-    def create_extension(self, url, value_type, value,displayrequired = False,fullurl = True, urlrequired=True):
-        """
-        Utility to create a FHIR Extension with a specified URL and value.
-        Supports 'valueString', 'valueCodeableConcept', etc.
-        """
-        ext = extension.Extension()
-        if urlrequired:
-            if fullurl:
-                ext.url = f"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-{url}"
-            else:
-                ext.url = url
-
-        if value_type.lower() == "string":
-            ext.valueString = value.get('value',"")
-        elif value_type.lower() == "CodeableConcept".lower():
-            # Support list of codings
-            codings = []
-            if displayrequired:
-                if isinstance(value, list):
-                    for val in value:
-                        codings.append({
-                            "code": val.get("code", "1"),
-                            "display": val.get("display", "1")
-                        })
-                elif isinstance(value, dict):
-                    codings = [{
-                        "code": value.get("code", "1"),
-                        "display": value.get("display", "1")
-                    }]
-            
-                ext.valueCodeableConcept = codeableconcept.CodeableConcept({
-                    "coding": codings
-                })
-            else:
-                if isinstance(value, list):
-                    codings = [{"code": val.get("code", "1")} for val in value]
-                elif isinstance(value, dict):
-                    codings = [{"code": value.get("code", "1")}]
-
-                ext.valueCodeableConcept = codeableconcept.CodeableConcept({
-                    "coding": codings
-                })
-
-        
-        elif value_type.lower() == "reference":
-            # Expecting a dict with at least a 'reference' key
-            reference = fhirreference.FHIRReference()
-            reference.reference = value.get("value", "")
-            ext.valueReference = reference
-        elif value_type.lower() == "quantity":
-            ext.valueQuantity = quantity_.Quantity({
-                                    "value": value.get("value", 0.0),
-                                    "code": value.get("code", "")
-                                })
-            
-        elif value_type.lower() == "date":
-            ext.valueDate = fhirdate.FHIRDate(value)
-
-        elif value_type.lower() == "period":
-            p = period.Period()
-            p.start = fhirdatetime.FHIRDateTime(value.get("start")) if value.get("start") else None
-            p.end = fhirdatetime.FHIRDateTime(value.get("end")) if value.get("end") else None
-            ext.valuePeriod = p
-        else:
-            raise ValueError(f"Unsupported value_type: {value_type}")
-
-        return ext
-
-    def add_resource_to_bundle(self, bundle_resources ,resource):
-
-        if not any(r.id == resource.id and r.resource_type == resource.resource_type for r in bundle_resources):
-            bundle_resources.append(resource)
-        return bundle_resources
-
-    def get_resources_referenced_in_claim(self):
-        claim_resource = self.get_resource('claim')
-        patient_reference = claim_resource.patient.reference
-        insurere_reference = claim_resource.insurer.reference
-
-        #getting patient resource
-        patientresourcetype,patientid = self.split_reference(patient_reference)
-        patient_resource = self.get_resource(patientresourcetype, patientid)
-
-        #getting insurer resource
-        insurerresourcetype,insurerid = self.split_reference(insurere_reference)
-        insurer_resource = self.get_resource(insurerresourcetype,insurerid)
-        return { 
-            "patient": patient_resource,
-            "insurer": insurer_resource,
-            "claim": claim_resource
-        }
-
-    def split_reference(self, reference):
-        parts = reference.split('/')
-        resource_type = parts[-2]
-        resource_id = parts[-1]
-        return resource_type, resource_id
-
-    def get_extension_value(self,extensions, filter_key,child_filter=None):
-        """
-        Searches FHIR extensions for a URL containing the filter_key and returns its value.
-
-        Args:
-            extensions (list): List of FHIR Extension objects.
-            filter_key (str): Keyword to search for in extension URLs.
-
-        Returns:
-            Any: The value of the matching extension, or None if not found.
-        """
-        if not extensions or not isinstance(extensions, list):
-            self.logger_obj.log("No extensions found or invalid type provided.")
-            return None
-        
-        for ext in extensions:
-            if not ext.url or filter_key.lower() not in ext.url.lower():
-                continue
-            self.logger_obj.log(f"Found extension with URL: {ext.url}")
-
-            # Check and return appropriate value type
-            if hasattr(ext, "valueDate") and ext.valueDate:
-                return ext.valueDate.isostring
-            elif hasattr(ext, "valueString") and ext.valueString:
-                return ext.valueString
-            elif hasattr(ext, "valueBoolean") and ext.valueBoolean is not None:
-                return ext.valueBoolean
-            elif hasattr(ext, "valueInteger") and ext.valueInteger is not None:
-                return ext.valueInteger
-            elif hasattr(ext,"valueDecimal") and ext.valueDecimal is not None:
-                return ext.valueDecimal
-            elif child_filter is not None and  hasattr(ext,"extension") and ext.extension:
-                self.logger_obj.log(f"Searching for child filter: {child_filter} in extension: {ext.url}")
-                return self.get_extension_value(ext.extension, child_filter)
-            elif hasattr(ext, "valueCodeableConcept") and ext.valueCodeableConcept:
-                #if ext.valueCodeableConcept.coding:
-                #    return {
-                #        "code": ext.valueCodeableConcept.coding[0].code,
-                #        "display": ext.valueCodeableConcept.coding[0].display
-                #    }
-                return self.get_codeableconcept_codes(ext.valueCodeableConcept)
-            elif hasattr(ext, "valuePeriod") and ext.valuePeriod is not None:
-                return {
-                    "start": ext.valuePeriod.start.date.date().isoformat() if ext.valuePeriod.start else "",
-                    "end": ext.valuePeriod.end.date.date().isoformat() if ext.valuePeriod.end else ""
-                }
-            elif hasattr(ext, "valueCode") and ext.valueCode is not None:
-                return ext.valueCode
-            elif hasattr(ext, "timingDate") and ext.timingDate:
-                return ext.timingDate.isostring
-            elif hasattr(ext, "timingPeriod") and ext.timingPeriod is not None:
-                return {
-                    "start": ext.timingPeriod.start.date.date().isoformat() if ext.timingPeriod.start else "",
-                    "end": ext.timingPeriod.end.date.date().isoformat() if ext.timingPeriod.end else ""
-                }
-
-        return None  # If no match is found
-    
-    def get_codeableconcept_codes(self, codeable_concept):
-        """
-        Extracts all 'code' and 'display' values from a CodeableConcept.coding list.
-        Returns a list of dicts: [{'code': ..., 'display': ...}, ...]
-        """
-        if not codeable_concept:
-            return None#[{"code": "", "display": ""}]
-
-        codings = getattr(codeable_concept, "coding", None) or codeable_concept.get("coding", [])
-        if not codings:
-            return None
-        
-        results = []
-        for coding in codings:
-            code = coding.code or "" #getattr(coding, "code", None) or coding.get("code", None)
-            display = coding.display or "" #getattr(coding, "display", None) or coding.get("display", None)
-            if code or display:
-                results.append({
-                    "code": code or "",
-                    "display": display or ""
-                })
-        return results if results else [{"code": "", "display": ""}]
-
-
-    def dict_to_codeableconcept(self,data):
-        """
-        Converts a dict with keys 'code' and 'description' to a CodeableConcept.
-        Returns None if both code and description are missing/empty.
-        """
-        code = data.get("code", "")
-        description = data.get("description", "")
-        if not code and not description:
-            return None
-
-        cc = codeableconcept.CodeableConcept()
-        coding = c1.Coding()
-        coding.code = code
-        coding.display = description
-        cc.coding = [coding]
-        return cc
-
-
-
-    def generated_pas_sequence_for_new_service(self, data_dict, external_pas_map, claimtype):
-        """
-        Updates pasSequence for services in data_dict using external_pas_map.
-        If pasSequence == '-1', generates a new one and appends to external_pas_map.
-        If claimtype == 'claim' and external_pas_map is an empty dict, initialize it from servicePASMapping and return early.
-
-        Parameters:
-            data_dict (dict): Input dictionary containing authorization.services
-            external_pas_map (list or dict): crSequence to pasSequence mappings
-            claimtype (str): Type of claim, affects processing flow
-
-        Returns:
-            tuple:
-                dict: Updated data_dict
-                list: Updated external_pas_map (with generated sequences if any)
-        """
-        auth = data_dict.get('authorization', {}) or {}
-        services = auth.get('services', []) or []
-
-        if not isinstance(services, list) or not services:
-            self.logger_obj.log("No new services found in the authorization section.", 'info')
-            return data_dict, external_pas_map
-
-        # ? Step 1: Special handling for claimtype == 'claim' and empty dict
-        if claimtype.lower() == 'claim':
-            self.logger_obj.log("Claim type is 'claim' and external_pas_map is empty. Initializing from services.", 'info')
-            for svc in services:
-                mapping = svc.get("servicePASMapping", {})
-                cr_seq = str(mapping.get("crSequence", "")).strip()
-                pas_seq = str(mapping.get("pasSequence", "")).strip()
-                if cr_seq and pas_seq:
-                    external_pas_map.append({
-                        "crSequence": cr_seq,
-                        "pasSequence": pas_seq
-                    })
-            # ? Skip all further processing for 'claim'
-            return data_dict, external_pas_map
-
-        # Convert to dict for fast lookup: crSequence -> pasSequence
-        external_pas_map_dict = {
-            str(item.get("crSequence")).strip(): item.get("pasSequence")
-            for item in external_pas_map
-            if "crSequence" in item and "pasSequence" in item
-        }
-
-        generated_any = False
-        updated_external_pas_map = copy.deepcopy(external_pas_map)
-        self.logger_obj.log(f"after deepcopy: {updated_external_pas_map}")
-
-        # Assign pasSequence from external_pas_map
-        for item in services:
-            mapping = item.get("servicePASMapping", {}) or {}
-            cr_seq = str(mapping.get("crSequence", "")).strip()
-
-            if cr_seq and cr_seq in external_pas_map_dict:
-                mapping["pasSequence"] = external_pas_map_dict[cr_seq]
-
-            item["servicePASMapping"] = mapping
-
-        # Find max numeric pasSequence
-        existing_pas = [
-            int(item.get("pasSequence"))
-            for item in external_pas_map
-            if str(item.get("pasSequence", "")).isdigit()
-        ]
-
-        next_pas = max(existing_pas, default=0) + 1
-
-        self.logger_obj.log(f"Next available PAS sequence to assign: {next_pas}")
-
-        # Generate new PAS sequences where needed
-        for i in services:
-            mapping = i.get("servicePASMapping", {}) or {}
-            cr_seq = str(mapping.get("crSequence", "")).strip()
-            pas_seq_cur = str(mapping.get("pasSequence", "")).strip()
-
-            if pas_seq_cur == "-1" and cr_seq:
-                mapping["generatedPasSequence"] = str(next_pas)
-
-                updated_external_pas_map.append({
-                    "crSequence": cr_seq,
-                    "pasSequence": str(next_pas)
-                })
-                generated_any = True
-                next_pas += 1
-
-        self.logger_obj.log(f"Updated services with generated PAS sequences: {services}")
-        
-        self.logger_obj.log(f"Updated external PAS map: {updated_external_pas_map}")
-
-        return data_dict, updated_external_pas_map if generated_any else external_pas_map
-
-
-
-
-
-    def get_pas_seq(self,data,lookup_cr_seq):
-        services = data.get('authorization', {}).get('services', [])
-        for item in services:
-            mapping = item.get('servicePASMapping', {}) or {}
-            cr_seq = mapping.get('crSequence','') or ''
-            pas_seq = mapping.get('pasSequence','') or ''
-            gen_pas_seq = mapping.get('generatedPasSequence','') or ''
-            if not cr_seq:
-                return None
-            if cr_seq == lookup_cr_seq:
-                self.logger_obj.log(f"Found matching CR Seq: {cr_seq} with PAS Seq: {pas_seq}")
-                if pas_seq:
-                    mapped_pas_seq = pas_seq if pas_seq != '-1' else gen_pas_seq
-                    return int(mapped_pas_seq) if mapped_pas_seq else None
-                else:
-                    return None
-
-
-    
-    def get_cov_beneficiary_id(self,resource):
-        patient_id = resource.beneficiary.reference.split('/')[-1]
-        for entry in self.bundle.entry:
-            if entry.resource.resource_type == 'Patient' and entry.resource.id == patient_id:
-                resource = entry.resource
-                return self.get_preferred_identifier(resource)
-
-    def extract_address_fields(self,resource):
-
-        addresses = getattr(resource, "address", None)
-        if isinstance(addresses, list):
-            address = addresses[0] if addresses else None
-        else:
-            address = addresses
-
-        if not address:
-            return {
-                "line1": "", "line2": "", "line3": "",
-                "line4": "",  
-                "country": "", "county": "", "state": "", "city": "", "postalCode": ""
-            }
-
-        lines = address.line or []
-        padded_lines = (list(lines) + ["", "", "", ""])[:4]
-        line1, line2, line3, line4 = padded_lines
-
-        return {
-                "line1": line1,
-                "line2": line2,
-                "line3": line3,
-                "line4": line4,
-                "country": getattr(address, "country", "") or "",
-                "county": getattr(address, "district", "") or "",
-                "state": getattr(address, "state", "") or "",
-                "city": getattr(address, "city", "") or "",
-                "postalCode": getattr(address, "postalCode", "") or ""
-                }
-    
-  
-    def extract_telecom_fields(self,resource):
-        telecoms = {
-            "homePhone": "",
-            "workPhone": "",
-            "mobilePhone": "",
-            "email": "",
-            "fax": ""
-        }
-
-        if not hasattr(resource, 'telecom') or not resource.telecom:
-            return telecoms
-
-        # Group telecoms by (system, use)
-        
-
-        grouped = defaultdict(list)
-        for t in resource.telecom:
-            system = str(getattr(t, "system", "") or "").lower()
-            use = str(getattr(t, "use", "") or "").lower()
-            if system and getattr(t, 'value', None):
-                grouped[(system, use)].append(t)
-
-        # For each group, apply ranking only if multiple entries exist
-        for (system, use), items in grouped.items():
-            if len(items) > 1:
-                # pick the one with the lowest rank (e.g., rank == 1)
-                items = sorted(items, key=lambda x: getattr(x, 'rank', 9999))
-                selected = items[0]
-            else:
-                selected = items[0]
-
-            value = getattr(selected, 'value', None)
-            if not value:
-                continue
-
-            # Map to telecoms dict
-            if system == 'phone':
-                if use == 'home':
-                    telecoms['homePhone'] = value
-                elif use == 'work':
-                    telecoms['workPhone'] = value
-                elif use == 'mobile':
-                    telecoms['mobilePhone'] = value
-            elif system == 'email':
-                telecoms['email'] = value
-            elif system == 'fax':
-                telecoms['fax'] = value
-
-        return telecoms
-    
-    def build_telecom_from_contact_details(self, contact_details: dict):
-        telecoms = []
-
-        mapping = {
-            "email":      ("email", "work"),
-            "fax":        ("fax", "work"),
-            "homePhone":  ("phone", "home"),
-            "mobilePhone":("phone", "mobile"),
-            "workPhone":  ("phone", "work")
-        }
-
-        for key, (system, use) in mapping.items():
-            value = contact_details.get(key)
-            if value:
-                cp = contactpoint.ContactPoint()
-                cp.system = system
-                cp.use = use
-                cp.value = value
-                telecoms.append(cp)
-
-        return telecoms
-
-        
-
-    def get_identifier(self,resource):
-
-        providerid, providernpi, providertin, providerid_system = '', '', '', ''
-        
-        # Check if the resource has an 'identifier' field
-        if not hasattr(resource, 'identifier') or not resource.identifier:
-            return providerid, providernpi, providertin, providerid_system
-
-        # If there's only one identifier, return it directly without applying the priority logic
-        #if len(resource.identifier) == 1:
-        #    providerid = resource.identifier[0].value
-        #    return providerid, providernpi, providertin
-
-        # NPI/TIN are identified using Identifier.system fixed values.
-        npi_system_values = {"http://hl7.org/fhir/sid/us-npi", "us-npi"}
-        tin_system_values = {"http://terminology.hl7.org/namingsystem/usein", "usein"}
-
-        identifiers = getattr(resource, 'identifier', []) or []
-
-        # Loop 1: providerid should only come from type code PRN when type is available.
-        for identifier in identifiers:
-            identifier_value = getattr(identifier, 'value', '') or ''
-            providerid_system = getattr(identifier, 'system', '') or ''
-            identifier_type = getattr(identifier, 'type', None) or None
-            codings = getattr(identifier_type, 'coding', []) or [] if identifier_type else []
-
-            for coding in codings:
-                code_value = (getattr(coding, 'code', '') or '').strip().lower()
-                if code_value == "prn":
-                    providerid = identifier_value
-                    break
-
-        # Loop 2: fetch NPI and TIN from Identifier.system fixed values.
-        for identifier in identifiers:
-            identifier_value = getattr(identifier, 'value', '') or ''
-            system_value = (getattr(identifier, 'system', '') or '').strip().lower()
-            system_tail = system_value.rstrip('/').split('/')[-1] if system_value else ''
-
-            if (system_value in npi_system_values or system_tail in npi_system_values) and identifier_value:
-                providernpi = identifier_value
-            if (system_value in tin_system_values or system_tail in tin_system_values) and identifier_value:
-                providertin = identifier_value
-        
-        return providerid, providernpi, providertin, providerid_system
-    
-    def get_patient_id(self):
-        # get patient identifier data
-
-        # get patient data from the claim bundle
-        claim_patient_ref = self.claim_ref.patient.reference
-        patientresourcetype,patientid = self.split_reference(claim_patient_ref)
-        patient = self.get_resource(patientresourcetype,patientid)
-        patientidentifier = getattr(patient, 'identifier', [])
-
-        # get the patient identifier values
-        patientidtype, patientidsystem, patientidvalue, ci = '', '', '', 0
-        for identifier in patientidentifier:
-            for code in identifier.type.coding:
-                if code.code.lower() == "mb":
-                    ci += 1
-                    if ci == 1:
-                        patientidtype = "MB"
-                        patientidsystem = identifier.system
-                        patientidvalue = identifier.value   
-
-        return {
-            "patientidtype": patientidtype,
-            "patientidsystem": patientidsystem,
-            "patientidvalue": patientidvalue  
-        }
-    
-    def get_provider_id(self):
-        # get provider identifier data
-
-        # get provider data from the claim bundle
-        claim_provider_ref = self.claim_ref.provider.reference
-        providerresourcetype,providerid = self.split_reference(claim_provider_ref)
-        provider_resource = self.get_resource(providerresourcetype,providerid)
-
-        if providerresourcetype.lower() == "organization":
-            providerid, providernpi, providertin, providerid_system = self.get_identifier(provider_resource)
-        elif providerresourcetype.lower() in ["practitionerrole","practitioner"]:
-                if providerresourcetype.lower() == "practitionerrole":
-                    providerresourcetype1,providerid1 = self.split_reference(provider_resource.practitioner.reference)
-                    provider_resource = self.get_resource(providerresourcetype1, providerid1)
-                providerid, providernpi, providertin, providerid_system = self.get_identifier(provider_resource)
-
-        #provideridentifier = getattr(provider, 'identifier', [])
-        #
-        ## get the provider identifier values
-        #provideridsystem, provideridvalue, ci = '', '', 0
-        #for identifier in provideridentifier:
-        #    ci += 1
-        #    if ci == 1:
-        #        provideridsystem = identifier.system
-        #        provideridvalue = identifier.value   
-        
-        return {
-            "provideridsystem": providerid_system,
-            "provideridvalue": providerid
-        }
-    
-    def get_required_cr_info(self,crauth):
-
-        ref = crauth.get('referenceDetails', {}) or {}
-        pasIdentifierSystem = ref.get('pasIdentifierSystem','') or ''
-        pasIdentifierValue = ref.get('pasIdentifierValue','') or ''
-        referenceNumber = ref.get('referenceNumber','') or ''
-        memberdetails = crauth.get('memberDetails', {}) or {}
-        memberid = memberdetails.get('memberId','') or ''
-
-        services = crauth.get('services', []) or []
-        for i in services:
-            pasSequence = i.get('servicePASMapping', {}).get('pasSequence','') or ''
-            crSequence = i.get('servicePASMapping', {}).get('crSequence','') or ''
-
-        return {
-            "pasIdentifiers": {
-                "pasIdentifierSystem": pasIdentifierSystem,
-                "pasIdentifierValue": pasIdentifierValue,
-                "referenceNumber": referenceNumber
-            },
-            "memberId": memberid
-        }
-
-    
-    def build_claim_response_from_error(self, error_data):
-        cr = claimresponse.ClaimResponse()
-        cr.id = str(uuid.uuid4())
-        cr.status = "active"
-        cr.outcome = "error"
-        cr.created = fhirdatetime.FHIRDateTime(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-        
-        self.insurer_ref = self.claim_ref.insurer.reference
-        self.patient_ref = self.claim_ref.patient.reference
-        cr.request = fhirreference.FHIRReference({'reference': self.claim_ref.id})
-        cr.patient = fhirreference.FHIRReference({"reference": self.patient_ref})
-        cr.insurer = fhirreference.FHIRReference({"reference": self.insurer_ref})
-
-        cr.type = self.claim_ref.type
-
-        cr.use = 'preauthorization'
-        error = claimresponse.ClaimResponseError()
-
-        # Reject reason ? code (CodeableConcept)
-        reject = error_data.get("rejectReason", {})
-        if reject:
-            error.code = codeableconcept.CodeableConcept()
-            error.code.coding = [c1.Coding({
-                "system": "http://terminology.hl7.org/CodeSystem/adjudication-reason",
-                "code": reject.get("code", ""),
-                "display": reject.get("display", "")
-            })]
-
-        # Follow-up action ? extension
-        followup = error_data.get("followUpAction", {})
-        if followup:
-            followup_cc = codeableconcept.CodeableConcept()
-            followup_cc.coding = [c1.Coding({
-                "system": "http://terminology.hl7.org/CodeSystem/followup-action",
-                "code": followup.get("code", ""),
-                "display": followup.get("display", "")
-            })]
-
-            followup_ext = extension.Extension()
-            followup_ext.url = "http://example.org/fhir/StructureDefinition/errorFollowUpAction"
-            followup_ext.valueCodeableConcept = followup_cc
-            error.extension = [followup_ext]
-
-        cr.error = [error]
-        return cr.as_json()
-    
-    def get_unique_positive_int32(self):
-        if self._counter > 2147483647:
-            raise OverflowError("Exceeded maximum value for int32 positive integer.")
-
-        value = self._counter
-        self._counter += 1
-        return value
-    
-    def remove_supporting_info(self, bundle_json):
-        """
-        Removes 'supportingInfo' (a list) from all Claim resources in a FHIR bundle.
-        Case-insensitive match on 'resourceType'.
-        """
-        # Make a deep copy to avoid modifying the original input
-        cleaned_bundle = copy.deepcopy(bundle_json)
-
-        for entry in cleaned_bundle.get("entry", []):
-            resource = entry.get("resource", {})
-            if resource.get("resourceType", "").lower() == "documentreference":
-                for content_item in resource.get("content", []):
-                    attachment = content_item.get("attachment", {})
-                    if isinstance(attachment, dict):
-                        attachment.pop("data", None)
-
-        return cleaned_bundle
-    
-    def upload_attachments_to_storage(self, base64_data, unique_file_id, container_name):
-        """
-        Upload base64 encoded data to Azure Blob Storage using chunked uploads for large files.
-        
-        Args:
-            base64_data (str): Base64 encoded file data
-            unique_file_id (str): Unique identifier for the file
-            container_name (str): Azure blob container name
-            chunk_size (int): Size of each chunk in bytes (default 4MB)
-        
-        Returns:
-            str: Blob URL if successful, None if failed
-        """
-        try:
-            def calculate_chunk_size(file_size):
-                """Dynamically calculate chunk size based on file size."""
-                if file_size < 10 * 1024 * 1024:  # less than 10 MB
-                    return 2 * 1024 * 1024  # 2 MB
-                elif file_size < 100 * 1024 * 1024:  # 10 MB to 100 MB
-                    return 10 * 1024 * 1024  # 10 MB
-                else:  # Larger than 100 MB
-                    return 20 * 1024 * 1024  # 20 MB
-            
-            
-            # Azure Storage Connection String
-            AZURE_STORAGE_CONNECTION_STRING = os.getenv("BLOB_STORAGE_CONNECTION_STRING")
-
-            if not AZURE_STORAGE_CONNECTION_STRING:
-                return "Azure Storage connection string is missing", 500
-            
-            # Create blob service client
-            blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
-            blob_name = f"{unique_file_id}"
-            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-            
-            # Convert string to bytes
-            data_bytes = base64_data.encode('utf-8')
-            data_size = len(data_bytes)
-            chunk_size = calculate_chunk_size(data_size)
-            
-            # If file is small, use regular upload
-            if data_size <= chunk_size:
-                data_stream = BytesIO(data_bytes)
-                blob_client.upload_blob(data_stream, overwrite=True, content_type="text/plain")
-                return blob_client.url
-            
-            # For large files, use chunked upload
-            self.logger_obj.log(f"Uploading large file ({data_size} bytes) in chunks of {chunk_size} bytes")
-            
-            # Stage blocks for chunked upload
-            block_list = []
-            data_stream = BytesIO(data_bytes)
-            
-            block_number = 0
-            while True:
-                chunk = data_stream.read(chunk_size)
-                if not chunk:
-                    break
-                    
-                # Generate block ID (must be base64 encoded and same length for all blocks)
-                block_id = base64.b64encode(f"{block_number:08d}".encode()).decode()
-                
-                # Stage the block
-                blob_client.stage_block(block_id, chunk)
-                block_list.append(block_id)
-                block_number += 1
-                
-                # Log progress
-                progress = min(100, (block_number * chunk_size / data_size) * 100)
-                self.logger_obj.log(f"Upload progress: {progress:.1f}% (Block {block_number})")
-            
-            # Commit all blocks to create the blob
-            blob_client.commit_block_list(block_list)
-            self.logger_obj.log(f"Successfully uploaded file with {len(block_list)} blocks")
-            
-            return blob_client.url
-            
-        except Exception as e:
-            self.logger_obj.log(f"Error uploading file to blob storage: {str(e)}", "error")
-            return None
-===============================================================================================================
-from utils.db_utils import get_mongo_db_conn
-from datetime import datetime, timezone
-
-def insert_tracking_record(tracking_data: dict):
-    """
-    Inserts a record into config.tracking using the provided dictionary.
-    - Automatically sets audinsertdts if not provided.
-    - Does not return tracking ID or any output.
-    """
-    clientname = tracking_data.get("Client") or 'pasqa'
-    tracking_collection = get_mongo_db_conn(clientname,'Tracking')
-    # Set auditing fields if not already present
-    tracking_data["Success"] = "Success" if tracking_data.get("SuccessFlag") == 1 else "Failed"
-    tracking_data["InsertDTS"] = tracking_data.get("InsertDTS") or datetime.now(timezone.utc)
-    tracking_data["InsertUser"] = tracking_data.get("InsertUser") or "Interopservice"
-
-    try:
-        tracking_collection.insert_one(tracking_data)
+        request_obj_id = ObjectId(request_result.inserted_id)
+        return jsonify({"id": request_obj_id, "message": "Patient created successfully"}), 201
     except Exception as e:
-        raise e
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
 
-def is_transaction_successful(clientname, claimIdentifier):
-    """
-    Checks if a successful transaction exists in config.tracking collection
-    for the given client and claim identifier.
-    """
-    tracking_collection = get_mongo_db_conn(clientname,'Tracking')
 
-    query = {
-        "Client": clientname,
-        "ClaimIdentifierSystem": claimIdentifier.get("ClaimIdentifierSystem"),
-        "ClaimIdentifierValue": claimIdentifier.get("ClaimIdentifierValue"),
-        "SuccessFlag": 1
-    }
-    return tracking_collection.find_one(query) is not None
+@patinetsearch_bp.route('/fhir/Patient/<string:patient_id>', methods=['GET'])
+def get_patient(patient_id):
+    try:
+        trans_state = 'RequestReceived'
 
-def tracking_data_define():
-    # return an empty tracking dictionary
+        tracking_data = tracking_data_define()
+        tracking_data["Stage"] = trans_state
+        tracking_data["RequestReceivedDTS"] = datetime.now()
 
-    tracking_data = {
-        "InsertDTS": None,
-        "InsertUser": "",
-        "Client": "",
-        "MessageType": "",
-        "RequestURL": "",
-        "RequestReceivedDTS": None,
-        "ClaimIdentifierSystem": "",
-        "ClaimIdentifierValue": "",
-        "RequestObjectId": None,
-        "RequestForwardDTS": None,
-        "ResponseURL": "",
-        "ResponseReceivedDTS": None,
-        "ResponseObjectId": None,
-        "ResponseForwardDTS": None,
-        "Stage": "",
-        "Message": "",
-        "Success": "Failed",
-        "SuccessFlag": 0
-    }
+        tracking_data["RequestURL"] = request.url
+        # verify the requst
+        trans_state = 'VerifyingRequest'
 
-    return tracking_data
+        # get client from header
+        clientname = request.headers.get("Client", None) or None
+        if not clientname:
+            return {"error": "Invalid Client is passed in header"}, 400
+        tracking_data["Client"] = clientname
+        jwt_utils = Jwtutils(clientname=clientname)
+
+        # get and validate the header authorization
+        auth_header = request.headers.get("Authorization", None) or None
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return {"error": "Unauthorized Token"}, 401
+
+        token = auth_header.split(" ")[1]
+
+        if not token:
+            logger_obj.log("Missing jwt", 'error')
+            return jsonify({"error": "Missing jwt"}), 401
+
+        # verify the request
+        if not request.is_json:
+            logger_obj.log("Request is not JSON", 'error')
+            raise ValueError("Request has to be JSON")
+
+        # validating the jwt
+        trans_state = 'ValidatingJWT'
+        payload = jwt_utils.decode_jwt(token)
+        # clientname = payload['sub']
+
+        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
+        if not is_valid:
+            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
+            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
+
+        logger_obj.log("valid jwt", 'info')
+
+
+        # creating mongo db collection objects for request and response
+        patient_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
+
+        patient = patient_id
+        # Step 1: First query - get only OriginalClaimIdentifier and OriginalMemberId
+        filter_query = {
+            "RequestDataFromSource": {
+                "identifier": {
+                    "value": f"{patient_id}"
+                }
+            }
+        }
+
+
+        # Fetch the latest record for original identifiers and member ID
+        first_record = patient_collection.find_one(
+            filter=filter_query,
+            sort=[("InsertDTS", DESCENDING)]
+        ) or {}
+
+        if not first_record:
+            return jsonify({"error": "Patient not found"}), 404
+        if not first_record.get("Status") == "Active":
+            return jsonify({"error": "Patient is not active"}), 400
+        return jsonify(first_record.get("RequestDataFromSource")), 200
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
+
+
+@patientupdate_bp.route('/fhir/Patient/<string:patient_id>', methods=['PUT'])
+def update_patient(patient_id):
+    try:
+        trans_state = 'RequestReceived'
+
+        tracking_data = tracking_data_define()
+        tracking_data["Stage"] = trans_state
+        tracking_data["RequestReceivedDTS"] = datetime.now()
+
+        tracking_data["RequestURL"] = request.url
+        # verify the requst
+        trans_state = 'VerifyingRequest'
+
+        # get client from header
+        clientname = request.headers.get("Client", None) or None
+        if not clientname:
+            return {"error": "Invalid Client is passed in header"}, 400
+        tracking_data["Client"] = clientname
+        jwt_utils = Jwtutils(clientname=clientname)
+
+        # get and validate the header authorization
+        auth_header = request.headers.get("Authorization", None) or None
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return {"error": "Unauthorized Token"}, 401
+
+        token = auth_header.split(" ")[1]
+
+        if not token:
+            logger_obj.log("Missing jwt", 'error')
+            return jsonify({"error": "Missing jwt"}), 401
+
+        # verify the request
+        if not request.is_json:
+            logger_obj.log("Request is not JSON", 'error')
+            raise ValueError("Request has to be JSON")
+
+        # validating the jwt
+        trans_state = 'ValidatingJWT'
+        payload = jwt_utils.decode_jwt(token)
+        # clientname = payload['sub']
+
+        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
+        if not is_valid:
+            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
+            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
+
+        logger_obj.log("valid jwt", 'info')
+
+        # creating mongo db collection objects for request and response
+        patient_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
+
+        # Step 1: First query - get only OriginalClaimIdentifier and OriginalMemberId
+        filter_query = {
+            "RequestDataFromSource": {
+                "identifier": {
+                    "value": f"{patient_id}"
+                }
+            }
+        }
+
+        # Fetch the latest record for original identifiers and member ID
+        first_record = patient_collection.find_one(
+            filter=filter_query,
+            sort=[("InsertDTS", DESCENDING)]
+        ) or {}
+
+        if not first_record:
+            return jsonify({"error": "Patient not found"}), 404
+        if not first_record.get("Status") == "Active":
+            return jsonify({"error": "Patient is not active"}), 400
+        patient_data = json.loads(request.get_data())
+        request_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
+        patient = Patient(patient_data)
+        request_result = request_collection.insert_one({
+            'InsertDTS': datetime.now(),
+            'InsertUser': 'Interopservice',
+            'RequestResourceType': 'Patient',
+            'RequestDataFromSource': patient,  # data from EMR
+            'Status': 'Active'
+
+        })
+
+        return jsonify({"message": "Patient updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
+
+
+@patientdelete_bp.route('/fhir/Patient/<string:patient_id>', methods=['DELETE'])
+def delete_patient(patient_id):
+    try:
+        trans_state = 'RequestReceived'
+
+        tracking_data = tracking_data_define()
+        tracking_data["Stage"] = trans_state
+        tracking_data["RequestReceivedDTS"] = datetime.now()
+
+        tracking_data["RequestURL"] = request.url
+        # verify the requst
+        trans_state = 'VerifyingRequest'
+
+        # get client from header
+        clientname = request.headers.get("Client", None) or None
+        if not clientname:
+            return {"error": "Invalid Client is passed in header"}, 400
+        tracking_data["Client"] = clientname
+        jwt_utils = Jwtutils(clientname=clientname)
+
+        # get and validate the header authorization
+        auth_header = request.headers.get("Authorization", None) or None
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return {"error": "Unauthorized Token"}, 401
+
+        token = auth_header.split(" ")[1]
+
+        if not token:
+            logger_obj.log("Missing jwt", 'error')
+            return jsonify({"error": "Missing jwt"}), 401
+
+        # verify the request
+        if not request.is_json:
+            logger_obj.log("Request is not JSON", 'error')
+            raise ValueError("Request has to be JSON")
+
+        # validating the jwt
+        trans_state = 'ValidatingJWT'
+        payload = jwt_utils.decode_jwt(token)
+        # clientname = payload['sub']
+
+        is_valid, diff_list = jwt_utils.validate_jwt_claims(payload)
+        if not is_valid:
+            logger_obj.log(f"JWT validation failed. Differences in : {diff_list}", 'error')
+            raise ValueError(f"JWT validation failed. Differences in : {diff_list}")
+
+        logger_obj.log("valid jwt", 'info')
+
+        # creating mongo db collection objects for request and response
+        patient_collection = get_mongo_db_conn(clientname, 'Patient', logger_obj)
+
+        # Step 1: First query - get only OriginalClaimIdentifier and OriginalMemberId
+        filter_query = {
+            "RequestDataFromSource": {
+                "identifier": {
+                    "value": f"{patient_id}"
+                }
+            }
+        }
+
+        # Fetch the latest record for original identifiers and member ID
+        first_record = patient_collection.find_one(
+            filter=filter_query,
+            sort=[("InsertDTS", DESCENDING)]
+        ) or {}
+
+        if not first_record:
+            return jsonify({"error": "Patient not found"}), 404
+        if not first_record.get("Status") == "Active":
+            return jsonify({"error": "Patient is not active"}), 400
+
+        patient_data = first_record.get("RequestDataFromSource")
+        # Update the status to 'Deleted'
+        patient = Patient(patient_data)
+        request_result = patient_collection.insert_one({
+            'InsertDTS': datetime.now(),
+            'InsertUser': 'Interopservice',
+            'RequestResourceType': 'Patient',
+            'RequestDataFromSource': patient,  # data from EMR
+            'Status': 'Deleted'
+
+        })
+        return jsonify({"message": "Patient deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 400
