@@ -1,0 +1,261 @@
+name: $(date:yyyyMMdd)$(rev:.r)
+trigger:
+  - relaase1.0
+resources:
+  repositories:
+  - repository: self
+    type: git
+    ref: refs/heads/relaase1.0
+
+variables:
+  poolName: 'az03-uc-devops-ado-nonprod-pool'
+  imageName: 'dandaapiserver'
+  imageTag: '$(Build.BuildId)'
+  additionalTag: 'InteropSrvc'
+  testdockerFile: 'src/test.DockerFile'
+  #uatdockerFile: 'src/uat.DockerFile'
+  buildContext: 'src'
+  testazureSubscription: 'IOPSRV-Service-Connection-Dev'
+  uatazureSubscription: 'IOPSRV-Service-Connection-Uat'
+
+stages:
+- stage: Build
+  displayName: Build and Push to Test
+  jobs:
+  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
+    parameters:
+      jobName: 'buildAndPushTest'
+      displayName: 'Build Docker Image and Push to Test'
+      azureSubscription: '$(testazureSubscription)'
+      containerRegistry: 'iopsrvtestacr'
+      buildContext: '$(buildContext)'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      dockerFile: '$(testdockerFile)'
+
+- stage: Review
+  displayName: Review
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+  jobs: 
+  - job: releaseValidation
+    displayName: Confirm UAT Release
+    pool: server    
+    timeoutInMinutes: 12960 # job times out in 9 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 10080 # task times out in 1 week
+      inputs:
+        notifyUsers: |
+          Kannam.Goud@exlservice.com
+        instructions: 'Please confirm before proceeding to UAT'
+        onTimeout: 'reject'
+
+- stage: UAT
+  displayName: Build and Push to UAT
+  dependsOn: Review
+  jobs:
+  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
+    parameters:
+      jobName: 'buildAndPushUAT'
+      displayName: 'Build Docker Image and Push to UAT'
+      azureSubscription: '$(uatazureSubscription)'
+      containerRegistry: 'iopsrvuatacr'
+      buildContext: '$(buildContext)'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      dockerFile: '$(testdockerFile)'
+
+
+
+=====================================================================================
+
+name: $(date:yyyyMMdd)$(rev:.r)
+trigger:
+  - messagelistener_release
+resources:
+  repositories:
+  - repository: self
+    type: git
+    ref: refs/heads/messagelistener_release
+
+variables:
+  poolName: 'az03-uc-devops-ado-nonprod-pool'
+  imageName: 'dandaqueuelistenerserver'
+  imageTag: '$(Build.BuildId)'
+  additionalTag: 'InteropQueueListenerSrvc'
+  dockerFile: 'src/test.quesvc.DockerFile'
+  buildContext: 'src'
+  testazureSubscription: 'IOPSRV-Service-Connection-Dev'
+  uatazureSubscription: 'IOPSRV-Service-Connection-Uat'
+
+stages:
+- stage: Build
+  displayName: Build and Push to Test
+  jobs:
+  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
+    parameters:
+      jobName: 'buildAndPushTest'
+      displayName: 'Build Docker Image and Push to Test'
+      azureSubscription: '$(testazureSubscription)'
+      containerRegistry: 'iopsrvtestacr'
+      buildContext: '$(buildContext)'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      dockerFile: '$(dockerFile)'
+
+- stage: Review
+  displayName: Review Stage
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+  jobs: 
+  - job: releaseValidation
+    displayName: Confirm UAT Release
+    pool: server    
+    timeoutInMinutes: 12960 # job times out in 9 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 10080 # task times out in 1 week
+      inputs:
+        notifyUsers: |
+          Kannam.Goud@exlservice.com
+        instructions: 'Please confirm before proceeding to UAT'
+        onTimeout: 'reject'
+
+- stage: UAT
+  displayName: Build and Push to UAT
+  dependsOn: Review
+  jobs:
+  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
+    parameters:
+      jobName: 'buildAndPushUAT'
+      displayName: 'Build Docker Image and Push to UAT'
+      azureSubscription: '$(uatazureSubscription)'
+      containerRegistry: 'iopsrvuatacr'
+      buildContext: '$(buildContext)'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      dockerFile: '$(dockerFile)'
+
+
+
+=============================================================================
+name: $(date:yyyyMMdd)$(rev:.r)
+trigger:
+  - messaginginfra
+resources:
+  repositories:
+  - repository: self
+    type: git
+    ref: refs/heads/messaginginfra
+
+variables:
+  poolName: 'az03-uc-devops-ado-nonprod-pool'
+  imageName: 'rabbitmq'
+  imageTag: '$(Build.BuildId)'
+  additionalTag: 'iopsrvcmessaging'
+  dockerFile: 'src/messaging/test.Dockerfile'
+  buildContext: 'src/messaging'
+  kubernetesNamespace: 'iopsrv-rabbitmq'
+  testazureSubscription: 'IOPSRV-Service-Connection-Dev'
+  uatazureSubscription: 'IOPSRV-Service-Connection-Uat'
+
+stages:
+- stage: TestContainerBuildandPush
+  displayName: Build and Push to Test Container
+  jobs:
+  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
+    parameters:
+      jobName: 'buildAndPushTest'
+      displayName: 'Build Docker Image and Push to Test'
+      azureSubscription: '$(testazureSubscription)'
+      containerRegistry: 'iopsrvtestacr'
+      buildContext: '$(buildContext)'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      dockerFile: '$(dockerFile)'
+
+- stage: DeployToAKSTest
+  displayName: Deploy to AKS Test
+  dependsOn: TestContainerBuildandPush
+  jobs:
+  - template: src/devops/templates/InterOp_Kubernetes_Deploy_Template.yml
+    parameters:
+      azureSubscription: '$(testazureSubscription)'
+      aksClusterName: 'az03-hc-iopsrv-test-aks'
+      aksResourceGroup: 'az03-hc-iopsrv-test-rg-app'
+      kubernetesNamespace: 'iopsrv-rabbitmq'
+      containerRegistry: 'iopsrvtestacr.azurecr.io'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      environment: 'Dev'
+      loadBalancerSubnet: 'az03-hc-iopsrv-test-aks-subnet'
+      loadBalancerIP: '10.61.222.100'
+      keyVaultName: 'iopsrv-test-kv'
+
+- stage: Review
+  displayName: Review Stage
+  dependsOn: DeployToAKSTest
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+  jobs: 
+  - job: releaseValidation
+    displayName: Confirm UAT Release
+    pool: server    
+    timeoutInMinutes: 12960 # job times out in 9 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 10080 # task times out in 1 week
+      inputs:
+        notifyUsers: |
+          Kannam.Goud@exlservice.com
+        instructions: 'Please confirm before proceeding to UAT'
+        onTimeout: 'reject'
+
+- stage: UATContainerBuildandPush
+  displayName: Build and Push to UAT Container
+  #dependsOn: Review
+  jobs:
+  - template: src/devops/templates/InterOp_Container_Build_Push_Template.yml
+    parameters:
+      jobName: 'buildAndPushUAT'
+      displayName: 'Build Docker Image and Push to UAT'
+      azureSubscription: '$(uatazureSubscription)'
+      containerRegistry: 'iopsrvuatacr'
+      buildContext: '$(buildContext)'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      dockerFile: '$(dockerFile)'
+
+- stage: DeployToAKSUat
+  displayName: Deploy to AKS UAT
+  dependsOn: UATContainerBuildandPush
+  jobs:
+  - template: src/devops/templates/InterOp_Kubernetes_Deploy_Template.yml
+    parameters:
+      azureSubscription: '$(uatazureSubscription)'
+      aksClusterName: 'az03-hc-iopsrv-uat-aks'
+      aksResourceGroup: 'az03-hc-iopsrv-uat-rg-app'
+      kubernetesNamespace: 'iopsrv-rabbitmq'
+      containerRegistry: 'iopsrvuatacr.azurecr.io'
+      imageName: '$(imageName)'
+      imageTag: '$(imageTag)'
+      poolName: '$(poolName)'
+      additionalTag: '$(additionalTag)'
+      environment: 'Uat'
+      loadBalancerSubnet: 'az03-hc-iopsrv-uat-aks-subnet'
+      loadBalancerIP: '10.61.217.100'
+      keyVaultName: 'iopsrv-uat-kv'
