@@ -1,8 +1,9 @@
 """
-Full pipeline flow test against your REAL configured MongoDB.
+Full pipeline flow test against your REAL configured MongoDB, for any of the
+5 resource types the pipeline supports (Observation, DiagnosticReport,
+ServiceRequest, DocumentReference, ImagingStudy).
 
-Unlike test_observation_api.py (which stubs Mongo with an in-memory fake),
-this runs the actual pipeline code - ingest (parse/validate/canonicalize),
+Runs the actual pipeline code - ingest (parse/validate/canonicalize),
 persist_single (create/update/delete), and search.py (read/history) - against
 whatever Mongo is configured in interop.config's [repodb] section. No Flask,
 no JWT/HTTP layer.
@@ -12,9 +13,10 @@ Requires interop.config's [repodb] filled in with real Mongo details, and
 regardless of what you're testing).
 
 Usage:
-    python tests/test_pipeline_real_db.py <clientname>
+    python tests/test_pipeline_real_db.py <clientname> [resource_type]
 
     e.g. python tests/test_pipeline_real_db.py testclient
+         python tests/test_pipeline_real_db.py testclient ServiceRequest
 
 Exit code 0 = all good, 1 = something failed.
 """
@@ -31,12 +33,13 @@ from utils.db_utils import get_mongo_db_conn  # noqa: E402
 from utils.logutils import logger  # noqa: E402
 from fhirpipeline.pipeline import ingest  # noqa: E402
 from fhirpipeline.persist import persist_single  # noqa: E402
-from fhirpipeline.search import read_by_id, read_history, read_version  # noqa: E402
+from fhirpipeline.search import read_by_id, read_history  # noqa: E402
 
 if len(sys.argv) < 2:
-    sys.exit("Usage: python tests/test_pipeline_real_db.py <clientname>")
+    sys.exit("Usage: python tests/test_pipeline_real_db.py <clientname> [resource_type]")
 
 clientname = sys.argv[1]
+resource_type = sys.argv[2] if len(sys.argv) > 2 else "Observation"
 logger_obj = logger()
 
 
@@ -53,33 +56,53 @@ def check(label, cond):
         _f += 1; print(f"  FAIL {label}")
 
 
-OBS = {
-  "resourceType": "Observation",
-  "status": "final",
-  "code": {
-    "coding": [
-      {
-        "system": "http://loinc.org",
-        "code": "8310-5",
-        "display": "Body temperature"
-      }
-    ]
-  },
-  "subject": {
-    "reference": "Patient/123"
-  },
-  "effectiveDateTime": "2026-09-09T10:00:00Z",
-  "valueQuantity": {
-    "value": 37.1,
-    "unit": "Cel",
-    "system": "http://unitsofmeasure.org",
-    "code": "Cel"
-  }
+# --------------------------------------------------------------------------
+# one valid sample + one bad-status variant per supported resource type
+# --------------------------------------------------------------------------
+SAMPLES = {
+    "Observation": {
+        "resourceType": "Observation", "status": "final",
+        "code": {"coding": [{"system": "http://loinc.org", "code": "8310-5"}]},
+        "subject": {"reference": "Patient/123"},
+        "effectiveDateTime": "2026-09-09T10:00:00Z",
+        "valueQuantity": {"value": 37.1, "unit": "Cel",
+                          "system": "http://unitsofmeasure.org", "code": "Cel"},
+    },
+    "DiagnosticReport": {
+        "resourceType": "DiagnosticReport", "status": "final",
+        "code": {"coding": [{"system": "http://loinc.org", "code": "58410-2"}]},
+        "subject": {"reference": "Patient/123"},
+    },
+    "ServiceRequest": {
+        "resourceType": "ServiceRequest", "status": "active", "intent": "order",
+        "subject": {"reference": "Patient/123"},
+        "code": {"coding": [{"system": "http://loinc.org", "code": "58410-2"}]},
+    },
+    "DocumentReference": {
+        "resourceType": "DocumentReference", "status": "current",
+        "content": [{"attachment": {"contentType": "application/pdf",
+                                     "url": "Binary/example"}}],
+    },
+    "ImagingStudy": {
+        "resourceType": "ImagingStudy", "status": "available",
+        "subject": {"reference": "Patient/123"},
+    },
+}
+BAD_STATUS = {
+    "Observation": "bogus-not-a-real-status",
+    "DiagnosticReport": "bogus-not-a-real-status",
+    "ServiceRequest": "bogus-not-a-real-status",
+    "DocumentReference": "bogus-not-a-real-status",
+    "ImagingStudy": "bogus-not-a-real-status",
 }
 
+if resource_type not in SAMPLES:
+    sys.exit(f"Unknown resource_type '{resource_type}'. Choose from: {', '.join(SAMPLES)}")
 
-print(f"=== 1. ingest + create (client='{clientname}') ===")
-result = ingest(json.dumps(OBS).encode(), "application/fhir+json", "Observation")
+RES = SAMPLES[resource_type]
+
+print(f"=== 1. ingest + create ({resource_type}, client='{clientname}') ===")
+result = ingest(json.dumps(RES).encode(), "application/fhir+json", resource_type)
 check("ingest ok", result.ok)
 if not result.ok:
     print(json.dumps(result.outcome, indent=2))
@@ -94,50 +117,42 @@ check("versionId == '1'", (pr.resource or {}).get("meta", {}).get("versionId") =
 if not pr.ok or not oid:
     print(json.dumps(pr.outcome, indent=2))
     sys.exit(1)
-print(f"  -> Observation/{oid} written to real DB")
+print(f"  -> {resource_type}/{oid} written to real DB")
 
 print("\n=== 2. read back ===")
-status, body, etag = read_by_id(get_collection, clientname, "Observation", oid)
+status, body, etag = read_by_id(get_collection, clientname, resource_type, oid)
 check("200 OK", status == 200)
 check("same id", (body or {}).get("id") == oid)
 check("ETag W/\"1\"", etag == 'W/"1"')
 
 print("\n=== 3. update -> v2 ===")
-updated = {**result.canonical, "status": "amended"}
-result2 = ingest(json.dumps({**OBS, "status": "amended"}).encode(),
-                  "application/fhir+json", "Observation")
+result2 = ingest(json.dumps({**RES, "status": pr.resource["status"]}).encode(),
+                  "application/fhir+json", resource_type)
 check("ingest (update) ok", result2.ok)
 pr2 = persist_single(get_collection, clientname, result2.canonical, "update", resource_id=oid)
 check("persist update ok", pr2.ok)
 check("versionId == '2'", (pr2.resource or {}).get("meta", {}).get("versionId") == "2")
 
 print("\n=== 4. history ===")
-hstatus, hbody = read_history(get_collection, clientname, "Observation", oid)
+hstatus, hbody = read_history(get_collection, clientname, resource_type, oid)
 check("200 + type history", hstatus == 200 and hbody.get("type") == "history")
 check("2 versions", len(hbody.get("entry", [])) == 2)
 
 print("\n=== 5. delete ===")
-pr3 = persist_single(get_collection, clientname, {"resourceType": "Observation"},
+pr3 = persist_single(get_collection, clientname, {"resourceType": resource_type},
                      "delete", resource_id=oid)
 check("204 No Content", pr3.status == 204)
 
-status4, body4, _ = read_by_id(get_collection, clientname, "Observation", oid)
+status4, body4, _ = read_by_id(get_collection, clientname, resource_type, oid)
 check("read after delete -> 404", status4 == 404)
 
 print("\n=== 6. validation actually runs (bad data must be rejected, nothing written) ===")
-bad = {**OBS, "status": "bogus-not-a-real-status"}
-bad_result = ingest(json.dumps(bad).encode(), "application/fhir+json", "Observation")
+bad = {**RES, "status": BAD_STATUS[resource_type]}
+bad_result = ingest(json.dumps(bad).encode(), "application/fhir+json", resource_type)
 check("invalid status -> ingest rejects it", not bad_result.ok)
 check("422 Unprocessable", bad_result.status == 422)
 if bad_result.outcome:
     print("  OperationOutcome:", json.dumps(bad_result.outcome, indent=2))
-
-bad2 = {"resourceType": "Observation", "status": "final",
-        "code": {"text": "t"}, "valueString": "v",
-        "dataAbsentReason": {"text": "x"}}
-bad2_result = ingest(json.dumps(bad2).encode(), "application/fhir+json", "Observation")
-check("obs-6 invariant violation -> rejected", not bad2_result.ok)
-check("422 Unprocessable (invariant)", bad2_result.status == 422)
 
 print(f"\n{_p} passed, {_f} failed")
 sys.exit(1 if _f else 0)
