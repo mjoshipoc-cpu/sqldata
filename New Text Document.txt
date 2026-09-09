@@ -54,13 +54,29 @@ def check(label, cond):
 
 
 OBS = {
-    "resourceType": "Observation", "status": "final",
-    "code": {"coding": [{"system": "http://loinc.org", "code": "8310-5"}]},
-    "subject": {"reference": "Patient/123"},
-    "effectiveDateTime": "2026-09-09T10:00:00Z",
-    "valueQuantity": {"value": 37.1, "unit": "Cel",
-                      "system": "http://unitsofmeasure.org", "code": "Cel"},
+  "resourceType": "Observation",
+  "status": "final",
+  "code": {
+    "coding": [
+      {
+        "system": "http://loinc.org",
+        "code": "8310-5",
+        "display": "Body temperature"
+      }
+    ]
+  },
+  "subject": {
+    "reference": "Patient/123"
+  },
+  "effectiveDateTime": "2026-09-09T10:00:00Z",
+  "valueQuantity": {
+    "value": 37.1,
+    "unit": "Cel",
+    "system": "http://unitsofmeasure.org",
+    "code": "Cel"
+  }
 }
+
 
 print(f"=== 1. ingest + create (client='{clientname}') ===")
 result = ingest(json.dumps(OBS).encode(), "application/fhir+json", "Observation")
