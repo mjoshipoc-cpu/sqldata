@@ -1,112 +1,21 @@
-SDOH RISK PLATFORM — 5-MINUTE BUSINESS SCRIPT
-(Condensed from business_script.txt — read-through pace, ~5 min)
-
-------------------------------------------------
-[0:00–0:30] THE PROBLEM
-------------------------------------------------
-"Every health plan already scores risk from claims and clinical history. But
-there's a category of member who looks fine on paper — no hospitalizations,
-no red flags — until you look at where they live. Food insecurity, unstable
-housing, no transportation, unemployment. Claims-only models miss these
-people entirely, until they show up in an ER. That risk is real, and
-today's models never see it."
-
-------------------------------------------------
-[0:30–1:30] THE SOLUTION
-------------------------------------------------
-"We built a platform that combines clinical data with social determinants
-of health — SDOH — into one risk score, then automatically figures out who
-needs help, what kind, and drives outreach end-to-end until it's actually
-resolved.
-
-Four things happen:
-1. We score every member twice — clinical-only, and clinical-plus-social —
-   so we can measure exactly how much social circumstances change their
-   real risk.
-2. We flag the members whose risk is genuinely social-driven, not just
-   clinically severe — the ones a traditional model misses.
-3. A 4-agent AI pipeline explains why they're at risk, what they need
-   first, how to reach them, and builds a concrete plan — Agents 1 and 2
-   explain the 'why' and 'what,' Agents 3 and 4 decide the 'how' based on
-   that foundation, in that order, every time.
-4. Outreach goes out automatically and adapts to what the member actually
-   says — but nothing gets marked resolved without a human confirming it
-   really happened.
-
-On the model side: the live AI running all four agents today is Groq's
-Llama 3.3. There's also a Claude Sonnet integration configured in the code
-as a future option — it's wired up but not switched on yet, worth
-mentioning if asked which model is actually doing the work."
-
-------------------------------------------------
-[1:30–2:15] THE DATA
-------------------------------------------------
-"Two sources, both free, public, verified straight from Snowflake
-Marketplace — nothing custom-built. Clinical and claims data comes from
-Synthea, MITRE's synthetic patient generator — realistic but not real
-patients, which is exactly why we can use it in a demo. Neighborhood and
-social data comes from SafeGraph's Open Census Data — real U.S. Census
-Bureau statistics on poverty, unemployment, food access, housing, down to
-the ZIP level. So: the social layer is genuinely real; the clinical layer
-is synthetic but methodologically realistic."
-
-------------------------------------------------
-[2:15–3:15] HOW THE SCORING WORKS
-------------------------------------------------
-"We run two parallel prediction models on the same population — one on
-clinical and financial data alone, one with the full social layer added.
-Both sort members into Critical, High, Moderate, Low. Comparing the two for
-the same member is how we get 'SDOH Lift' — the gap between them — which is
-the single number that proves the whole point: how much a claims-only model
-would have missed for that person.
-
-One guardrail worth naming: there's a composite neighborhood-disadvantage
-score that would be tempting to feed the model directly — we deliberately
-exclude it from training because it's built from the same data as what
-we're predicting. We only give the model raw underlying facts, not a
-shortcut answer. And every score comes with an explanation — the top five
-factors driving it for that specific person, not a generic statement."
-
-------------------------------------------------
-[3:15–4:15] TRUST & GUARDRAILS
-------------------------------------------------
-"Wherever the AI writes language, it's constrained, not left to freelance.
-It's handed pre-decided facts rather than raw numbers to interpret — if a
-member isn't high-cost by our own definition, it's told that explicitly and
-can't describe her otherwise. It's told outright what NOT to speculate
-about. Some agents never even receive sensitive data like cost or risk
-score, so they structurally can't misuse it. Wherever a decision doesn't
-need language — building a plan template, translating a clinical code — we
-use fixed logic, not AI, so there's zero hallucination risk there by
-construction. And when the AI genuinely isn't sure what a member meant, it
-says so and falls back to a safe default instead of guessing confidently.
-
-Most important: nothing closes a loop without a human. The AI can flag a
-possible signal that a referral was completed — a care manager has to type
-an actual confirmation before it's logged as fact."
-
-------------------------------------------------
-[4:15–5:00] CLOSE
-------------------------------------------------
-"So: claims-only models find the people who are already sick. This finds
-the people who are about to be — while there's still time to act. The
-reasoning is real, the personalization is real, the closed-loop tracking is
-real — and everywhere the AI is doing the talking, there's a guardrail
-underneath it and a human confirming anything that actually matters."
-
-------------------------------------------------
-IF ASKED IN Q&A — ONE-LINERS TO HAVE READY
-------------------------------------------------
-- Snowflake Cortex? "Configured for Claude Sonnet but not active — live AI
-  runs on Groq/Llama 3.3 today."
-- Bias audit done? "Not yet — real gap, flagging it proactively, needed
-  before production."
-- Retraining cadence? "Not established in this POC — operational decision
-  for production."
-- AI service down? "Degrades gracefully — keeps the last good message,
-  never blocks the workflow."
-- Real patient data? "No — clinical data is synthetic (Synthea); only the
-  neighborhood/Census layer is real."
-- Human override? "Yes, consistently — approval workflow, manual edits,
-  manual delivery confirmation, escalate/retry on everything."
-(Full answers and more scenarios: see business_script.txt, Section 6.)
+ok   invalid status -> ingest rejects it
+  ok   422 Unprocessable
+  OperationOutcome: {
+  "resourceType": "OperationOutcome",
+  "issue": [
+    {
+      "severity": "error",
+      "code": "value",
+      "diagnostics": "Invalid value at 'status': 'bogus-not-a-real-status'. Allowed: amended, cancelled, corrected, entered-in-error, final, preliminary, registered, unknown.",
+      "expression": [
+        "Observation.status"
+      ]
+    } 
+  ]
+}
+  ok   obs-6 invariant violation -> rejected
+  ok   422 Unprocessable (invariant)
+ 
+19 passed, 0 failedgit add .
+2  
+git commit -m "Initial commit"
