@@ -25,13 +25,12 @@ sys.path.insert(0, SRC_DIR)
 from utils.db_utils import get_mongo_db_conn  # noqa: E402
 from utils.logutils import logger  # noqa: E402
 
-if len(sys.argv) < 2:
-    sys.exit("Usage: python tests/insert_observation.py <clientname>")
-
 clientname = sys.argv[1]
 logger_obj = logger()
 
+print(f"Connecting for client '{clientname}'...", flush=True)
 collection = get_mongo_db_conn(clientname, "observation", logger_obj)
+print("Connected. Collection handle obtained.", flush=True)
 
 sample_observation = {
     "resourceType": "Observation",
@@ -45,8 +44,9 @@ sample_observation = {
     "meta": {"versionId": "1"},
 }
 
+print("Inserting...", flush=True)
 result = collection.insert_one(sample_observation)
-print("Inserted _id:", result.inserted_id)
+print("Inserted _id:", result.inserted_id, flush=True)
 
 doc = collection.find_one({"_id": result.inserted_id})
-print("Read back:", doc)
+print("Read back:", doc, flush=True)
