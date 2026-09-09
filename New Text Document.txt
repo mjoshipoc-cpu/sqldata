@@ -1,4 +1,10 @@
 """
+python tests/test_pipeline_real_db.py testclient Observation
+python tests/test_pipeline_real_db.py testclient ServiceRequest
+python tests/test_pipeline_real_db.py testclient DiagnosticReport
+python tests/test_pipeline_real_db.py testclient DocumentReference
+python tests/test_pipeline_real_db.py testclient ImagingStudy
+
 Full pipeline flow test against your REAL configured MongoDB, for any of the
 5 resource types the pipeline supports (Observation, DiagnosticReport,
 ServiceRequest, DocumentReference, ImagingStudy).
