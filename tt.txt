@@ -1,80 +1,180 @@
-## FHIR Ingest Pipeline — Unified FHIR Ingest/Persist Layer for Diagnostic Module
+"""
+AllergyIntolerance invariants - https://hl7.org/fhir/R4B/allergyintolerance.html#invs
 
-**Environment:** Python, Flask, MongoDB, `fhir.resources` (R4B / pydantic v1), JWT
+  ait-1  clinicalStatus SHALL NOT be present if verificationStatus is
+         entered-in-error
+  ait-2  clinicalStatus SHALL be present if verificationStatus is not
+         entered-in-error
 
-**Overview:** A Flask-free, unit-testable ingest pipeline that takes a single
-FHIR resource or a `Bundle` (transaction/batch/collection) from the HTTP edge
-through parsing, resource-type dispatch, canonicalization against the FHIR R4B
-model, and multi-layer validation (required fields, value-set bindings,
-cross-element invariants), then hands validated resources to an append-only
-versioned MongoDB store. Every failure at any layer resolves to the same
-currency — an `OperationOutcome` with a matching HTTP status — so clients see
-one consistent error contract across create, update, delete, read, search,
-history, and vread. Supports the Diagnostic Module resource types
-(`Observation`, `DiagnosticReport`, `ServiceRequest`, `DocumentReference`,
-`ImagingStudy`) through a registry-as-data design, so adding a new resource
-type is a data entry, not new pipeline code.
+Each fn(resource: dict) -> list[issue-dict]; empty list == OK.
+"""
+from __future__ import annotations
 
-**Roles & Responsibilities:**
-- Designed and built the three-band pipeline architecture (transport edge →
-  Flask-free ingest core → storage layer) so business logic has zero Flask or
-  database-driver dependencies and can be unit-tested standalone.
-- Implemented the ingest sequence — parse → dispatch → canonicalize → validate
-  — with `fhir.resources` (R4B) driving structural canonicalization and a
-  custom invariant/value-set layer covering checks FHIR's model layer doesn't
-  enforce (e.g. Observation `obs-6`/`obs-7`).
-- Built the `Bundle` path (`transaction` / `batch` / `collection`) to reuse the
-  exact single-resource dispatch/validate code per entry, with
-  transaction-reject-whole and batch-partial-failure semantics.
-- Designed the append-only versioned persistence model in MongoDB — one row
-  per version, `IsCurrent`/`DeletedFlag` flags, partial unique indexes for
-  race-safe create — giving history, vread, and soft-delete "for free."
-- Implemented tenant isolation via per-client physical MongoDB databases,
-  bound to the verified JWT `sub` claim.
-- Added a resilience path for DB outages: writes degrade to disk-spooled JSON
-  with a `202 Accepted` response instead of failing the request.
-- Wrote a request-tracking layer (Mongo `Tracking` documents) recording every
-  request's stage progression for audit and operational visibility.
-- Authored architecture documentation (`docs/pipeline-flow.md`,
-  `docs/request-flow.html`, `docs/observation-lifecycle.html`) and a review
-  pass (`docs/pipeline-review.md`) identifying and prioritizing correctness
-  and concurrency findings (connection reuse, deleted-id reuse, Bundle
-  response-shape drift, identifier dedup).
-- Built layered test coverage: per-stage unit tests (`tests/test_fhirpipeline_step*.py`),
-  a no-DB/no-JWT end-to-end harness, and an in-memory-collection API test
-  covering full CRUD + search + history.
+from fhirpipeline.operationoutcome import issue
 
----
+_VER_STATUS_SYSTEM = "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification"
 
-## HEDIS Abstractor.ai — Automated HEDIS Clinical Data Extraction Pipeline
 
-**Environment:** Snowflake Cortex AI, Claude Sonnet 4.5, Snowflake AI_PARSE_DOCUMENT,
-Snowflake Cortex Vector Search, SQL, YAML
+def _has_code(codeable_concept: dict | None, system: str, code: str) -> bool:
+    if not codeable_concept:
+        return False
+    for c in codeable_concept.get("coding") or []:
+        if c.get("system") == system and c.get("code") == code:
+            return True
+    return False
 
-**Overview:** An automated healthcare data processing pipeline built on Snowflake
-Cortex AI that analyzes Electronic Medical Records (EMRs) to evaluate patient
-compliance with HEDIS quality measures. Uses a RAG (Retrieval-Augmented
-Generation) architecture — embedding parsed EMR text into a vector store and
-retrieving only the most relevant clinical sections per measure before LLM
-extraction — to transform unstructured EMR PDF documents into validated,
-structured HEDIS measure outcomes at scale.
 
-**Roles & Responsibilities:**
-- Built an automated PDF ingestion pipeline to detect new EMR files from a
-  Snowflake stage and extract text using Snowflake's `AI_PARSE_DOCUMENT`.
-- Implemented a RAG architecture — chunking and embedding parsed EMR text with
-  Snowflake Cortex Vector Search to enable semantic retrieval of relevant
-  clinical sections per HEDIS measure, reducing prompt size and improving
-  extraction accuracy.
-- Designed measure-specific LLM prompts, grounded in retrieved evidence chunks,
-  to extract structured clinical information from unstructured EMR documents
-  across multiple HEDIS measures.
-- Implemented ICD code extraction to identify diagnosed conditions and map
-  relevant codes from clinical documentation.
-- Generated structured JSON summaries of patient demographics, diagnoses,
-  medications, and other clinical details.
-- Built a secondary LLM-based validation layer producing confidence scores and
-  an evidence matrix linking extracted data back to the retrieved source
-  chunks for auditability.
-- Designed idempotent upsert logic in Snowflake tables to prevent duplicate
-  records during reprocessing.
+def _verification_is_entered_in_error(resource: dict) -> bool:
+    return _has_code(resource.get("verificationStatus"), _VER_STATUS_SYSTEM, "entered-in-error")
+
+
+def ait_1_clinical_status_not_entered_in_error(resource: dict) -> list[dict]:
+    if resource.get("clinicalStatus") is not None and _verification_is_entered_in_error(resource):
+        return [issue(
+            "error", "invariant",
+            "ait-1: AllergyIntolerance.clinicalStatus SHALL NOT be present if "
+            "verificationStatus is entered-in-error.",
+            "AllergyIntolerance.clinicalStatus",
+        )]
+    return []
+
+
+def ait_2_clinical_status_required(resource: dict) -> list[dict]:
+    if resource.get("clinicalStatus") is not None:
+        return []
+    if _verification_is_entered_in_error(resource):
+        return []
+    return [issue(
+        "error", "invariant",
+        "ait-2: AllergyIntolerance.clinicalStatus SHALL be present if "
+        "verificationStatus is not entered-in-error.",
+        "AllergyIntolerance.clinicalStatus",
+    )]
+
+
+ALLERGYINTOLERANCE_INVARIANTS = [
+    ait_1_clinical_status_not_entered_in_error,
+    ait_2_clinical_status_required,
+]
+
+
+
+
+
+"""
+ServiceRequest invariants - https://hl7.org/fhir/R4B/servicerequest.html#invs
+
+  prr-1  orderDetail SHALL only be present if code is present
+
+Each fn(resource: dict) -> list[issue-dict]; empty list == OK.
+"""
+from __future__ import annotations
+
+from fhirpipeline.operationoutcome import issue
+
+
+def prr_1_order_detail_needs_code(resource: dict) -> list[dict]:
+    if resource.get("orderDetail") and not resource.get("code"):
+        return [issue(
+            "error", "invariant",
+            "prr-1: ServiceRequest.orderDetail SHALL only be present if "
+            "ServiceRequest.code is present.",
+            "ServiceRequest.orderDetail",
+        )]
+    return []
+
+
+SERVICEREQUEST_INVARIANTS = [
+    prr_1_order_detail_needs_code,
+]
+
+
+
+"""
+Condition invariants - https://hl7.org/fhir/R4B/condition.html#invs
+
+  con-3  clinicalStatus SHALL NOT be present if verificationStatus is
+         entered-in-error
+  con-4  if abatement[x] is present, clinicalStatus must be one of
+         resolved, remission, inactive
+  con-5  clinicalStatus SHALL be present if verificationStatus is not
+         entered-in-error and category is problem-list-item
+
+Each fn(resource: dict) -> list[issue-dict]; empty list == OK.
+"""
+from __future__ import annotations
+
+from fhirpipeline.operationoutcome import issue
+
+_VER_STATUS_SYSTEM = "http://terminology.hl7.org/CodeSystem/condition-ver-status"
+_CLINICAL_SYSTEM = "http://terminology.hl7.org/CodeSystem/condition-clinical"
+_CATEGORY_SYSTEM = "http://terminology.hl7.org/CodeSystem/condition-category"
+
+# Condition.abatement[x] choice element names (R4B).
+_ABATEMENT_X = (
+    "abatementDateTime", "abatementAge", "abatementPeriod",
+    "abatementRange", "abatementString",
+)
+
+
+def _has_code(codeable_concept: dict | None, system: str, code: str) -> bool:
+    if not codeable_concept:
+        return False
+    for c in codeable_concept.get("coding") or []:
+        if c.get("system") == system and c.get("code") == code:
+            return True
+    return False
+
+
+def _verification_is_entered_in_error(resource: dict) -> bool:
+    return _has_code(resource.get("verificationStatus"), _VER_STATUS_SYSTEM, "entered-in-error")
+
+
+def con_3_clinical_status_not_entered_in_error(resource: dict) -> list[dict]:
+    if resource.get("clinicalStatus") is not None and _verification_is_entered_in_error(resource):
+        return [issue(
+            "error", "invariant",
+            "con-3: Condition.clinicalStatus SHALL NOT be present if "
+            "verificationStatus is entered-in-error.",
+            "Condition.clinicalStatus",
+        )]
+    return []
+
+
+def con_4_abatement_needs_closed_clinical_status(resource: dict) -> list[dict]:
+    present_abatement = [k for k in _ABATEMENT_X if resource.get(k) is not None]
+    if not present_abatement:
+        return []
+    clinical_status = resource.get("clinicalStatus")
+    if not any(_has_code(clinical_status, _CLINICAL_SYSTEM, code)
+               for code in ("resolved", "remission", "inactive")):
+        return [issue(
+            "error", "invariant",
+            "con-4: Condition.clinicalStatus SHALL be resolved, remission, or "
+            f"inactive when abatement is present (found {', '.join(present_abatement)}).",
+            "Condition.abatement[x]",
+        )]
+    return []
+
+
+def con_5_clinical_status_needed_for_problem_list(resource: dict) -> list[dict]:
+    if resource.get("clinicalStatus") is not None:
+        return []
+    if _verification_is_entered_in_error(resource):
+        return []
+    for cat in resource.get("category") or []:
+        if _has_code(cat, _CATEGORY_SYSTEM, "problem-list-item"):
+            return [issue(
+                "error", "invariant",
+                "con-5: Condition.clinicalStatus SHALL be present when category "
+                "is problem-list-item and verificationStatus is not entered-in-error.",
+                "Condition.clinicalStatus",
+            )]
+    return []
+
+
+CONDITION_INVARIANTS = [
+    con_3_clinical_status_not_entered_in_error,
+    con_4_abatement_needs_closed_clinical_status,
+    con_5_clinical_status_needed_for_problem_list,
+]
