@@ -1,180 +1,435 @@
 """
-AllergyIntolerance invariants - https://hl7.org/fhir/R4B/allergyintolerance.html#invs
+Resource registry: one place that describes every FHIR resource type the
+pipeline handles - collection name, conformance profile, required elements,
+value-set bindings, cross-element invariants, duplicate-detection key, and
+search parameters.
 
-  ait-1  clinicalStatus SHALL NOT be present if verificationStatus is
-         entered-in-error
-  ait-2  clinicalStatus SHALL be present if verificationStatus is not
-         entered-in-error
+This is DATA, not logic. Downstream layers read it:
+    - dispatch (step 6)      -> is this a supported resourceType?
+    - validate (step 5)      -> required_fields / value_sets / invariants / profile
+    - persistence (step 8)   -> collection / duplicate_key_fn / search_params
 
-Each fn(resource: dict) -> list[issue-dict]; empty list == OK.
+Adding a new resource type = one RESOURCE_REGISTRY entry, nothing else.
+
+Pure stdlib - no flask, no fhir.resources.
 """
 from __future__ import annotations
 
-from fhirpipeline.operationoutcome import issue
+from dataclasses import dataclass, field
+from typing import Callable
 
-_VER_STATUS_SYSTEM = "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification"
+from fhirpipeline.invariants.observation import OBSERVATION_INVARIANTS
+from fhirpipeline.invariants.servicerequest import SERVICEREQUEST_INVARIANTS
+from fhirpipeline.invariants.condition import CONDITION_INVARIANTS
+from fhirpipeline.invariants.allergyintolerance import ALLERGYINTOLERANCE_INVARIANTS
 
-
-def _has_code(codeable_concept: dict | None, system: str, code: str) -> bool:
-    if not codeable_concept:
-        return False
-    for c in codeable_concept.get("coding") or []:
-        if c.get("system") == system and c.get("code") == code:
-            return True
-    return False
-
-
-def _verification_is_entered_in_error(resource: dict) -> bool:
-    return _has_code(resource.get("verificationStatus"), _VER_STATUS_SYSTEM, "entered-in-error")
-
-
-def ait_1_clinical_status_not_entered_in_error(resource: dict) -> list[dict]:
-    if resource.get("clinicalStatus") is not None and _verification_is_entered_in_error(resource):
-        return [issue(
-            "error", "invariant",
-            "ait-1: AllergyIntolerance.clinicalStatus SHALL NOT be present if "
-            "verificationStatus is entered-in-error.",
-            "AllergyIntolerance.clinicalStatus",
-        )]
-    return []
+# ---------------------------------------------------------------------------
+# value sets that apply to every resource (FHIR datatype-level bindings)
+# ---------------------------------------------------------------------------
+COMMON_VALUE_SETS: dict[str, set[str]] = {
+    "telecom.system": {"phone", "fax", "email", "pager", "url", "sms", "other"},
+    "identifier.use": {"usual", "official", "temp", "secondary", "old"},
+    "name.use": {"usual", "official", "temp", "nickname", "anonymous", "old", "maiden"},
+}
 
 
-def ait_2_clinical_status_required(resource: dict) -> list[dict]:
-    if resource.get("clinicalStatus") is not None:
-        return []
-    if _verification_is_entered_in_error(resource):
-        return []
-    return [issue(
-        "error", "invariant",
-        "ait-2: AllergyIntolerance.clinicalStatus SHALL be present if "
-        "verificationStatus is not entered-in-error.",
-        "AllergyIntolerance.clinicalStatus",
-    )]
+# ---------------------------------------------------------------------------
+# ResourceSpec
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ResourceSpec:
+    """Everything the pipeline needs to know about one FHIR resource type."""
+
+    resource_type: str
+    collection: str
+    # Conformance profile URL to validate against (US Core / IPS / ABDM / ...).
+    # None = base-spec structural validation only.
+    profile: str | None = None
+    # Each item is either a field name, or a tuple of field names meaning
+    # "at least one of these must be present" (choice-type / [x] elements).
+    required_fields: list = field(default_factory=list)
+    # dot-path -> allowed values, e.g. "status" or "code.coding.code".
+    value_sets: dict[str, set[str]] = field(default_factory=dict)
+    # cross-element invariant checks (obs-6, obs-7, ...). Added in step 5-6;
+    # each is  fn(resource_dict) -> list[issue-dict]  (empty list = OK).
+    invariants: list[Callable[[dict], list[dict]]] = field(default_factory=list)
+    # fn(resource_dict) -> Mongo query dict, or None if no business key can be
+    # formed. Only run on create.
+    duplicate_key_fn: Callable[[dict], dict | None] | None = None
+    # search param name -> Mongo field path (on the stored document).
+    search_params: dict[str, str] = field(default_factory=dict)
 
 
-ALLERGYINTOLERANCE_INVARIANTS = [
-    ait_1_clinical_status_not_entered_in_error,
-    ait_2_clinical_status_required,
-]
+# ---------------------------------------------------------------------------
+# duplicate-key functions (pure - no DB, no flask)
+# ---------------------------------------------------------------------------
+def observation_duplicate_key(resource: dict) -> dict | None:
+    """
+    Business key for Observation: same subject + same code + same effective
+    instant. Returns None when there isn't enough to form a key (caller then
+    falls back to id-only dedup).
+    """
+    subject_ref = (resource.get("subject") or {}).get("reference")
+    codings = (resource.get("code") or {}).get("coding") or []
+    if not subject_ref or not codings:
+        return None
+
+    coding = codings[0]
+    code = coding.get("code")
+    if not code:
+        return None
+    system = coding.get("system")
+
+    effective = (resource.get("effectiveDateTime")
+                 or (resource.get("effectivePeriod") or {}).get("start"))
+    if not effective:
+        return None
+
+    query: dict = {
+        "DeletedFlag": 0,
+        "ResourceData.subject.reference": subject_ref,
+        "ResourceData.code.coding.code": code,
+        "$or": [
+            {"ResourceData.effectiveDateTime": effective},
+            {"ResourceData.effectivePeriod.start": effective},
+        ],
+    }
+    if system:
+        query["ResourceData.code.coding.system"] = system
+    return query
 
 
+def condition_duplicate_key(resource: dict) -> dict | None:
+    """
+    Business key for Condition: same subject + same code + same onset.
+    Returns None when there isn't enough to form a key (caller then falls
+    back to id-only dedup).
+    """
+    subject_ref = (resource.get("subject") or {}).get("reference")
+    codings = (resource.get("code") or {}).get("coding") or []
+    if not subject_ref or not codings:
+        return None
+
+    coding = codings[0]
+    code = coding.get("code")
+    if not code:
+        return None
+    system = coding.get("system")
+
+    onset = (resource.get("onsetDateTime")
+             or (resource.get("onsetPeriod") or {}).get("start"))
+    if not onset:
+        return None
+
+    query: dict = {
+        "DeletedFlag": 0,
+        "ResourceData.subject.reference": subject_ref,
+        "ResourceData.code.coding.code": code,
+        "$or": [
+            {"ResourceData.onsetDateTime": onset},
+            {"ResourceData.onsetPeriod.start": onset},
+        ],
+    }
+    if system:
+        query["ResourceData.code.coding.system"] = system
+    return query
 
 
+def allergyintolerance_duplicate_key(resource: dict) -> dict | None:
+    """
+    Business key for AllergyIntolerance: same patient + same code + same
+    recordedDate. Returns None when there isn't enough to form a key (caller
+    then falls back to id-only dedup).
+    """
+    patient_ref = (resource.get("patient") or {}).get("reference")
+    codings = (resource.get("code") or {}).get("coding") or []
+    if not patient_ref or not codings:
+        return None
 
-"""
-ServiceRequest invariants - https://hl7.org/fhir/R4B/servicerequest.html#invs
+    coding = codings[0]
+    code = coding.get("code")
+    if not code:
+        return None
+    system = coding.get("system")
 
-  prr-1  orderDetail SHALL only be present if code is present
+    recorded = resource.get("recordedDate")
+    if not recorded:
+        return None
 
-Each fn(resource: dict) -> list[issue-dict]; empty list == OK.
-"""
-from __future__ import annotations
-
-from fhirpipeline.operationoutcome import issue
-
-
-def prr_1_order_detail_needs_code(resource: dict) -> list[dict]:
-    if resource.get("orderDetail") and not resource.get("code"):
-        return [issue(
-            "error", "invariant",
-            "prr-1: ServiceRequest.orderDetail SHALL only be present if "
-            "ServiceRequest.code is present.",
-            "ServiceRequest.orderDetail",
-        )]
-    return []
-
-
-SERVICEREQUEST_INVARIANTS = [
-    prr_1_order_detail_needs_code,
-]
-
-
-
-"""
-Condition invariants - https://hl7.org/fhir/R4B/condition.html#invs
-
-  con-3  clinicalStatus SHALL NOT be present if verificationStatus is
-         entered-in-error
-  con-4  if abatement[x] is present, clinicalStatus must be one of
-         resolved, remission, inactive
-  con-5  clinicalStatus SHALL be present if verificationStatus is not
-         entered-in-error and category is problem-list-item
-
-Each fn(resource: dict) -> list[issue-dict]; empty list == OK.
-"""
-from __future__ import annotations
-
-from fhirpipeline.operationoutcome import issue
-
-_VER_STATUS_SYSTEM = "http://terminology.hl7.org/CodeSystem/condition-ver-status"
-_CLINICAL_SYSTEM = "http://terminology.hl7.org/CodeSystem/condition-clinical"
-_CATEGORY_SYSTEM = "http://terminology.hl7.org/CodeSystem/condition-category"
-
-# Condition.abatement[x] choice element names (R4B).
-_ABATEMENT_X = (
-    "abatementDateTime", "abatementAge", "abatementPeriod",
-    "abatementRange", "abatementString",
-)
+    query: dict = {
+        "DeletedFlag": 0,
+        "ResourceData.patient.reference": patient_ref,
+        "ResourceData.code.coding.code": code,
+        "ResourceData.recordedDate": recorded,
+    }
+    if system:
+        query["ResourceData.code.coding.system"] = system
+    return query
 
 
-def _has_code(codeable_concept: dict | None, system: str, code: str) -> bool:
-    if not codeable_concept:
-        return False
-    for c in codeable_concept.get("coding") or []:
-        if c.get("system") == system and c.get("code") == code:
-            return True
-    return False
+# ---------------------------------------------------------------------------
+# the registry - Diagnostic Module (data carried over from
+# utils/fhir_validation/config.py) + Clinical Module
+# ---------------------------------------------------------------------------
+# Observation.status - required binding (ObservationStatus)
+# https://hl7.org/fhir/R4B/valueset-observation-status.html
+_OBSERVATION_STATUS = {
+    "registered", "preliminary", "final", "amended",
+    "corrected", "cancelled", "entered-in-error", "unknown",
+}
+# Observation.category - preferred binding (observation-category)
+# https://hl7.org/fhir/R4B/valueset-observation-category.html
+_OBSERVATION_CATEGORY = {
+    "social-history", "vital-signs", "imaging", "laboratory",
+    "procedure", "survey", "exam", "therapy", "activity",
+}
+# Observation.referenceRange.type - preferred binding (referencerange-meaning)
+# https://hl7.org/fhir/R4B/valueset-referencerange-meaning.html
+_REFERENCERANGE_MEANING = {
+    "type", "normal", "recommended", "treatment", "target", "pre", "post",
+}
+# Quantity.comparator - required binding (QuantityComparator, R4B).
+# Datatype-level: applies to Observation.valueQuantity + component.valueQuantity
+# (referenceRange.low/high are SimpleQuantity, where comparator is prohibited).
+_QTY_COMPARATOR = {"<", "<=", ">=", ">"}
+_DIAGNOSTICREPORT_STATUS = {
+    "registered", "partial", "preliminary", "final", "amended",
+    "corrected", "appended", "cancelled", "entered-in-error", "unknown",
+}
+_IMAGINGSTUDY_STATUS = {"registered", "available", "cancelled", "entered-in-error", "unknown"}
+# DocumentReference.status - required binding (document-reference-status)
+_DOCUMENTREFERENCE_STATUS = {"current", "superseded", "entered-in-error"}
+# DocumentReference.docStatus - required binding (composition-status, R4B)
+_DOCUMENTREFERENCE_DOCSTATUS = {"preliminary", "final", "amended", "entered-in-error"}
+# DocumentReference.relatesTo.code - required binding (document-relationship-type)
+_DOCUMENTREFERENCE_RELATESTO = {"replaces", "transforms", "signs", "appends"}
+_SERVICEREQUEST_STATUS = {
+    "draft", "active", "on-hold", "revoked", "completed", "entered-in-error", "unknown",
+}
+_SERVICEREQUEST_INTENT = {
+    "proposal", "plan", "directive", "order", "original-order",
+    "reflex-order", "filler-order", "instance-order", "option",
+}
+_SERVICEREQUEST_PRIORITY = {"routine", "urgent", "asap", "stat"}
+# Condition.clinicalStatus - required binding (condition-clinical)
+# https://hl7.org/fhir/R4B/valueset-condition-clinical.html
+_CONDITION_CLINICAL_STATUS = {
+    "active", "recurrence", "relapse", "inactive", "remission", "resolved",
+}
+# Condition.verificationStatus - required binding (condition-ver-status)
+# https://hl7.org/fhir/R4B/valueset-condition-ver-status.html
+_CONDITION_VERIFICATION_STATUS = {
+    "unconfirmed", "provisional", "differential", "confirmed", "refuted",
+    "entered-in-error",
+}
+# Condition.category - preferred binding (condition-category)
+# https://hl7.org/fhir/R4B/valueset-condition-category.html
+_CONDITION_CATEGORY = {"problem-list-item", "encounter-diagnosis"}
+# AllergyIntolerance.clinicalStatus - required binding (allergyintolerance-clinical)
+# https://hl7.org/fhir/R4B/valueset-allergyintolerance-clinical.html
+_ALLERGYINTOLERANCE_CLINICAL_STATUS = {"active", "inactive", "resolved"}
+# AllergyIntolerance.verificationStatus - required binding (allergyintolerance-verification)
+# https://hl7.org/fhir/R4B/valueset-allergyintolerance-verification.html
+_ALLERGYINTOLERANCE_VERIFICATION_STATUS = {
+    "unconfirmed", "presumed", "confirmed", "refuted", "entered-in-error",
+}
+# AllergyIntolerance.type - required binding (allergy-intolerance-type)
+_ALLERGYINTOLERANCE_TYPE = {"allergy", "intolerance"}
+# AllergyIntolerance.category - required binding (allergy-intolerance-category)
+_ALLERGYINTOLERANCE_CATEGORY = {"food", "medication", "environment", "biologic"}
+# AllergyIntolerance.criticality - required binding (allergy-intolerance-criticality)
+_ALLERGYINTOLERANCE_CRITICALITY = {"low", "high", "unable-to-assess"}
+
+_COMMON_SEARCH = {
+    "_id": "ResourceId",
+    "identifier": "ResourceData.identifier.value",
+    "status": "ResourceData.status",
+    "subject": "ResourceData.subject.reference",
+    "patient": "ResourceData.subject.reference",
+    "code": "ResourceData.code.coding.code",
+}
+# AllergyIntolerance keys its person-reference on `patient`, not `subject`.
+_ALLERGYINTOLERANCE_SEARCH = {
+    "_id": "ResourceId",
+    "identifier": "ResourceData.identifier.value",
+    "clinical-status": "ResourceData.clinicalStatus.coding.code",
+    "subject": "ResourceData.patient.reference",
+    "patient": "ResourceData.patient.reference",
+    "code": "ResourceData.code.coding.code",
+}
+
+RESOURCE_REGISTRY: dict[str, ResourceSpec] = {
+    # https://hl7.org/fhir/R4B/observation.html
+    "Observation": ResourceSpec(
+        resource_type="Observation",
+        collection="Observation",
+        # spec min=1: Observation.status (1..1), Observation.code (1..1).
+        # subject is 0..1 in R4B, so it is NOT required here.
+        required_fields=["status", "code"],
+        value_sets={
+            # status - required binding, enforced strictly
+            "status": _OBSERVATION_STATUS,
+            # valueQuantity.comparator - required binding, checked only when sent
+            "valueQuantity.comparator": _QTY_COMPARATOR,
+            "component.valueQuantity.comparator": _QTY_COMPARATOR,
+            # category / referenceRange.type - preferred bindings, checked only
+            # when sent. NOTE: _check_value_sets is system-blind, so a legitimate
+            # secondary coding from a non-HL7 system on the same concept would be
+            # flagged.
+            "category.coding.code": _OBSERVATION_CATEGORY,
+            "referenceRange.type.coding.code": _REFERENCERANGE_MEANING,
+            "component.referenceRange.type.coding.code": _REFERENCERANGE_MEANING,
+        },
+        # obs-3  each referenceRange has a low, a high, or text
+        # obs-6  dataAbsentReason only when value[x] is absent
+        # obs-7  code == a component.code  =>  no top-level value[x]
+        # (local) carries a result somewhere            -> warning only
+        # code / bodySite / method are example bindings; dataAbsentReason /
+        # interpretation are extensible bindings in R4B - none are hard-enforced.
+        invariants=list(OBSERVATION_INVARIANTS),
+        duplicate_key_fn=observation_duplicate_key,
+        search_params=dict(_COMMON_SEARCH),
+    ),
+    # https://hl7.org/fhir/R4B/diagnosticreport.html
+    "DiagnosticReport": ResourceSpec(
+        resource_type="DiagnosticReport",
+        collection="DiagnosticReport",
+        # spec min=1: DiagnosticReport.status (1..1), DiagnosticReport.code (1..1).
+        required_fields=["status", "code"],
+        value_sets={
+            # status - required binding, enforced strictly
+            "status": _DIAGNOSTICREPORT_STATUS,
+        },
+        # code (preferred, LOINC), category / conclusionCode (example) are not
+        # enumerable and are not hard-enforced. R4B lists no constraint invariants.
+        search_params=dict(_COMMON_SEARCH),
+    ),
+    # https://hl7.org/fhir/R4B/servicerequest.html
+    "ServiceRequest": ResourceSpec(
+        resource_type="ServiceRequest",
+        collection="ServiceRequest",
+        # spec min=1: status (1..1), intent (1..1), subject (1..1).
+        required_fields=["status", "intent", "subject"],
+        value_sets={
+            # status / intent - required bindings, enforced strictly
+            "status": _SERVICEREQUEST_STATUS,
+            "intent": _SERVICEREQUEST_INTENT,
+            # priority - required binding, but the element is 0..1: checked only
+            # when a priority is sent
+            "priority": _SERVICEREQUEST_PRIORITY,
+            # quantityQuantity.comparator - required binding, checked only when sent
+            "quantityQuantity.comparator": _QTY_COMPARATOR,
+        },
+        # prr-1: orderDetail only if code is present.
+        # code / category / bodySite / reasonCode are example bindings - not
+        # hard-enforced.
+        invariants=list(SERVICEREQUEST_INVARIANTS),
+        search_params=dict(_COMMON_SEARCH),
+    ),
+    # https://hl7.org/fhir/R4B/documentreference.html
+    "DocumentReference": ResourceSpec(
+        resource_type="DocumentReference",
+        collection="DocumentReference",
+        # spec min=1: status (1..1), content (1..*).
+        required_fields=["status", "content"],
+        value_sets={
+            # status - required binding, enforced strictly
+            "status": _DOCUMENTREFERENCE_STATUS,
+            # docStatus - required binding, element is 0..1: checked only when sent
+            "docStatus": _DOCUMENTREFERENCE_DOCSTATUS,
+            # relatesTo.code - required binding, mandatory inside each relatesTo
+            "relatesTo.code": _DOCUMENTREFERENCE_RELATESTO,
+        },
+        # type (preferred, LOINC), category / context.* (example), securityLabel
+        # (extensible) are not hard-enforced. R4B lists no constraint invariants.
+        search_params={k: v for k, v in _COMMON_SEARCH.items() if k != "code"},
+    ),
+    # https://hl7.org/fhir/R4B/imagingstudy.html
+    "ImagingStudy": ResourceSpec(
+        resource_type="ImagingStudy",
+        collection="ImagingStudy",
+        # spec min=1: status (1..1), subject (1..1).
+        required_fields=["status", "subject"],
+        value_sets={
+            # status - required binding, enforced strictly
+            "status": _IMAGINGSTUDY_STATUS,
+        },
+        # modality / series.modality / procedureCode / sopClass are extensible
+        # DICOM bindings; laterality / bodySite are example - none are
+        # hard-enforced. R4B lists no constraint invariants.
+        search_params={k: v for k, v in _COMMON_SEARCH.items() if k != "code"},
+    ),
+    # -----------------------------------------------------------------------
+    # Clinical Module - patient-level clinical record resources (problems /
+    # allergies), as opposed to the Diagnostic Module's order/result resources.
+    # -----------------------------------------------------------------------
+    # https://hl7.org/fhir/R4B/condition.html
+    "Condition": ResourceSpec(
+        resource_type="Condition",
+        collection="Condition",
+        # spec min=1: Condition.subject (1..1). clinicalStatus / verificationStatus
+        # / code are 0..1 in R4B, enforced conditionally via con-3/con-4/con-5 and
+        # value-set bindings below rather than as hard-required elements.
+        required_fields=["subject"],
+        value_sets={
+            # clinicalStatus / verificationStatus - required bindings, checked
+            # only when sent (both are 0..1 elements)
+            "clinicalStatus.coding.code": _CONDITION_CLINICAL_STATUS,
+            "verificationStatus.coding.code": _CONDITION_VERIFICATION_STATUS,
+            # category - preferred binding, checked only when sent
+            "category.coding.code": _CONDITION_CATEGORY,
+        },
+        # con-3  clinicalStatus SHALL NOT be present if verificationStatus is
+        #        entered-in-error
+        # con-4  abatement[x] present => clinicalStatus is resolved/remission/inactive
+        # con-5  clinicalStatus required when category is problem-list-item and
+        #        verificationStatus is not entered-in-error
+        # code (example binding), severity / bodySite / stage (example) are not
+        # hard-enforced.
+        invariants=list(CONDITION_INVARIANTS),
+        duplicate_key_fn=condition_duplicate_key,
+        search_params=dict(_COMMON_SEARCH),
+    ),
+    # https://hl7.org/fhir/R4B/allergyintolerance.html
+    "AllergyIntolerance": ResourceSpec(
+        resource_type="AllergyIntolerance",
+        collection="AllergyIntolerance",
+        # spec min=1: AllergyIntolerance.patient (1..1). clinicalStatus /
+        # verificationStatus / type / category / criticality / code are all
+        # 0..1 or 0..* in R4B, enforced conditionally via ait-1/ait-2 and the
+        # value-set bindings below rather than as hard-required elements.
+        required_fields=["patient"],
+        value_sets={
+            # clinicalStatus / verificationStatus - required bindings, checked
+            # only when sent (both are 0..1 elements)
+            "clinicalStatus.coding.code": _ALLERGYINTOLERANCE_CLINICAL_STATUS,
+            "verificationStatus.coding.code": _ALLERGYINTOLERANCE_VERIFICATION_STATUS,
+            # type - required binding, element is 0..1: checked only when sent
+            "type": _ALLERGYINTOLERANCE_TYPE,
+            # category - required binding, element is 0..*: checked only when sent
+            "category": _ALLERGYINTOLERANCE_CATEGORY,
+            # criticality - required binding, element is 0..1: checked only when sent
+            "criticality": _ALLERGYINTOLERANCE_CRITICALITY,
+        },
+        # ait-1  clinicalStatus SHALL NOT be present if verificationStatus is
+        #        entered-in-error
+        # ait-2  clinicalStatus required when verificationStatus is not
+        #        entered-in-error
+        # code (extensible, RxNorm/SNOMED), reaction.substance / reaction.manifestation
+        # (example) are not hard-enforced.
+        invariants=list(ALLERGYINTOLERANCE_INVARIANTS),
+        duplicate_key_fn=allergyintolerance_duplicate_key,
+        search_params=dict(_ALLERGYINTOLERANCE_SEARCH),
+    ),
+}
 
 
-def _verification_is_entered_in_error(resource: dict) -> bool:
-    return _has_code(resource.get("verificationStatus"), _VER_STATUS_SYSTEM, "entered-in-error")
+def get_spec(resource_type: str | None) -> ResourceSpec | None:
+    """ResourceSpec for a resourceType, or None if the pipeline does not handle it."""
+    if not resource_type:
+        return None
+    return RESOURCE_REGISTRY.get(resource_type)
 
 
-def con_3_clinical_status_not_entered_in_error(resource: dict) -> list[dict]:
-    if resource.get("clinicalStatus") is not None and _verification_is_entered_in_error(resource):
-        return [issue(
-            "error", "invariant",
-            "con-3: Condition.clinicalStatus SHALL NOT be present if "
-            "verificationStatus is entered-in-error.",
-            "Condition.clinicalStatus",
-        )]
-    return []
-
-
-def con_4_abatement_needs_closed_clinical_status(resource: dict) -> list[dict]:
-    present_abatement = [k for k in _ABATEMENT_X if resource.get(k) is not None]
-    if not present_abatement:
-        return []
-    clinical_status = resource.get("clinicalStatus")
-    if not any(_has_code(clinical_status, _CLINICAL_SYSTEM, code)
-               for code in ("resolved", "remission", "inactive")):
-        return [issue(
-            "error", "invariant",
-            "con-4: Condition.clinicalStatus SHALL be resolved, remission, or "
-            f"inactive when abatement is present (found {', '.join(present_abatement)}).",
-            "Condition.abatement[x]",
-        )]
-    return []
-
-
-def con_5_clinical_status_needed_for_problem_list(resource: dict) -> list[dict]:
-    if resource.get("clinicalStatus") is not None:
-        return []
-    if _verification_is_entered_in_error(resource):
-        return []
-    for cat in resource.get("category") or []:
-        if _has_code(cat, _CATEGORY_SYSTEM, "problem-list-item"):
-            return [issue(
-                "error", "invariant",
-                "con-5: Condition.clinicalStatus SHALL be present when category "
-                "is problem-list-item and verificationStatus is not entered-in-error.",
-                "Condition.clinicalStatus",
-            )]
-    return []
-
-
-CONDITION_INVARIANTS = [
-    con_3_clinical_status_not_entered_in_error,
-    con_4_abatement_needs_closed_clinical_status,
-    con_5_clinical_status_needed_for_problem_list,
-]
+def is_supported(resource_type: str | None) -> bool:
+    return get_spec(resource_type) is not None
