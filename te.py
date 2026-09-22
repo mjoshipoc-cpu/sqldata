@@ -67,7 +67,9 @@ Project overview: A GenAI-assisted tool that flags members with care gaps (lever
 Roles & Responsibilities:
 Sourced and joined publicly available SDOH indicators with existing Gap-in-Care SQL data at the member/geography level.
 Built SQL views combining clinical risk flags with SDOH risk scores for a unified member risk profile.
-Built an XGBoost  classification model to generate Basic Score (clinical only) and Full Score (clinical + SDOH) risk predictions, evaluated using AUC/ F1score.
+Built an XGBoost  git add .
+2
+git commit -m "Updated files"classification model to generate Basic Score (clinical only) and Full Score (clinical + SDOH) risk predictions, evaluated using AUC/ F1score.
 Analyzed feature weightage to identify top clinical and SDOH drivers contributing to member risk.
 Designed prompt templates to generate a short, actionable outreach summary per member/cohort using an LLM API.
 Added a human-review step so care managers approve/edit AI-generated summaries before outreach.
