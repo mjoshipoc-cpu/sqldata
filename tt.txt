@@ -1,1 +1,193 @@
-Otherwise, high starts indicators, ninety three, eighty seven, to almost exactly no restarting price decided no, ninety two point nine khola ninety two point four nine though, it's ninety point six six almost point sixp point ninety lug red red reversal,maximum times, forty four band sandal confrontation, masilla, sideways, but stopletting the stocks,dodrivers rope zero. Most leg to see holding state in a stock of chance to ret fond its own reduced means either running a temporarily difference or market as something probability zero percent balanced the company has been emerging dividend fundamental written ratio RB funding the very IP additional stock is not cheap on the coal case there stands to build around the negative capitalist government is investment balance sheet delivering rather than the state of missions about playing up no point human, for a case. Mongo John Purk Centerin State issue to never store front, Ismai, Xl mine offshore as a Its, mera offshore, whether us p I debts modifying. Court card U case tests, most little sunset or vheres to me, maybe you start step, wow test cases walking file to do shell even, mango license project, mening observation, imaging study, drag somaybe, but me to net hosman setupusi, but baking me dollar huh structure nort licha me, repo number, spina, s R S R C test plura, Ismae, pulli testing, steps. Real dvi no second last, you know, spine, scroll down, Sample A Pice, connection mara, so many se marath file connectivity, sharing, to bake smart, resource no atah no, basic host, but module, usual, matter injustline, so it's resource condition condition
+graph TB
+ 
+    subgraph "Databricks Workspace"
+ 
+        subgraph "Input Layer"
+            VOL["UC Volume<br/>/Volumes/aiagenticdemo/<br/>hedisabstractor/landing_pdf"]
+            SPECS["specifications_data_table<br/>HEDIS Measure Specs<br/>Eligibility, Exclusions, Lookback"]
+        end
+ 
+        subgraph "Core Pipeline: hedis_pipeline_engine"
+            INGEST["PDF Ingestion &amp; Dedup Check<br/>• List files in landing volume<br/>• Filter against processed_pdf_log<br/>• Derive Member_id from filename<br/>  last 4 numeric digits"]
+ 
+            LOG["processed_pdf_log<br/>Deduplication Control<br/>• filename, Insert_Date"]
+ 
+            PARSE["Text Extraction<br/>ai_parse_document<br/>• DBR 17.1+ / Serverless<br/>"]
+ 
+            PROMPT["Prompt Engine<br/>• Measure-specific prompts<br/>• JSON output schemas<br/>• Clinical extraction rules<br/>• NF sentinel = Not Found"]
+ 
+            SUMMARY_GEN["Summary Generation<br/>• Structured JSON summary<br/>• Demographics, Diagnoses,<br/>  Medications, Labs, Lifestyle<br/>• Upsert by filename"]
+ 
+            EXTRACT["Measure Extraction Engine<br/>• OpenAI GPT-4-turbo /<br/>  Claude Sonnet 4.5<br/>• logprobs enabled<br/>• Structured JSON output<br/>• Per-measure prompts"]
+ 
+            VALIDATE["Validation &amp; Insertion<br/>• check_and_add_missing_keys<br/>• Fill missing fields with NR<br/>• Append Process mode<br/>  Single / Batch Processing<br/>• Append Confidence_Score"]
+ 
+            CONFIDENCE["Confidence Engine<br/>• avg exp logprob_sum x 100<br/>• 89.23% fallback if negative<br/>• Per-measure per-file scores<br/>• Only on live API calls"]
+ 
+            STATS_NODE["Stats &amp; Timing<br/>• Measure, Start, End, Duration<br/>• Accuracy per extraction<br/>• FileName, Member_Id"]
+        end
+ 
+        subgraph "Measure Tables — Active"
+            MI["memberinfo<br/>Demographics Fact Table<br/>Join key: Member_id + FileID"]
+            BCS["bcs<br/>Breast Cancer Screening"]
+            CBP["cbp<br/>Controlling High BP"]
+            HBD["hbd<br/>HbA1c Diabetes"]
+            BPD["bpd<br/>BP for Diabetics"]
+            EED["eed<br/>Eye Exam Diabetics"]
+        end
+ 
+        subgraph "Measure Tables — Inactive / Toggled Off"
+            CCS["ccs<br/>Cervical Cancer Screening"]
+            COL["col<br/>Colorectal Cancer Screening"]
+            LSD["lsd<br/>Lead Screening Children"]
+            PPC["ppc<br/>Prenatal Postpartum Care"]
+        end
+ 
+        subgraph "Intermediate / Audit Tables"
+            PDF_BIN["pdf_binary_table<br/>Binary PDF Archive<br/>"]
+            SUMMARY["summary_data_table<br/> JSON Summaries<br/>filename, measurement_year,<br/>content JSON, raw_text"]
+            CONF["confidence_score<br/>measure, score pct, filename"]
+            FILE_INFO["file_info<br/>FileID, Pdf_location,<br/>Measurement_Year, Process"]
+            GAP_TBL["gap<br/>Per-member gap flags<br/>BCS/COL/BPD/CBP/HBD/<br/>EED/IMA/CCS/LSD/PPC"]
+            EMB["Summary_data_table"]
+            EMB_IDX["Summarization text<br/> Raw Text"]
+        end
+ 
+        subgraph "UI Layer"
+ 
+            PG_REVIEW["Review_member.py<br/>• Select member by Member_id / FileID<br/>• Display memberinfo demographics<br/>• Show per-measure extracted fields<br/>  with page_No provenance<br/>• Side-by-side PDF viewer<br/>• Edit / correct extracted values<br/>• Set Review_Completed = Yes<br/>• Write corrections back to Delta"]
+ 
+            PG_SUMCHAT["summarization &amp; chat.py<br/>• Display JSON summaries<br/>  Demographics, Diagnoses,<br/>  Medications, Labs, Lifestyle<br/>• Conversational Q&amp;A on<br/>  patient clinical records<br/>• Calls Claude Sonnet 4.5 Databricks Endpoint for<br/>  chat completions"]
+ 
+            PG_DATAREPO["Data_repository.py<br/>• Browse all measure tables<br/>• Filter by member,<br/> measure,  measurement <br/>year<br/>• View file_info metadata<br/>• Export / download data<br/>• Read-only data <br/>exploration"]
+ 
+            PG_APPSTATS["App_statistics.py<br/>• Processing metrics<br/> dashboard<br/>• Extraction duration <br/>analytics<br/>• Accuracy trends per <br/>measure<br/>• Confidence score<br/> distributions<br/>• Files processed count<br/>• Per-measure volume<br/> breakdown"]
+ 
+        end
+ 
+    end
+ 
+    subgraph "External Services — Databricks Endpoint"
+        OAI["Model Serving Endpoint<br/>GPT-4-turbo / Claude Sonnet 4.5<br/>• Chat Completions API<br/>• logprobs = true<br/>• Structured JSON response"]
+    end
+ 
+    %% === INPUT FLOW ===
+    VOL --> INGEST
+    SPECS --> PROMPT
+ 
+    %% === DEDUP CHECK (bidirectional) ===
+    LOG -- "read: already<br/>processed files" --> INGEST
+    INGEST -- "write: mark<br/>file processed" --> LOG
+ 
+    %% === TEXT EXTRACTION ===
+    INGEST --> PARSE
+    PARSE --> PDF_BIN
+    PARSE --> PROMPT
+ 
+    %% === SUMMARY GENERATION (before measure extraction) ===
+    PROMPT --> SUMMARY_GEN
+    SUMMARY_GEN --> OAI
+    OAI --> SUMMARY_GEN
+    SUMMARY_GEN --> SUMMARY
+ 
+    %% === MEASURE EXTRACTION ===
+    PROMPT --> EXTRACT
+    EXTRACT --> OAI
+    OAI --> EXTRACT
+ 
+    %% === VALIDATION & INSERTION ===
+    EXTRACT --> VALIDATE
+    VALIDATE --> CONFIDENCE
+    CONFIDENCE --> CONF
+ 
+    %% === WRITE TO ACTIVE MEASURE TABLES ===
+    VALIDATE --> MI
+    VALIDATE --> BCS
+    VALIDATE --> CBP
+    VALIDATE --> HBD
+    VALIDATE --> BPD
+    VALIDATE --> EED
+ 
+    %% === WRITE TO INACTIVE MEASURE TABLES (when toggled on) ===
+    VALIDATE -.-> CCS
+    VALIDATE -.-> COL
+    VALIDATE -.-> LSD
+    VALIDATE -.-> PPC
+ 
+    %% === AUDIT & TRACKING ===
+    INGEST --> FILE_INFO
+    EXTRACT --> STATS_NODE
+ 
+    %% === GAP EVALUATION (downstream from measure tables) ===
+    MI --> GAP_TBL
+    BCS --> GAP_TBL
+    CBP --> GAP_TBL
+    HBD --> GAP_TBL
+    BPD --> GAP_TBL
+    EED --> GAP_TBL
+ 
+    %% === EMBEDDINGS (generated during text extraction) ===
+    PARSE --> EMB
+    EMB --> EMB_IDX
+ 
+    %% =============================================
+    %% === UI SCRIPTS — DATA CONNECTIONS ===
+    %% =============================================
+ 
+    %% === Review_member.py ===
+    %% Reads measure tables + memberinfo for review; reads PDF for side-by-side view
+    %% Writes Review_Completed updates back to measure tables
+    MI -- "read demographics" --> PG_REVIEW
+    BCS -- "read extracted data" --> PG_REVIEW
+    CBP -- "read extracted data" --> PG_REVIEW
+    HBD -- "read extracted data" --> PG_REVIEW
+    BPD -- "read extracted data" --> PG_REVIEW
+    EED -- "read extracted data" --> PG_REVIEW
+    PDF_BIN -- "read PDF binary<br/>for side-by-side view" --> PG_REVIEW
+    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> MI
+    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> BCS
+    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> CBP
+    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> HBD
+    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> BPD
+    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> EED
+ 
+    %% === summarization & chat.py ===
+    %% Reads summary_data_table for structured summaries
+    %% Calls Databricks endpoint (Claude Sonnet 4.5) for conversational responses
+    SUMMARY -- "read JSON summaries" --> PG_SUMCHAT
+    EMB_IDX -- "Used by" --> PG_SUMCHAT
+    PG_SUMCHAT -- "chat completions<br/>" --> OAI
+    OAI -- "conversational<br/>response" --> PG_SUMCHAT
+ 
+    %% === Data_repository.py ===
+    %% Read-only browser across all measure tables and file metadata
+    MI -- "read" --> PG_DATAREPO
+    BCS -- "read" --> PG_DATAREPO
+    CBP -- "read" --> PG_DATAREPO
+    HBD -- "read" --> PG_DATAREPO
+    BPD -- "read" --> PG_DATAREPO
+    EED -- "read" --> PG_DATAREPO
+    FILE_INFO -- "read file metadata" --> PG_DATAREPO
+    GAP_TBL -- "-" --> PG_DATAREPO
+ 
+    %% === App_statistics.py ===
+    %% Reads stats, confidence_score, file_info for metrics dashboards
+    STATS_NODE -- "read timing &amp;<br/>accuracy data" --> PG_APPSTATS
+    CONF -- "read confidence<br/>score distribution" --> PG_APPSTATS
+    FILE_INFO -- "read processing<br/>volume counts" --> PG_APPSTATS
+ 
+    %% === STYLES ===
+    classDef input fill:#96acf4,stroke:#21618c,stroke-width:2px;
+    classDef process fill:#d5f5e3,stroke:#1e8449,stroke-width:2px;
+    classDef storage fill:#fdebd0,stroke:#af601a,stroke-width:2px;
+    classDef inactive fill:#fdebd0,stroke:#af601a,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef external fill:#fadbd8,stroke:#c0392b,stroke-width:2px;
+    classDef uilayer fill:#dceefb,stroke:#2471a3,stroke-width:2px;
+ 
+    class VOL,SPECS input;
+    class INGEST,PARSE,PROMPT,SUMMARY_GEN,EXTRACT,VALIDATE,CONFIDENCE,STATS_NODE process;
+    class MI,BCS,CBP,HBD,BPD,EED storage;
+    class CCS,COL,LSD,PPC inactive;
+    class PDF_BIN,SUMMARY,CONF,FILE_INFO,GAP_TBL,LOG,EMB,EMB_IDX storage;
+    class OAI external;
+    class PG_REVIEW,PG_SUMCHAT,PG_DATAREPO,PG_APPSTATS uilayer;
