@@ -1,3 +1,4 @@
+
 graph TB
  
     subgraph "Databricks Workspace"
@@ -51,6 +52,14 @@ graph TB
             GAP_TBL["gap<br/>Per-member gap flags<br/>BCS/COL/BPD/CBP/HBD/<br/>EED/IMA/CCS/LSD/PPC"]
             EMB["Summary_data_table"]
             EMB_IDX["Summarization text<br/> Raw Text"]
+        end
+ 
+        subgraph "Application_Access_Layer"
+ 
+            APP_URL["Databricks Application URL Generation<br/>• Generates Hosted Application URL"]
+ 
+            APP_ACCESS["Access Provisioning & Authentication<br/>• User Access Management<br/>• Authentication & Authorization"]
+ 
         end
  
         subgraph "UI Layer"
@@ -130,6 +139,13 @@ graph TB
     PARSE --> EMB
     EMB --> EMB_IDX
  
+    %% === APPLICATION ACCESS FLOW ===
+ 
+    APP_URL --> APP_ACCESS
+ 
+    APP_ACCESS -- "Now a user can access the app UI" --> PG_REVIEW
+ 
+ 
     %% =============================================
     %% === UI SCRIPTS — DATA CONNECTIONS ===
     %% =============================================
@@ -183,6 +199,7 @@ graph TB
     classDef inactive fill:#fdebd0,stroke:#af601a,stroke-width:2px,stroke-dasharray: 5 5;
     classDef external fill:#fadbd8,stroke:#c0392b,stroke-width:2px;
     classDef uilayer fill:#dceefb,stroke:#2471a3,stroke-width:2px;
+    style Application_Access_Layer fill:#f08c8c,stroke:#D9534F,stroke-width:3px
  
     class VOL,SPECS input;
     class INGEST,PARSE,PROMPT,SUMMARY_GEN,EXTRACT,VALIDATE,CONFIDENCE,STATS_NODE process;
@@ -191,3 +208,4 @@ graph TB
     class PDF_BIN,SUMMARY,CONF,FILE_INFO,GAP_TBL,LOG,EMB,EMB_IDX storage;
     class OAI external;
     class PG_REVIEW,PG_SUMCHAT,PG_DATAREPO,PG_APPSTATS uilayer;
+ 
