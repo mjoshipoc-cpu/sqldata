@@ -1,211 +1,93 @@
+. Opening (60 sec)
+"
 
-graph TB
- 
-    subgraph "Databricks Workspace"
- 
-        subgraph "Input Layer"
-            VOL["UC Volume<br/>/Volumes/aiagenticdemo/<br/>hedisabstractor/landing_pdf"]
-            SPECS["specifications_data_table<br/>HEDIS Measure Specs<br/>Eligibility, Exclusions, Lookback"]
-        end
- 
-        subgraph "Core Pipeline: hedis_pipeline_engine"
-            INGEST["PDF Ingestion &amp; Dedup Check<br/>• List files in landing volume<br/>• Filter against processed_pdf_log<br/>• Derive Member_id from filename<br/>  last 4 numeric digits"]
- 
-            LOG["processed_pdf_log<br/>Deduplication Control<br/>• filename, Insert_Date"]
- 
-            PARSE["Text Extraction<br/>ai_parse_document<br/>• DBR 17.1+ / Serverless<br/>"]
- 
-            PROMPT["Prompt Engine<br/>• Measure-specific prompts<br/>• JSON output schemas<br/>• Clinical extraction rules<br/>• NF sentinel = Not Found"]
- 
-            SUMMARY_GEN["Summary Generation<br/>• Structured JSON summary<br/>• Demographics, Diagnoses,<br/>  Medications, Labs, Lifestyle<br/>• Upsert by filename"]
- 
-            EXTRACT["Measure Extraction Engine<br/>• OpenAI GPT-4-turbo /<br/>  Claude Sonnet 4.5<br/>• logprobs enabled<br/>• Structured JSON output<br/>• Per-measure prompts"]
- 
-            VALIDATE["Validation &amp; Insertion<br/>• check_and_add_missing_keys<br/>• Fill missing fields with NR<br/>• Append Process mode<br/>  Single / Batch Processing<br/>• Append Confidence_Score"]
- 
-            CONFIDENCE["Confidence Engine<br/>• avg exp logprob_sum x 100<br/>• 89.23% fallback if negative<br/>• Per-measure per-file scores<br/>• Only on live API calls"]
- 
-            STATS_NODE["Stats &amp; Timing<br/>• Measure, Start, End, Duration<br/>• Accuracy per extraction<br/>• FileName, Member_Id"]
-        end
- 
-        subgraph "Measure Tables — Active"
-            MI["memberinfo<br/>Demographics Fact Table<br/>Join key: Member_id + FileID"]
-            BCS["bcs<br/>Breast Cancer Screening"]
-            CBP["cbp<br/>Controlling High BP"]
-            HBD["hbd<br/>HbA1c Diabetes"]
-            BPD["bpd<br/>BP for Diabetics"]
-            EED["eed<br/>Eye Exam Diabetics"]
-        end
- 
-        subgraph "Measure Tables — Inactive / Toggled Off"
-            CCS["ccs<br/>Cervical Cancer Screening"]
-            COL["col<br/>Colorectal Cancer Screening"]
-            LSD["lsd<br/>Lead Screening Children"]
-            PPC["ppc<br/>Prenatal Postpartum Care"]
-        end
- 
-        subgraph "Intermediate / Audit Tables"
-            PDF_BIN["pdf_binary_table<br/>Binary PDF Archive<br/>"]
-            SUMMARY["summary_data_table<br/> JSON Summaries<br/>filename, measurement_year,<br/>content JSON, raw_text"]
-            CONF["confidence_score<br/>measure, score pct, filename"]
-            FILE_INFO["file_info<br/>FileID, Pdf_location,<br/>Measurement_Year, Process"]
-            GAP_TBL["gap<br/>Per-member gap flags<br/>BCS/COL/BPD/CBP/HBD/<br/>EED/IMA/CCS/LSD/PPC"]
-            EMB["Summary_data_table"]
-            EMB_IDX["Summarization text<br/> Raw Text"]
-        end
- 
-        subgraph "Application_Access_Layer"
- 
-            APP_URL["Databricks Application URL Generation<br/>• Generates Hosted Application URL"]
- 
-            APP_ACCESS["Access Provisioning & Authentication<br/>• User Access Management<br/>• Authentication & Authorization"]
- 
-        end
- 
-        subgraph "UI Layer"
- 
-            PG_REVIEW["Review_member.py<br/>• Select member by Member_id / FileID<br/>• Display memberinfo demographics<br/>• Show per-measure extracted fields<br/>  with page_No provenance<br/>• Side-by-side PDF viewer<br/>• Edit / correct extracted values<br/>• Set Review_Completed = Yes<br/>• Write corrections back to Delta"]
- 
-            PG_SUMCHAT["summarization &amp; chat.py<br/>• Display JSON summaries<br/>  Demographics, Diagnoses,<br/>  Medications, Labs, Lifestyle<br/>• Conversational Q&amp;A on<br/>  patient clinical records<br/>• Calls Claude Sonnet 4.5 Databricks Endpoint for<br/>  chat completions"]
- 
-            PG_DATAREPO["Data_repository.py<br/>• Browse all measure tables<br/>• Filter by member,<br/> measure,  measurement <br/>year<br/>• View file_info metadata<br/>• Export / download data<br/>• Read-only data <br/>exploration"]
- 
-            PG_APPSTATS["App_statistics.py<br/>• Processing metrics<br/> dashboard<br/>• Extraction duration <br/>analytics<br/>• Accuracy trends per <br/>measure<br/>• Confidence score<br/> distributions<br/>• Files processed count<br/>• Per-measure volume<br/> breakdown"]
- 
-        end
- 
-    end
- 
-    subgraph "External Services — Databricks Endpoint"
-        OAI["Model Serving Endpoint<br/>GPT-4-turbo / Claude Sonnet 4.5<br/>• Chat Completions API<br/>• logprobs = true<br/>• Structured JSON response"]
-    end
- 
-    %% === INPUT FLOW ===
-    VOL --> INGEST
-    SPECS --> PROMPT
- 
-    %% === DEDUP CHECK (bidirectional) ===
-    LOG -- "read: already<br/>processed files" --> INGEST
-    INGEST -- "write: mark<br/>file processed" --> LOG
- 
-    %% === TEXT EXTRACTION ===
-    INGEST --> PARSE
-    PARSE --> PDF_BIN
-    PARSE --> PROMPT
- 
-    %% === SUMMARY GENERATION (before measure extraction) ===
-    PROMPT --> SUMMARY_GEN
-    SUMMARY_GEN --> OAI
-    OAI --> SUMMARY_GEN
-    SUMMARY_GEN --> SUMMARY
- 
-    %% === MEASURE EXTRACTION ===
-    PROMPT --> EXTRACT
-    EXTRACT --> OAI
-    OAI --> EXTRACT
- 
-    %% === VALIDATION & INSERTION ===
-    EXTRACT --> VALIDATE
-    VALIDATE --> CONFIDENCE
-    CONFIDENCE --> CONF
- 
-    %% === WRITE TO ACTIVE MEASURE TABLES ===
-    VALIDATE --> MI
-    VALIDATE --> BCS
-    VALIDATE --> CBP
-    VALIDATE --> HBD
-    VALIDATE --> BPD
-    VALIDATE --> EED
- 
-    %% === WRITE TO INACTIVE MEASURE TABLES (when toggled on) ===
-    VALIDATE -.-> CCS
-    VALIDATE -.-> COL
-    VALIDATE -.-> LSD
-    VALIDATE -.-> PPC
- 
-    %% === AUDIT & TRACKING ===
-    INGEST --> FILE_INFO
-    EXTRACT --> STATS_NODE
- 
-    %% === GAP EVALUATION (downstream from measure tables) ===
-    MI --> GAP_TBL
-    BCS --> GAP_TBL
-    CBP --> GAP_TBL
-    HBD --> GAP_TBL
-    BPD --> GAP_TBL
-    EED --> GAP_TBL
- 
-    %% === EMBEDDINGS (generated during text extraction) ===
-    PARSE --> EMB
-    EMB --> EMB_IDX
- 
-    %% === APPLICATION ACCESS FLOW ===
- 
-    APP_URL --> APP_ACCESS
- 
-    APP_ACCESS -- "Now a user can access the app UI" --> PG_REVIEW
- 
- 
-    %% =============================================
-    %% === UI SCRIPTS — DATA CONNECTIONS ===
-    %% =============================================
- 
-    %% === Review_member.py ===
-    %% Reads measure tables + memberinfo for review; reads PDF for side-by-side view
-    %% Writes Review_Completed updates back to measure tables
-    MI -- "read demographics" --> PG_REVIEW
-    BCS -- "read extracted data" --> PG_REVIEW
-    CBP -- "read extracted data" --> PG_REVIEW
-    HBD -- "read extracted data" --> PG_REVIEW
-    BPD -- "read extracted data" --> PG_REVIEW
-    EED -- "read extracted data" --> PG_REVIEW
-    PDF_BIN -- "read PDF binary<br/>for side-by-side view" --> PG_REVIEW
-    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> MI
-    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> BCS
-    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> CBP
-    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> HBD
-    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> BPD
-    PG_REVIEW -- "write: Review_Completed,<br/>corrected values" --> EED
- 
-    %% === summarization & chat.py ===
-    %% Reads summary_data_table for structured summaries
-    %% Calls Databricks endpoint (Claude Sonnet 4.5) for conversational responses
-    SUMMARY -- "read JSON summaries" --> PG_SUMCHAT
-    EMB_IDX -- "Used by" --> PG_SUMCHAT
-    PG_SUMCHAT -- "chat completions<br/>" --> OAI
-    OAI -- "conversational<br/>response" --> PG_SUMCHAT
- 
-    %% === Data_repository.py ===
-    %% Read-only browser across all measure tables and file metadata
-    MI -- "read" --> PG_DATAREPO
-    BCS -- "read" --> PG_DATAREPO
-    CBP -- "read" --> PG_DATAREPO
-    HBD -- "read" --> PG_DATAREPO
-    BPD -- "read" --> PG_DATAREPO
-    EED -- "read" --> PG_DATAREPO
-    FILE_INFO -- "read file metadata" --> PG_DATAREPO
-    GAP_TBL -- "-" --> PG_DATAREPO
- 
-    %% === App_statistics.py ===
-    %% Reads stats, confidence_score, file_info for metrics dashboards
-    STATS_NODE -- "read timing &amp;<br/>accuracy data" --> PG_APPSTATS
-    CONF -- "read confidence<br/>score distribution" --> PG_APPSTATS
-    FILE_INFO -- "read processing<br/>volume counts" --> PG_APPSTATS
- 
-    %% === STYLES ===
-    classDef input fill:#96acf4,stroke:#21618c,stroke-width:2px;
-    classDef process fill:#d5f5e3,stroke:#1e8449,stroke-width:2px;
-    classDef storage fill:#fdebd0,stroke:#af601a,stroke-width:2px;
-    classDef inactive fill:#fdebd0,stroke:#af601a,stroke-width:2px,stroke-dasharray: 5 5;
-    classDef external fill:#fadbd8,stroke:#c0392b,stroke-width:2px;
-    classDef uilayer fill:#dceefb,stroke:#2471a3,stroke-width:2px;
-    style Application_Access_Layer fill:#f08c8c,stroke:#D9534F,stroke-width:3px
- 
-    class VOL,SPECS input;
-    class INGEST,PARSE,PROMPT,SUMMARY_GEN,EXTRACT,VALIDATE,CONFIDENCE,STATS_NODE process;
-    class MI,BCS,CBP,HBD,BPD,EED storage;
-    class CCS,COL,LSD,PPC inactive;
-    class PDF_BIN,SUMMARY,CONF,FILE_INFO,GAP_TBL,LOG,EMB,EMB_IDX storage;
-    class OAI external;
-    class PG_REVIEW,PG_SUMCHAT,PG_DATAREPO,PG_APPSTATS uilayer;
- 
+Most health plans score members on claims and clinical history alone. That misses people who look low-risk on paper but are high-risk because of where they live. They may have food insecurity, unstable housing, no job, or no transportation. Claims-only models find them when they show up in the ER, which is too late.
+This platform adds social determinants of health (SDOH) to the clinical picture and produces one risk score. It identifies who needs help and what kind. It then drives outreach through to a confirmed, closed intervention.
+
+For this solution currently we are using two free Snowflake Marketplace datasets. The clinical and claims data is Synthea, which is synthetic. The neighborhood data is real U.S. Census data. No real PHI is involved."
+
+
+We train two XGBoost models. The BASE model uses about 51 clinical and financial features. The FULL model uses those plus 39 SDOH features. Each predicts Critical, High, Moderate, or Low.
+SDOH Lift is the FULL score minus the BASE score for the same member. It shows how much social data changed their risk. We excluded the composite disadvantage score from training because it risks leakage. SHAP gives the top five drivers for each member, so we can explain each score individually."
+
+
+
+2. Member 360: Devora Johnson (3 min)
+[Open Member 360, member 1966019] "This is Devora Johnson. She is 56 and lives in Chicago, ZIP 60827. Her composite risk is 0.8540, which is High. A clinical-only view gives 0.42. SDOH adds 0.43, so nearly half her risk is social.
+Her Neighborhood domain is the highest at 0.63. She lives in a high-disadvantage area with about 24% poverty, 17% unemployment, 44% food insecurity, and a food desert with limited vehicle access.
+On utilization she looks low-touch: 35 visits, zero ED visits, one inpatient stay, and about $2,800 in annual claims. A cost-based triage would skip her.
+But her Financial Risk Tier is Critical, and her income is 46% of the federal poverty level. She has unemployment and stress flags mapped to standard SDOH codes. She also has two open HEDIS gaps, for breast cancer and colorectal screening.
+Her PHQ-9 is 4, which is minimal. That single screening says she's fine, while everything else says she's under strain. The platform weighs all of it.
+Three interventions are confirmed: SNAP and food bank enrollment, care-gap outreach, and workforce training. She looks unremarkable on cost and utilization, and the platform still caught her."
+3. The AI agents (3 min)
+This is the AI Agent page. The card at the top is the same member we just saw: Devora Johnson, High tier, composite 0.82. Her base clinical score is 0.42 and SDOH adds 0.40, about 49% of her score. Neighborhood is her top domain at 0.63, with zero ED visits, one inpatient stay, and two open care gaps.
+[Scroll to Recommended Interventions: 3 Confirmed.]
+Below that, the platform lists three confirmed needs: Food Security Support (SNAP and food bank), Care Gap Outreach, and Workforce / Job Training. One function, get_member_needs(), decides this list. The UI and the agents both read from it, so they can't disagree. Each need is still marked Not started. Nothing has been drafted yet, and nothing goes out without a care manager.
+[Click ▶ Run AI on the Food Security row.]
+Now I'll run the pipeline for the first need. It's the foundational one, because someone who is food insecure won't follow through on a job program or a screening. The pipeline has six stages. Four are decision agents, and two are deterministic steps with no LLM.
+[Expand 'AI Draft: Food Security Support', open the AI Reasoning tab.]
+•	Agent 1, Risk Analysis. This is the risk summary. It says she is high risk for reasons beyond clinical metrics. It cites one inpatient stay and zero ED visits, and says SDOH drives about 49% of her score. It doesn't claim high spend, because it's handed a pre-computed 'High Cost: No' fact.
+•	Agent 2, SDOH Assessment. This is the SDOH summary. It names Neighborhood as her dominant barrier at 0.630. It also explains why food comes first, which is the sequencing logic a case manager could defend to a medical director.
+•	Agent 3, Channel Selector. This is the caption line under the summaries. It shows the recommended channel and the reason. Her main barrier is access, not information, so it recommends a Community Health Worker rather than a text.
+[Open the Campaign Plan tab.]
+•	Agent 4, Campaign Planner. This tab shows the campaign name, Food Security Support, and the numbered steps: SNAP enrollment and food bank referral, first contact within 48 hours, referral completed within 2 weeks, and a 30-day follow-up to confirm she actually enrolled. This step uses a fixed template, so it has no hallucination risk.
+[Open the Care Manager Brief tab.]
+This brief is also built from a template, with no LLM, so it carries no hallucination risk.
+[Open the Approval tab.]
+The outreach message is editable. The care manager can Save edits, Approve, or Reject. When I click Approve, the platform generates the 4-step care plan tasks and moves Food Security to Pending. The other two needs stay in the queue. Next we go to the Outreach page to see those tasks run."
+
+4. Outreach lifecycle (3 min)
+[Open Outreach] "Here is the full lifecycle of that intervention, and the messages adapt to what she says.
+1.	Screening call, 48 hours. She replies 'yes please schedule' and is tagged Engaged.
+2.	Refer to program, 72 hours. The message says 'you'd mentioned you'd like to schedule', so it was regenerated from her reply. She answers 'thanks, for refer', which is ambiguous, so it's tagged Unclear. The system doesn't guess.
+3.	2-week check-in. The AI decision reads: 'Proceed. Intent unclear, proceeding with the standard next step.' When it's unsure, it takes the safe default and says so.
+4.	30-day outcome check. She says 'yes I have completed, thanks.' That is unambiguous, so the gap is tagged Closed.
+The amber 'Possible delivery signal' tags come from a keyword check, not an AI judgment. The system never auto-closes on a text match. The care manager types a real confirmation, such as 'Navigator confirmed enrollment by phone 7/15', and clicks Mark Delivered. The server rejects the request without that note. The AI surfaces the signal and a person confirms the fact.
+Finally, the care manager chooses Closed, Escalate, or Retry. Retry re-decides the channel and campaign from scratch rather than resending the same plan."
+5. Geographic risk (2.5 min)
+[Open Geographic Risk, filter to ZIP 60827] "Devora is part of a pattern. In ZIP 60827 there are 334 members, with 39 Critical and 138 High. The clinical score is 0.389. Adding SDOH lifts it by 0.137 to 0.526. That jump is the value of the platform. Neighborhood is 0.630 and Economic is 0.546. This ZIP has an environment problem more than a healthcare problem. Food desert is 40% of the burden mix.
+[Switch to Illinois] Illinois is our top flagged state. It has 67 ZIPs, split 14 High, 28 Moderate, and 25 Low disadvantage. Average risk is 0.368 and SDOH impact is 13.2%. Lift here is roughly zero. Across a whole state the ups and downs cancel out, which is why Base and Risk match. That tells us the model isn't biased in one direction at scale. The real signal is at the individual and ZIP level. Economic leads at 0.516 and Healthcare is lowest at 0.182. Illinois's problem is economic instability more than access to doctors. Food desert is 36% of the burden."
+6. Overview: full cohort (60 sec)
+[Open Overview] "At scale this covers 99,999 members, 434 ZIPs, and 11 states. Average risk is 0.362. A meaningful share of members have a lift of 0.10 or more, which we label Moderate or High SDOH impact. Devora and thousands like her are in that group, and a claims-only model would miss them."
+7. ROI dashboard (90 sec)
+[Open ROI Dashboard] "There are two parts, and I want to be clear about which is which.
+•	Programme Cost covers five phases: Identification, Outreach, Engagement, Delivery, and Follow-up. The per-unit rates, such as $8.50 per call, are planning assumptions in line with care-management benchmarks. They are not pulled from this dataset.
+•	Live Referral Impact is real, session-tracked data. Every need closed in the demo, like Devora's SNAP referral, appears here with an estimated realized value split across the five phases.
+The workflow, reasoning, personalization, and closed-loop tracking are all live. The dollar figures stay assumptions until we connect a real longitudinal claims feed, which is the next step."
+8. Guardrails (use if asked about hallucination)
+1.	Ground-truth flags. We pre-compute facts like High Cost Member = Yes/No and give them to the LLM as labeled truth. Telling it not to call someone high-cost failed, so we replaced judgment with a fact.
+2.	Explicit prohibitions. The prompts say 'do not speculate about income, cost, or utilization.'
+3.	Data minimization. The message composer never sees risk score, tier, or cost.
+4.	Deterministic where possible. The campaign planner, care manager summary, and Z-code mapping use no LLM at all.
+5.	No generation at send time. Messages are generated when the reply is submitted. What the care manager reviews is what goes out.
+6.	Explicit uncertainty. Low confidence produces 'Unclear' and a safe default.
+7.	Human confirmation gates. The server rejects delivery confirmation without a typed note.
+8.	Single source of truth. get_member_needs() feeds both the UI and the agents, so they can't disagree.
+9.	Auditability. Every derived code carries its source field.
+10.	Graceful degradation. If the LLM fails, the last good message stays.
+"Where a decision could be deterministic, it is. Where an LLM was needed, it's constrained with facts and prohibitions."
+9. Close (30 sec)
+"One woman the clinical model would have missed. Agents that reasoned about why she's at risk and adapted as she responded. The neighborhood and state pattern around her, and the cohort of 99,999 members. Claims-only models find the people who are already sick. This finds the people who are about to be, while there's still time to act."
+________________________________________
+Q&A cheat sheet (short answers)
+Question	Answer
+Real patient data?	No. Clinical data is Synthea (synthetic). Only the Census layer is real.
+Snowflake Cortex or Groq?	Verify in the repo first. The code is configured for Cortex COMPLETE(), but your notes say Groq.
+Bias or fairness audit?	Not done for this POC. A production rollout needs disparate-impact testing, since SDOH correlates with race and geography.
+Retraining cadence?	Not established. The SP_TRAIN_SDOH procedure exists but has no schedule. This POC shows the architecture.
+LLM down or slow?	The static message stays. The workflow doesn't block.
+Cost at 100k+ members?	Not modeled yet. It needs LLM cost per member times re-run frequency.
+FDA clinical decision support?	It scores social and financial risk, not diagnosis, so it's likely out of scope. That is a legal and compliance call, so I wouldn't assert it.
+Can a human override the AI?	Yes. Draft/Approve/Reject/Edit, message editing, manual delivery confirmation, and Escalate/Retry.
+Do agents disagree?	No. get_member_needs() is computed once and read by both the UI and the agents.
+Why show state lift near zero?	It shows the model isn't directionally biased at scale. The signal is at the member and ZIP level.
+Are the ROI dollars real?	Programme Cost is benchmark assumptions. Live Referral Impact is real session data.
+Auto-close from an SMS reply?	No. The keyword flag only suggests, and the server requires a human-typed note.
+Stale message after a reply?	Messages regenerate at reply time, never at send time.
+Key numbers
+•	Devora: age 56, composite 0.82 (clinical 0.42 + SDOH 0.40), 35 visits, 0 ED, 1 inpatient, $2,800 claims, 46% FPL, PHQ-9 of 4, 2 open HEDIS gaps, 3 interventions.
+•	ZIP 60827: 334 members, 39 Critical, 138 High, clinical 0.389 to risk 0.526 (+0.137), food desert 40%.
+•	Illinois: 67 ZIPs (14 High, 28 Moderate, 25 Low), average risk 0.368, lift about 0, impact 13.2%, food desert 36%.
+•	Cohort: 99,999 members, 434 ZIPs, 11 states, average risk 0.362.
+I can trim this to a fixed time slot, such as 10 or 15 minutes, or reformat it as a one-page speaker card if that helps.
+
