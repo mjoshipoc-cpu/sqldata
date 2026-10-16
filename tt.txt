@@ -1,93 +1,71 @@
-. Opening (60 sec)
-"
+Business Challenge (Left Panel)
 
-Most health plans score members on claims and clinical history alone. That misses people who look low-risk on paper but are high-risk because of where they live. They may have food insecurity, unstable housing, no job, or no transportation. Claims-only models find them when they show up in the ER, which is too late.
-This platform adds social determinants of health (SDOH) to the clinical picture and produces one risk score. It identifies who needs help and what kind. It then drives outreach through to a confirmed, closed intervention.
+Healthcare organizations have rich Claims, Clinical, and Member data, but existing reporting primarily explains what happened.
 
-For this solution currently we are using two free Snowflake Marketplace datasets. The clinical and claims data is Synthea, which is synthetic. The neighborhood data is real U.S. Census data. No real PHI is involved."
+Current State
+Rising ER visits and readmissions
+Chronic condition management challenges
+Missed appointments and care gaps
+High outreach costs
+Manual root-cause investigation
+Missing Visibility
+Food insecurity
+Housing instability
+Transportation barriers
+Financial hardship
+Social isolation
 
+Result: Reactive interventions after health outcomes have already deteriorated.
 
-We train two XGBoost models. The BASE model uses about 51 clinical and financial features. The FULL model uses those plus 39 SDOH features. Each predicts Critical, High, Moderate, or Low.
-SDOH Lift is the FULL score minus the BASE score for the same member. It shows how much social data changed their risk. We excluded the composite disadvantage score from training because it risks leakage. SHAP gives the top five drivers for each member, so we can explain each score individually."
+SDOH.ai Intelligence Layer (Middle Panel)
+Existing Reporting
+Utilization dashboards
+Quality & Stars reporting
+Clinical risk monitoring
+Population health analytics
 
+⬇
 
+SDOH.ai
+Ask questions in natural language
+Correlate clinical outcomes with social factors
+Identify root causes of poor outcomes
+Detect rising-risk populations early
+Recommend Next Best Actions
+Generate executive-ready narratives
+Example Insight
 
-2. Member 360: Devora Johnson (3 min)
-[Open Member 360, member 1966019] "This is Devora Johnson. She is 56 and lives in Chicago, ZIP 60827. Her composite risk is 0.8540, which is High. A clinical-only view gives 0.42. SDOH adds 0.43, so nearly half her risk is social.
-Her Neighborhood domain is the highest at 0.63. She lives in a high-disadvantage area with about 24% poverty, 17% unemployment, 44% food insecurity, and a food desert with limited vehicle access.
-On utilization she looks low-touch: 35 visits, zero ED visits, one inpatient stay, and about $2,800 in annual claims. A cost-based triage would skip her.
-But her Financial Risk Tier is Critical, and her income is 46% of the federal poverty level. She has unemployment and stress flags mapped to standard SDOH codes. She also has two open HEDIS gaps, for breast cancer and colorectal screening.
-Her PHQ-9 is 4, which is minimal. That single screening says she's fine, while everything else says she's under strain. The platform weighs all of it.
-Three interventions are confirmed: SNAP and food bank enrollment, care-gap outreach, and workforce training. She looks unremarkable on cost and utilization, and the platform still caught her."
-3. The AI agents (3 min)
-This is the AI Agent page. The card at the top is the same member we just saw: Devora Johnson, High tier, composite 0.82. Her base clinical score is 0.42 and SDOH adds 0.40, about 49% of her score. Neighborhood is her top domain at 0.63, with zero ED visits, one inpatient stay, and two open care gaps.
-[Scroll to Recommended Interventions: 3 Confirmed.]
-Below that, the platform lists three confirmed needs: Food Security Support (SNAP and food bank), Care Gap Outreach, and Workforce / Job Training. One function, get_member_needs(), decides this list. The UI and the agents both read from it, so they can't disagree. Each need is still marked Not started. Nothing has been drafted yet, and nothing goes out without a care manager.
-[Click ▶ Run AI on the Food Security row.]
-Now I'll run the pipeline for the first need. It's the foundational one, because someone who is food insecure won't follow through on a job program or a screening. The pipeline has six stages. Four are decision agents, and two are deterministic steps with no LLM.
-[Expand 'AI Draft: Food Security Support', open the AI Reasoning tab.]
-•	Agent 1, Risk Analysis. This is the risk summary. It says she is high risk for reasons beyond clinical metrics. It cites one inpatient stay and zero ED visits, and says SDOH drives about 49% of her score. It doesn't claim high spend, because it's handed a pre-computed 'High Cost: No' fact.
-•	Agent 2, SDOH Assessment. This is the SDOH summary. It names Neighborhood as her dominant barrier at 0.630. It also explains why food comes first, which is the sequencing logic a case manager could defend to a medical director.
-•	Agent 3, Channel Selector. This is the caption line under the summaries. It shows the recommended channel and the reason. Her main barrier is access, not information, so it recommends a Community Health Worker rather than a text.
-[Open the Campaign Plan tab.]
-•	Agent 4, Campaign Planner. This tab shows the campaign name, Food Security Support, and the numbered steps: SNAP enrollment and food bank referral, first contact within 48 hours, referral completed within 2 weeks, and a 30-day follow-up to confirm she actually enrolled. This step uses a fixed template, so it has no hallucination risk.
-[Open the Care Manager Brief tab.]
-This brief is also built from a template, with no LLM, so it carries no hallucination risk.
-[Open the Approval tab.]
-The outreach message is editable. The care manager can Save edits, Approve, or Reject. When I click Approve, the platform generates the 4-step care plan tasks and moves Food Security to Pending. The other two needs stay in the queue. Next we go to the Outreach page to see those tasks run."
+Member has repeated ER visits due to uncontrolled diabetes.
+ Key drivers: Food Insecurity (0.78) + Transportation Barrier (0.71).
+ Recommended Action: SNAP enrollment + transportation assistance + PCP follow-up.
 
-4. Outreach lifecycle (3 min)
-[Open Outreach] "Here is the full lifecycle of that intervention, and the messages adapt to what she says.
-1.	Screening call, 48 hours. She replies 'yes please schedule' and is tagged Engaged.
-2.	Refer to program, 72 hours. The message says 'you'd mentioned you'd like to schedule', so it was regenerated from her reply. She answers 'thanks, for refer', which is ambiguous, so it's tagged Unclear. The system doesn't guess.
-3.	2-week check-in. The AI decision reads: 'Proceed. Intent unclear, proceeding with the standard next step.' When it's unsure, it takes the safe default and says so.
-4.	30-day outcome check. She says 'yes I have completed, thanks.' That is unambiguous, so the gap is tagged Closed.
-The amber 'Possible delivery signal' tags come from a keyword check, not an AI judgment. The system never auto-closes on a text match. The care manager types a real confirmation, such as 'Navigator confirmed enrollment by phone 7/15', and clicks Mark Delivered. The server rejects the request without that note. The AI surfaces the signal and a person confirms the fact.
-Finally, the care manager chooses Closed, Escalate, or Retry. Retry re-decides the channel and campaign from scratch rather than resending the same plan."
-5. Geographic risk (2.5 min)
-[Open Geographic Risk, filter to ZIP 60827] "Devora is part of a pattern. In ZIP 60827 there are 334 members, with 39 Critical and 138 High. The clinical score is 0.389. Adding SDOH lifts it by 0.137 to 0.526. That jump is the value of the platform. Neighborhood is 0.630 and Economic is 0.546. This ZIP has an environment problem more than a healthcare problem. Food desert is 40% of the burden mix.
-[Switch to Illinois] Illinois is our top flagged state. It has 67 ZIPs, split 14 High, 28 Moderate, and 25 Low disadvantage. Average risk is 0.368 and SDOH impact is 13.2%. Lift here is roughly zero. Across a whole state the ups and downs cancel out, which is why Base and Risk match. That tells us the model isn't biased in one direction at scale. The real signal is at the individual and ZIP level. Economic leads at 0.516 and Healthcare is lowest at 0.182. Illinois's problem is economic instability more than access to doctors. Food desert is 36% of the burden."
-6. Overview: full cohort (60 sec)
-[Open Overview] "At scale this covers 99,999 members, 434 ZIPs, and 11 states. Average risk is 0.362. A meaningful share of members have a lift of 0.10 or more, which we label Moderate or High SDOH impact. Devora and thousands like her are in that group, and a claims-only model would miss them."
-7. ROI dashboard (90 sec)
-[Open ROI Dashboard] "There are two parts, and I want to be clear about which is which.
-•	Programme Cost covers five phases: Identification, Outreach, Engagement, Delivery, and Follow-up. The per-unit rates, such as $8.50 per call, are planning assumptions in line with care-management benchmarks. They are not pulled from this dataset.
-•	Live Referral Impact is real, session-tracked data. Every need closed in the demo, like Devora's SNAP referral, appears here with an estimated realized value split across the five phases.
-The workflow, reasoning, personalization, and closed-loop tracking are all live. The dollar figures stay assumptions until we connect a real longitudinal claims feed, which is the next step."
-8. Guardrails (use if asked about hallucination)
-1.	Ground-truth flags. We pre-compute facts like High Cost Member = Yes/No and give them to the LLM as labeled truth. Telling it not to call someone high-cost failed, so we replaced judgment with a fact.
-2.	Explicit prohibitions. The prompts say 'do not speculate about income, cost, or utilization.'
-3.	Data minimization. The message composer never sees risk score, tier, or cost.
-4.	Deterministic where possible. The campaign planner, care manager summary, and Z-code mapping use no LLM at all.
-5.	No generation at send time. Messages are generated when the reply is submitted. What the care manager reviews is what goes out.
-6.	Explicit uncertainty. Low confidence produces 'Unclear' and a safe default.
-7.	Human confirmation gates. The server rejects delivery confirmation without a typed note.
-8.	Single source of truth. get_member_needs() feeds both the UI and the agents, so they can't disagree.
-9.	Auditability. Every derived code carries its source field.
-10.	Graceful degradation. If the LLM fails, the last good message stays.
-"Where a decision could be deterministic, it is. Where an LLM was needed, it's constrained with facts and prohibitions."
-9. Close (30 sec)
-"One woman the clinical model would have missed. Agents that reasoned about why she's at risk and adapted as she responded. The neighborhood and state pattern around her, and the cohort of 99,999 members. Claims-only models find the people who are already sick. This finds the people who are about to be, while there's still time to act."
-________________________________________
-Q&A cheat sheet (short answers)
-Question	Answer
-Real patient data?	No. Clinical data is Synthea (synthetic). Only the Census layer is real.
-Snowflake Cortex or Groq?	Verify in the repo first. The code is configured for Cortex COMPLETE(), but your notes say Groq.
-Bias or fairness audit?	Not done for this POC. A production rollout needs disparate-impact testing, since SDOH correlates with race and geography.
-Retraining cadence?	Not established. The SP_TRAIN_SDOH procedure exists but has no schedule. This POC shows the architecture.
-LLM down or slow?	The static message stays. The workflow doesn't block.
-Cost at 100k+ members?	Not modeled yet. It needs LLM cost per member times re-run frequency.
-FDA clinical decision support?	It scores social and financial risk, not diagnosis, so it's likely out of scope. That is a legal and compliance call, so I wouldn't assert it.
-Can a human override the AI?	Yes. Draft/Approve/Reject/Edit, message editing, manual delivery confirmation, and Escalate/Retry.
-Do agents disagree?	No. get_member_needs() is computed once and read by both the UI and the agents.
-Why show state lift near zero?	It shows the model isn't directionally biased at scale. The signal is at the member and ZIP level.
-Are the ROI dollars real?	Programme Cost is benchmark assumptions. Live Referral Impact is real session data.
-Auto-close from an SMS reply?	No. The keyword flag only suggests, and the server requires a human-typed note.
-Stale message after a reply?	Messages regenerate at reply time, never at send time.
-Key numbers
-•	Devora: age 56, composite 0.82 (clinical 0.42 + SDOH 0.40), 35 visits, 0 ED, 1 inpatient, $2,800 claims, 46% FPL, PHQ-9 of 4, 2 open HEDIS gaps, 3 interventions.
-•	ZIP 60827: 334 members, 39 Critical, 138 High, clinical 0.389 to risk 0.526 (+0.137), food desert 40%.
-•	Illinois: 67 ZIPs (14 High, 28 Moderate, 25 Low), average risk 0.368, lift about 0, impact 13.2%, food desert 36%.
-•	Cohort: 99,999 members, 434 ZIPs, 11 states, average risk 0.362.
-I can trim this to a fixed time slot, such as 10 or 15 minutes, or reformat it as a one-page speaker card if that helps.
+Business Value (Right Panel)
+Better Root Cause Visibility
 
+Understand why outcomes occur.
+
+Proactive Risk Management
+
+Identify risks before costly events.
+
+Precision Outreach
+
+Target the right member with the right intervention.
+
+Faster Insights
+
+Minutes instead of days of analysis.
+
+Health Equity Intelligence
+
+Measure and address disparities.
+
+Executive-Ready Reporting
+
+Automated summaries for leadership and regulators.
+
+Executive Takeaway (Bottom Banner)
+
+Claims and clinical data tell us what happened. SDOH.ai reveals why it happened, predicts what may happen next, and recommends the best intervention to improve member outcomes while reducing avoidable healthcare costs.
+
+This will be much more impactful than a capability list because it directly answers: Why do we need SDOH if we already have Claims & Clinical data? → Claims tell us what happened; SDOH tells us why and what to do next.
